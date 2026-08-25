@@ -1,0 +1,25 @@
+[package]
+name = "gloamwire"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "An async Discord Gateway and REST API library for Rust"
+license = "MIT"
+repository = "https://github.com/cybellereaper/Gloamwire"
+readme = "README.md"
+keywords = ["discord", "gateway", "api", "async", "bot"]
+categories = ["api-bindings", "asynchronous", "network-programming"]
+
+[dependencies]
+bitflags = { version = "2", features = ["serde"] }
+fastrand = "2"
+futures-util = "0.3"
+reqwest = { version = "0.13", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
