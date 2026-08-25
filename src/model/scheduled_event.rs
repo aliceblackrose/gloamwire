@@ -150,7 +150,7 @@ pub struct GuildScheduledEvent {
 }
 
 /// A user subscribed to a guild scheduled event.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GuildScheduledEventUser {
     pub guild_scheduled_event_id: ScheduledEventId,
     pub user: User,
