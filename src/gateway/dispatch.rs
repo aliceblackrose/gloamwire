@@ -3,8 +3,8 @@ use serde_json::Value;
 
 use crate::model::{
     ApplicationId, Channel, ChannelId, Guild, GuildId, GuildMember, GuildMemberFlags, Interaction,
-    Message, MessageId, PartialEmoji, PresenceUpdate, ReactionType, Role, RoleId, Snowflake,
-    UnavailableGuild, User, UserId, VoiceState,
+    InviteTargetType, Message, MessageId, PartialEmoji, PresenceUpdate, ReactionType, Role, RoleId,
+    Snowflake, UnavailableGuild, User, UserId, VoiceState,
 };
 
 use super::DispatchEvent;
@@ -34,6 +34,8 @@ pub enum TypedDispatchEvent {
     GuildRoleCreate(GuildRoleEvent),
     GuildRoleUpdate(GuildRoleEvent),
     GuildRoleDelete(GuildRoleDeleteEvent),
+    InviteCreate(InviteCreateEvent),
+    InviteDelete(InviteDeleteEvent),
     MessageCreate(Message),
     MessageDelete(MessageDeleteEvent),
     MessageDeleteBulk(MessageDeleteBulkEvent),
@@ -44,6 +46,7 @@ pub enum TypedDispatchEvent {
     InteractionCreate(Box<Interaction>),
     PresenceUpdate(PresenceUpdate),
     VoiceStateUpdate(VoiceState),
+    WebhooksUpdate(WebhooksUpdateEvent),
     UserUpdate(User),
     Unknown { name: String, data: Value },
 }
@@ -143,6 +146,41 @@ pub struct GuildRoleDeleteEvent {
     pub role_id: RoleId,
 }
 
+/// An `INVITE_CREATE` dispatch.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct InviteCreateEvent {
+    pub channel_id: ChannelId,
+    pub code: String,
+    pub created_at: String,
+    #[serde(default)]
+    pub guild_id: Option<GuildId>,
+    #[serde(default)]
+    pub inviter: Option<User>,
+    pub max_age: u32,
+    pub max_uses: u32,
+    #[serde(default)]
+    pub target_type: Option<InviteTargetType>,
+    #[serde(default)]
+    pub target_user: Option<User>,
+    /// Partial application payload for embedded-application invites.
+    #[serde(default)]
+    pub target_application: Option<Value>,
+    pub temporary: bool,
+    pub uses: u32,
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub role_ids: Vec<RoleId>,
+}
+
+/// An `INVITE_DELETE` dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct InviteDeleteEvent {
+    pub channel_id: ChannelId,
+    #[serde(default)]
+    pub guild_id: Option<GuildId>,
+    pub code: String,
+}
+
 /// A `MESSAGE_DELETE` dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct MessageDeleteEvent {
@@ -215,6 +253,13 @@ pub struct MessageReactionRemoveEmojiEvent {
     pub emoji: PartialEmoji,
 }
 
+/// A `WEBHOOKS_UPDATE` dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct WebhooksUpdateEvent {
+    pub guild_id: GuildId,
+    pub channel_id: ChannelId,
+}
+
 impl DispatchEvent {
     /// Parses this raw dispatch into a typed event when Gloamwire models the event name.
     ///
@@ -255,6 +300,8 @@ impl DispatchEvent {
             "GUILD_ROLE_DELETE" => {
                 TypedDispatchEvent::GuildRoleDelete(serde_json::from_value(data)?)
             }
+            "INVITE_CREATE" => TypedDispatchEvent::InviteCreate(serde_json::from_value(data)?),
+            "INVITE_DELETE" => TypedDispatchEvent::InviteDelete(serde_json::from_value(data)?),
             "MESSAGE_CREATE" => TypedDispatchEvent::MessageCreate(serde_json::from_value(data)?),
             "MESSAGE_DELETE" => TypedDispatchEvent::MessageDelete(serde_json::from_value(data)?),
             "MESSAGE_DELETE_BULK" => {
@@ -279,6 +326,9 @@ impl DispatchEvent {
             "VOICE_STATE_UPDATE" => {
                 TypedDispatchEvent::VoiceStateUpdate(serde_json::from_value(data)?)
             }
+            "WEBHOOKS_UPDATE" => {
+                TypedDispatchEvent::WebhooksUpdate(serde_json::from_value(data)?)
+            }
             "USER_UPDATE" => TypedDispatchEvent::UserUpdate(serde_json::from_value(data)?),
             _ => TypedDispatchEvent::Unknown {
                 name: self.name.clone(),
@@ -292,7 +342,7 @@ impl DispatchEvent {
 mod tests {
     use serde_json::json;
 
-    use crate::model::{InteractionType, ReactionType};
+    use crate::model::{InteractionType, InviteTargetType, ReactionType};
 
     use super::{DispatchEvent, TypedDispatchEvent};
 
@@ -397,6 +447,51 @@ mod tests {
 
         assert_eq!(interaction.kind, InteractionType::PING);
         assert_eq!(interaction.id.get(), 100);
+    }
+
+    #[test]
+    fn parses_invite_create() {
+        let dispatch = DispatchEvent {
+            name: "INVITE_CREATE".to_owned(),
+            sequence: 5,
+            data: json!({
+                "channel_id":"10",
+                "code":"guest-code",
+                "created_at":"2026-08-25T20:00:00+00:00",
+                "guild_id":"20",
+                "max_age":3600,
+                "max_uses":5,
+                "target_type":2,
+                "temporary":false,
+                "uses":0,
+                "expires_at":null,
+                "role_ids":["30","31"]
+            }),
+        };
+
+        let TypedDispatchEvent::InviteCreate(event) = dispatch.typed().expect("invite create") else {
+            panic!("expected invite create event");
+        };
+
+        assert_eq!(event.target_type, Some(InviteTargetType::EMBEDDED_APPLICATION));
+        assert_eq!(event.role_ids[0].get(), 30);
+    }
+
+    #[test]
+    fn parses_webhooks_update() {
+        let dispatch = DispatchEvent {
+            name: "WEBHOOKS_UPDATE".to_owned(),
+            sequence: 6,
+            data: json!({"guild_id":"20", "channel_id":"10"}),
+        };
+
+        let TypedDispatchEvent::WebhooksUpdate(event) = dispatch.typed().expect("webhooks update")
+        else {
+            panic!("expected webhooks update event");
+        };
+
+        assert_eq!(event.guild_id.get(), 20);
+        assert_eq!(event.channel_id.get(), 10);
     }
 
     #[test]
