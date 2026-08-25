@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ApplicationId, Channel, ChannelId, GuildId, GuildMember, Permissions, Role, UserId, VoiceState,
+    ApplicationId, Channel, ChannelId, GuildId, GuildMember, GuildScheduledEvent, Permissions, Role,
+    UserId, VoiceState,
 };
 
 /// A Discord guild object with the core fields needed by REST and Gateway state.
@@ -52,6 +53,8 @@ pub struct Guild {
     pub members: Vec<GuildMember>,
     #[serde(default)]
     pub voice_states: Vec<VoiceState>,
+    #[serde(default)]
+    pub guild_scheduled_events: Vec<GuildScheduledEvent>,
     #[serde(default)]
     pub member_count: Option<u64>,
     #[serde(default)]
