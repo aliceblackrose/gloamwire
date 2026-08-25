@@ -37,7 +37,7 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] Reaction models and dispatches
 - [x] Application command, option, context, and handler models
 - [x] Interaction core, application-command interaction data, and `INTERACTION_CREATE`
-- [ ] Component and modal models
+- [x] Component and modal models
 - [ ] Webhook and invite models
 - [ ] Audit-log and automod models
 - [ ] Scheduled-event and poll models
