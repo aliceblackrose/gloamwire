@@ -231,7 +231,14 @@ mod tests {
             .expect("command data")
             .expect("command interaction");
         assert_eq!(data.id.get(), 300);
-        assert_eq!(data.attachments_len(), 1);
+        assert_eq!(
+            data.resolved
+                .as_ref()
+                .expect("resolved data")
+                .attachments
+                .len(),
+            1
+        );
         assert_eq!(
             data.options[0].value,
             Some(ApplicationCommandInteractionValue::String("500".to_owned()))
@@ -270,14 +277,5 @@ mod tests {
                 .get(ApplicationIntegrationType::USER_INSTALL)
                 .is_none()
         );
-    }
-}
-
-impl ApplicationCommandInteractionData {
-    #[cfg(test)]
-    fn attachments_len(&self) -> usize {
-        self.resolved
-            .as_ref()
-            .map_or(0, |resolved| resolved.attachments.len())
     }
 }
