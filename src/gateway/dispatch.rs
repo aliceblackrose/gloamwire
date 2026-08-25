@@ -443,7 +443,10 @@ mod tests {
         };
 
         assert_eq!(event.action.kind, AutoModerationActionType::BLOCK_MESSAGE);
-        assert_eq!(event.rule_trigger_type, AutoModerationTriggerType::MEMBER_PROFILE);
+        assert_eq!(
+            event.rule_trigger_type,
+            AutoModerationTriggerType::MEMBER_PROFILE
+        );
         assert_eq!(event.rule_id.get(), 20);
     }
 
