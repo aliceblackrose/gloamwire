@@ -196,8 +196,7 @@ pub fn compute_channel_permissions(
     let mut role_deny = Permissions::empty();
     for role_id in member_roles {
         if let Some(overwrite) = overwrites.iter().find(|overwrite| {
-            overwrite.kind == PermissionOverwriteType::ROLE
-                && overwrite.id == role_id.snowflake()
+            overwrite.kind == PermissionOverwriteType::ROLE && overwrite.id == role_id.snowflake()
         }) {
             role_allow |= overwrite.allow;
             role_deny |= overwrite.deny;
@@ -207,8 +206,7 @@ pub fn compute_channel_permissions(
     permissions.insert(role_allow);
 
     if let Some(overwrite) = overwrites.iter().find(|overwrite| {
-        overwrite.kind == PermissionOverwriteType::MEMBER
-            && overwrite.id == member_id.snowflake()
+        overwrite.kind == PermissionOverwriteType::MEMBER && overwrite.id == member_id.snowflake()
     }) {
         permissions.remove(overwrite.deny);
         permissions.insert(overwrite.allow);
