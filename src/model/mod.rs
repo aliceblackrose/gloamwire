@@ -12,9 +12,7 @@ mod snowflake;
 mod user;
 mod voice;
 
-pub use channel::{
-    Channel, ChannelFlags, ChannelType, DefaultReaction, ForumTag, ThreadMetadata,
-};
+pub use channel::{Channel, ChannelFlags, ChannelType, DefaultReaction, ForumTag, ThreadMetadata};
 pub use guild::{Guild, UnavailableGuild};
 pub use id::{
     ApplicationId, AttachmentId, ChannelId, CommandId, EmojiId, EntitlementId, GuildId,
