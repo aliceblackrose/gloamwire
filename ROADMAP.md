@@ -47,8 +47,8 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 ## Phase 4 — REST breadth, uploads, and interactions
 
 - [x] Central REST route abstraction with major-parameter bucket identity
-- [ ] JSON, empty, binary, and header-aware response handling
-- [ ] Structured Discord validation errors
+- [x] JSON, empty, binary, and header-aware response handling
+- [x] Structured Discord validation errors
 - [ ] Retry classification and safe idempotent retry policy
 - [ ] Configurable request/connect/pool timeouts
 - [ ] Full message API
