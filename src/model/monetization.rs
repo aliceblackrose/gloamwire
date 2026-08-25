@@ -1,9 +1,7 @@
 use bitflags::bitflags;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use super::{
-    ApplicationId, EntitlementId, GuildId, SkuId, Snowflake, SubscriptionId, UserId,
-};
+use super::{ApplicationId, EntitlementId, GuildId, SkuId, Snowflake, SubscriptionId, UserId};
 
 /// Discord SKU type.
 ///
@@ -144,7 +142,9 @@ pub struct Subscription {
 
 #[cfg(test)]
 mod tests {
-    use super::{Entitlement, EntitlementType, Sku, SkuFlags, SkuType, Subscription, SubscriptionStatus};
+    use super::{
+        Entitlement, EntitlementType, Sku, SkuFlags, SkuType, Subscription, SubscriptionStatus,
+    };
 
     #[test]
     fn parses_subscription_sku_and_flags() {
@@ -186,7 +186,10 @@ mod tests {
         .expect("entitlement");
 
         assert_eq!(entitlement.kind, EntitlementType::PURCHASE);
-        assert_eq!(entitlement.subscription_id.expect("subscription").get(), 1019653835926409216);
+        assert_eq!(
+            entitlement.subscription_id.expect("subscription").get(),
+            1019653835926409216
+        );
         assert_eq!(entitlement.consumed, Some(false));
     }
 
@@ -214,7 +217,8 @@ mod tests {
     #[test]
     fn monetization_numeric_types_preserve_unknown_values() {
         let sku_type: SkuType = serde_json::from_str("99").expect("sku type");
-        let entitlement_type: EntitlementType = serde_json::from_str("99").expect("entitlement type");
+        let entitlement_type: EntitlementType =
+            serde_json::from_str("99").expect("entitlement type");
         let status: SubscriptionStatus = serde_json::from_str("99").expect("subscription status");
 
         assert_eq!(sku_type, SkuType(99));
