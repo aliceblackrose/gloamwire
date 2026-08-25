@@ -96,7 +96,7 @@ pub enum ApplicationCommandChoiceValue {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApplicationCommandOptionChoice {
     pub name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name_localizations: Option<BTreeMap<String, String>>,
     pub value: ApplicationCommandChoiceValue,
 }
@@ -107,30 +107,30 @@ pub struct ApplicationCommandOption {
     #[serde(rename = "type")]
     pub kind: ApplicationCommandOptionType,
     pub name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name_localizations: Option<BTreeMap<String, String>>,
     pub description: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description_localizations: Option<BTreeMap<String, String>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub choices: Vec<ApplicationCommandOptionChoice>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<ApplicationCommandOption>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub channel_types: Vec<ChannelType>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_value: Option<ApplicationCommandNumericValue>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_value: Option<ApplicationCommandNumericValue>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_length: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_length: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autocomplete: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub file_types: Vec<String>,
 }
 
@@ -146,9 +146,13 @@ pub struct ApplicationCommand {
     pub name: String,
     #[serde(default)]
     pub name_localizations: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub name_localized: Option<String>,
     pub description: String,
     #[serde(default)]
     pub description_localizations: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub description_localized: Option<String>,
     #[serde(default)]
     pub options: Vec<ApplicationCommandOption>,
     pub default_member_permissions: Option<Permissions>,
@@ -165,6 +169,36 @@ pub struct ApplicationCommand {
     pub version: Snowflake,
     #[serde(default)]
     pub handler: Option<ApplicationCommandHandlerType>,
+}
+
+/// Target kind for one application-command permission overwrite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ApplicationCommandPermissionType(pub u8);
+
+impl ApplicationCommandPermissionType {
+    pub const ROLE: Self = Self(1);
+    pub const USER: Self = Self(2);
+    pub const CHANNEL: Self = Self(3);
+}
+
+/// One role, user, or channel permission overwrite for an application command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationCommandPermission {
+    pub id: Snowflake,
+    #[serde(rename = "type")]
+    pub kind: ApplicationCommandPermissionType,
+    pub permission: bool,
+}
+
+/// Permission overwrites for one command, or defaults keyed by application ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuildApplicationCommandPermissions {
+    pub id: Snowflake,
+    pub application_id: ApplicationId,
+    pub guild_id: GuildId,
+    #[serde(default)]
+    pub permissions: Vec<ApplicationCommandPermission>,
 }
 
 #[cfg(test)]
@@ -266,5 +300,32 @@ mod tests {
     fn command_types_preserve_unknown_values() {
         let kind: ApplicationCommandType = serde_json::from_str("9").expect("command type");
         assert_eq!(kind, ApplicationCommandType(9));
+    }
+
+    #[test]
+    fn command_options_omit_unused_request_fields() {
+        let option = super::ApplicationCommandOption {
+            kind: ApplicationCommandOptionType::STRING,
+            name: "query".to_owned(),
+            name_localizations: None,
+            description: "Search text".to_owned(),
+            description_localizations: None,
+            required: None,
+            choices: Vec::new(),
+            options: Vec::new(),
+            channel_types: Vec::new(),
+            min_value: None,
+            max_value: None,
+            min_length: None,
+            max_length: None,
+            autocomplete: None,
+            file_types: Vec::new(),
+        };
+        let value = serde_json::to_value(option).expect("option");
+
+        assert_eq!(
+            value,
+            serde_json::json!({"type":3,"name":"query","description":"Search text"})
+        );
     }
 }

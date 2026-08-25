@@ -56,7 +56,7 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] Guild, channel, and thread APIs
 - [x] Role, member, and moderation APIs
 - [x] Webhook, audit-log, invite, and scheduled-event APIs
-- [ ] Application commands and interaction responses/followups
+- [x] Application commands and interaction responses/followups
 - [x] Pagination primitives
 - [ ] OAuth2 support
 - [ ] CDN URL helpers
