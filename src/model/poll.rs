@@ -107,8 +107,8 @@ mod tests {
 
     #[test]
     fn poll_media_text_remains_future_optional() {
-        let media: PollMedia = serde_json::from_str(r#"{"emoji":{"name":"👍"}}"#)
-            .expect("future poll media");
+        let media: PollMedia =
+            serde_json::from_str(r#"{"emoji":{"name":"👍"}}"#).expect("future poll media");
         assert!(media.text.is_none());
     }
 
