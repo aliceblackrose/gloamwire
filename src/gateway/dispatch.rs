@@ -5,8 +5,8 @@ use crate::model::{
     ApplicationId, AuditLogEntry, AutoModerationAction, AutoModerationRule, AutoModerationRuleId,
     AutoModerationTriggerType, Channel, ChannelId, Guild, GuildId, GuildMember, GuildMemberFlags,
     GuildScheduledEvent, Interaction, InviteTargetType, Message, MessageId, PartialEmoji,
-    PresenceUpdate, ReactionType, Role, RoleId, ScheduledEventId, Snowflake, UnavailableGuild, User,
-    UserId, VoiceState,
+    PresenceUpdate, ReactionType, Role, RoleId, ScheduledEventId, Snowflake, UnavailableGuild,
+    User, UserId, VoiceState,
 };
 
 use super::DispatchEvent;
@@ -646,8 +646,7 @@ mod tests {
             }),
         };
 
-        let TypedDispatchEvent::MessagePollVoteAdd(event) =
-            dispatch.typed().expect("poll vote")
+        let TypedDispatchEvent::MessagePollVoteAdd(event) = dispatch.typed().expect("poll vote")
         else {
             panic!("expected poll vote add");
         };
