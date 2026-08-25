@@ -6,6 +6,7 @@ mod automod;
 mod channel;
 mod command;
 mod component;
+mod embed;
 mod guild;
 mod id;
 mod interaction;
@@ -45,6 +46,7 @@ pub use component::{
     Component, ComponentOption, ComponentStyle, ComponentType, ComponentValue, MediaGalleryItem,
     Modal, SelectDefaultValue, SeparatorSpacing, UnfurledMediaItem,
 };
+pub use embed::{Embed, EmbedAuthor, EmbedField, EmbedFooter, EmbedMedia, EmbedProvider};
 pub use guild::{Guild, UnavailableGuild};
 pub use id::{
     ApplicationId, AttachmentId, AuditLogEntryId, AutoModerationRuleId, ChannelId, CommandId,
@@ -62,7 +64,12 @@ pub use invite::{
     InviteTargetUsersJobStatus, InviteTargetUsersJobStatusType, InviteType,
 };
 pub use member::{GuildMember, GuildMemberFlags};
-pub use message::{CreateMessage, Message};
+pub use message::{
+    AllowedMentions, AttachmentRequest, AttachmentRequestId, BaseTheme, BulkDeleteMessages,
+    ChannelMention, ChannelPins, CreateMessage, EditMessage, Message, MessageCall, MessageFlags,
+    MessageNonce, MessagePin, MessageReference, MessageReferenceType, MessageType,
+    SharedClientTheme,
+};
 pub use monetization::{
     Entitlement, EntitlementType, Sku, SkuFlags, SkuType, Subscription, SubscriptionStatus,
 };
