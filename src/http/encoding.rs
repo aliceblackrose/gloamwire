@@ -27,7 +27,8 @@ impl QueryBuilder {
     }
 
     pub(crate) fn push_str(&mut self, name: &str, value: &str) {
-        self.query.push(if self.query.is_empty() { '?' } else { '&' });
+        self.query
+            .push(if self.query.is_empty() { '?' } else { '&' });
         self.query.push_str(&percent_encode(name));
         self.query.push('=');
         self.query.push_str(&percent_encode(value));
