@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ApplicationId, Channel, ChannelId, GuildId, GuildMember, GuildScheduledEvent, Permissions, Role,
-    UserId, VoiceState,
+    ApplicationId, Channel, ChannelId, GuildId, GuildMember, GuildScheduledEvent, Permissions,
+    Role, UserId, VoiceState,
 };
 
 /// A Discord guild object with the core fields needed by REST and Gateway state.
