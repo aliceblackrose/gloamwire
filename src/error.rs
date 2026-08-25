@@ -36,6 +36,10 @@ pub enum Error {
     #[error(transparent)]
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
 
+    /// A managed asynchronous shard task failed.
+    #[error(transparent)]
+    TaskJoin(#[from] tokio::task::JoinError),
+
     /// Discord closed the Gateway connection.
     #[error("Discord closed the Gateway connection with {code:?}: {reason}")]
     GatewayClosed {
