@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ChannelId, GuildId, MessageId, User};
+use super::{ChannelId, GuildId, MessageId, Reaction, User};
 
 /// A Discord message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -16,6 +16,9 @@ pub struct Message {
     pub author: User,
     /// Textual message content.
     pub content: String,
+    /// Reactions currently present on the message.
+    #[serde(default)]
+    pub reactions: Vec<Reaction>,
 }
 
 /// Parameters accepted by Discord's Create Message endpoint.
@@ -37,5 +40,25 @@ impl CreateMessage {
             content: Some(content.into()),
             tts: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Message;
+
+    #[test]
+    fn message_reactions_default_when_omitted() {
+        let message: Message = serde_json::from_str(
+            r#"{
+                "id":"1",
+                "channel_id":"2",
+                "author":{"id":"3","username":"gloam","discriminator":"0"},
+                "content":"hello"
+            }"#,
+        )
+        .expect("message");
+
+        assert!(message.reactions.is_empty());
     }
 }
