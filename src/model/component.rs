@@ -277,31 +277,35 @@ mod tests {
         )
         .expect("modal");
 
-        let radio = modal.components[0].component.as_deref().expect("radio group");
+        let radio = modal.components[0]
+            .component
+            .as_deref()
+            .expect("radio group");
         assert_eq!(radio.kind, ComponentType::RADIO_GROUP);
         assert_eq!(radio.options.len(), 2);
 
-        let upload = modal.components[1].component.as_deref().expect("file upload");
+        let upload = modal.components[1]
+            .component
+            .as_deref()
+            .expect("file upload");
         assert_eq!(upload.kind, ComponentType::FILE_UPLOAD);
         assert_eq!(upload.file_types, ["image", ".pdf"]);
     }
 
     #[test]
     fn parses_modal_interaction_scalar_values() {
-        let checkbox: Component = serde_json::from_str(
-            r#"{"type":23,"id":2,"custom_id":"confirm","value":true}"#,
-        )
-        .expect("checkbox response");
+        let checkbox: Component =
+            serde_json::from_str(r#"{"type":23,"id":2,"custom_id":"confirm","value":true}"#)
+                .expect("checkbox response");
 
         assert_eq!(checkbox.value, Some(ComponentValue::Boolean(true)));
     }
 
     #[test]
     fn preserves_unknown_component_types_and_fields() {
-        let component: Component = serde_json::from_str(
-            r#"{"type":99,"future_field":{"enabled":true}}"#,
-        )
-        .expect("future component");
+        let component: Component =
+            serde_json::from_str(r#"{"type":99,"future_field":{"enabled":true}}"#)
+                .expect("future component");
 
         assert_eq!(component.kind, ComponentType(99));
         assert_eq!(component.extra["future_field"]["enabled"], true);
