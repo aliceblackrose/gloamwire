@@ -1,11 +1,7 @@
-use std::io;
-
 use flate2::{Decompress, FlushDecompress};
 use zstd::stream::raw::{Decoder as ZstdDecoder, Operation};
 
-use crate::{
-    error::{Error, Result},
-};
+use crate::error::{Error, Result};
 
 const ZLIB_SUFFIX: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 const DECODE_CHUNK_BYTES: usize = 16 * 1024;
@@ -105,9 +101,6 @@ impl ZlibStreamDecoder {
                 return Ok(decoded);
             }
             if consumed == 0 && written == 0 {
-                if remaining.is_empty() {
-                    return Ok(decoded);
-                }
                 return Err(Error::GatewayCompression(
                     "zlib decoder made no progress".to_owned(),
                 ));
@@ -145,9 +138,6 @@ impl ZstdStreamDecoder {
                 return Ok(decoded);
             }
             if status.bytes_read == 0 && status.bytes_written == 0 {
-                if remaining.is_empty() {
-                    return Ok(decoded);
-                }
                 return Err(Error::GatewayCompression(
                     "zstd decoder made no progress".to_owned(),
                 ));
@@ -155,14 +145,6 @@ impl ZstdStreamDecoder {
         }
     }
 }
-
-impl From<io::Error> for GatewayCompressionError {
-    fn from(error: io::Error) -> Self {
-        Self(error.to_string())
-    }
-}
-
-struct GatewayCompressionError(String);
 
 #[cfg(test)]
 mod tests {
@@ -214,7 +196,10 @@ mod tests {
         let payload = br#"{"op":10,"d":{"heartbeat_interval":45000}}"#;
         let compressed = zstd::stream::encode_all(Cursor::new(payload), 1).expect("compress");
         let mut decoder = GatewayDecoder::new(GatewayCompression::ZstdStream).expect("decoder");
-        assert_eq!(decoder.decode(&compressed).expect("decode"), Some(payload.to_vec()));
+        assert_eq!(
+            decoder.decode(&compressed).expect("decode"),
+            Some(payload.to_vec())
+        );
     }
 
     fn compress_zlib_message(compressor: &mut Compress, payload: &[u8]) -> Vec<u8> {
