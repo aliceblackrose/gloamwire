@@ -34,7 +34,7 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] Typed READY/RESUMED and core dispatch events
 - [x] Forward-compatible unknown-event and unknown-value handling
 - [x] Guild, channel, thread, member, role, permission, presence, and voice-state models
-- [ ] Reaction models and dispatches
+- [x] Reaction models and dispatches
 - [ ] Interaction, command, component, modal, webhook, invite, audit-log, automod, scheduled-event, poll, entitlement, SKU, and subscription models
 - [x] Discord permission calculation
 
