@@ -55,6 +55,10 @@ pub enum Error {
     #[error("Gateway protocol error: {0}")]
     GatewayProtocol(String),
 
+    /// Gateway transport decompression failed.
+    #[error("Gateway compression error: {0}")]
+    GatewayCompression(String),
+
     /// A typed Gateway send event violates a documented payload constraint.
     #[error("invalid Gateway send event: {0}")]
     InvalidGatewaySendEvent(String),
