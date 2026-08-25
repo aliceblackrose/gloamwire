@@ -72,6 +72,18 @@ impl HttpResponse<Vec<u8>> {
         })
     }
 
+    /// Decodes a JSON body or returns `None` for a successful empty response.
+    pub fn into_optional_json<T>(self) -> Result<HttpResponse<Option<T>>>
+    where
+        T: DeserializeOwned,
+    {
+        if self.body.is_empty() {
+            return Ok(self.map(|_| None));
+        }
+
+        self.into_json::<T>().map(|response| response.map(Some))
+    }
+
     /// Discards a successful response body while preserving status and headers.
     #[must_use]
     pub fn into_empty(self) -> HttpResponse<()> {
@@ -115,6 +127,19 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
         assert_eq!(response.body(), &());
+    }
+
+    #[test]
+    fn optional_json_accepts_no_content() {
+        let response = HttpResponse::new(
+            StatusCode::NO_CONTENT,
+            reqwest::header::HeaderMap::new(),
+            Vec::new(),
+        )
+        .into_optional_json::<Payload>()
+        .expect("optional response");
+
+        assert_eq!(response.into_body(), None);
     }
 
     #[test]

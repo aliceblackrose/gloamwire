@@ -66,7 +66,7 @@ pub use invite::{
     Invite, InviteChannel, InviteFlags, InviteGuild, InviteRole, InviteTargetType,
     InviteTargetUsersJobStatus, InviteTargetUsersJobStatusType, InviteType,
 };
-pub use member::{GuildMember, GuildMemberFlags};
+pub use member::{GuildBan, GuildMember, GuildMemberFlags};
 pub use message::{
     AllowedMentions, AttachmentRequest, AttachmentRequestId, BaseTheme, BulkDeleteMessages,
     ChannelMention, ChannelPins, CreateMessage, EditMessage, Message, MessageCall, MessageFlags,
