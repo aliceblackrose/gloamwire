@@ -95,11 +95,7 @@ impl RestClient {
             .into_body())
     }
 
-    async fn request_raw<B>(
-        &self,
-        route: Route,
-        body: Option<&B>,
-    ) -> Result<HttpResponse<Vec<u8>>>
+    async fn request_raw<B>(&self, route: Route, body: Option<&B>) -> Result<HttpResponse<Vec<u8>>>
     where
         B: Serialize + ?Sized,
     {
