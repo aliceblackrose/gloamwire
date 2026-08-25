@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    ApplicationCommandOptionType, ApplicationCommandType, ApplicationId, ApplicationIntegrationType,
-    Attachment, AttachmentId, Channel, ChannelId, CommandId, GuildId, GuildMember, InteractionId,
-    InteractionContextType, Message, MessageId, Permissions, Role, RoleId, Snowflake, User, UserId,
+    ApplicationCommandOptionType, ApplicationCommandType, ApplicationId,
+    ApplicationIntegrationType, Attachment, AttachmentId, Channel, ChannelId, CommandId, GuildId,
+    GuildMember, InteractionContextType, InteractionId, Message, MessageId, Permissions, Role,
+    RoleId, Snowflake, User, UserId,
 };
 
 /// Discord interaction type.
@@ -97,10 +98,7 @@ impl Interaction {
             return Ok(None);
         }
 
-        self.data
-            .clone()
-            .map(serde_json::from_value)
-            .transpose()
+        self.data.clone().map(serde_json::from_value).transpose()
     }
 }
 
