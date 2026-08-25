@@ -24,6 +24,7 @@ use super::{
     DispatchEvent, GatewayCloseCode, GatewayEvent, GatewayIntents, GatewayReconnectStrategy,
     GatewaySession, RequestChannelInfo, RequestGuildMembers, RequestSoundboardSounds,
     UpdatePresence, UpdateVoiceState,
+    compression::{GatewayCompression, GatewayDecoder},
     identify::GatewayIdentifyLimiter,
     rate_limit::{GatewayRateLimiter, OutboundPriority},
 };
@@ -49,6 +50,7 @@ pub struct GatewayConfig {
     url: String,
     shard: Option<[u32; 2]>,
     identify_limiter: Option<GatewayIdentifyLimiter>,
+    compression: GatewayCompression,
 }
 
 impl std::fmt::Debug for GatewayConfig {
@@ -60,6 +62,7 @@ impl std::fmt::Debug for GatewayConfig {
             .field("url", &self.url)
             .field("shard", &self.shard)
             .field("identify_limited", &self.identify_limiter.is_some())
+            .field("compression", &self.compression)
             .finish()
     }
 }
@@ -74,6 +77,7 @@ impl GatewayConfig {
             url: DEFAULT_GATEWAY_URL.to_owned(),
             shard: None,
             identify_limiter: None,
+            compression: GatewayCompression::None,
         }
     }
 
@@ -93,17 +97,31 @@ impl GatewayConfig {
             url: gateway.url.clone(),
             shard: None,
             identify_limiter: Some(GatewayIdentifyLimiter::new(&gateway.session_start_limit)),
+            compression: GatewayCompression::None,
         }
     }
 
     /// Overrides the Gateway WebSocket URL.
     ///
-    /// Version and JSON-encoding query parameters are added when they are not
-    /// already present.
+    /// Version, JSON-encoding, and configured transport-compression query
+    /// parameters are added when they are not already present.
     #[must_use]
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         self.url = url.into();
         self
+    }
+
+    /// Configures Discord Gateway transport compression.
+    #[must_use]
+    pub const fn with_compression(mut self, compression: GatewayCompression) -> Self {
+        self.compression = compression;
+        self
+    }
+
+    /// Returns the configured Gateway transport compression mode.
+    #[must_use]
+    pub const fn compression(&self) -> GatewayCompression {
+        self.compression
     }
 
     /// Configures the shard ID and total shard count sent in Identify.
@@ -126,6 +144,7 @@ impl GatewayConfig {
 pub struct GatewayConnection {
     config: GatewayConfig,
     socket: GatewaySocket,
+    decoder: GatewayDecoder,
     heartbeat: Interval,
     heartbeat_acknowledged: bool,
     sequence: Option<u64>,
@@ -154,11 +173,13 @@ impl GatewayConnection {
     /// Opens the WebSocket, receives Hello, initializes heartbeats, and identifies.
     pub async fn connect(config: GatewayConfig) -> Result<Self> {
         let rate_limiter = Arc::new(GatewayRateLimiter::default());
-        let (socket, heartbeat) = open_and_handshake(&config, None, &rate_limiter).await?;
+        let (socket, decoder, heartbeat) =
+            open_and_handshake(&config, None, &rate_limiter).await?;
 
         Ok(Self {
             config,
             socket,
+            decoder,
             heartbeat,
             heartbeat_acknowledged: true,
             sequence: None,
@@ -262,7 +283,7 @@ impl GatewayConnection {
 
                     self.send_heartbeat().await?;
                 }
-                envelope = next_envelope(&mut self.socket) => {
+                envelope = next_envelope(&mut self.socket, &mut self.decoder) => {
                     let envelope = match envelope {
                         Ok(envelope) => envelope,
                         Err(Error::GatewayClosed { code, reason }) => {
@@ -413,8 +434,9 @@ impl GatewayConnection {
         loop {
             let rate_limiter = Arc::new(GatewayRateLimiter::default());
             match open_and_handshake(&config, session.as_ref(), &rate_limiter).await {
-                Ok((socket, heartbeat)) => {
+                Ok((socket, decoder, heartbeat)) => {
                     self.socket = socket;
+                    self.decoder = decoder;
                     self.heartbeat = heartbeat;
                     self.heartbeat_acknowledged = true;
                     self.last_heartbeat_sent = None;
@@ -487,12 +509,13 @@ async fn open_and_handshake(
     config: &GatewayConfig,
     session: Option<&GatewaySession>,
     rate_limiter: &GatewayRateLimiter,
-) -> Result<(GatewaySocket, Interval)> {
+) -> Result<(GatewaySocket, GatewayDecoder, Interval)> {
     let base_url = session.map_or(config.url.as_str(), GatewaySession::resume_gateway_url);
-    let url = gateway_url(base_url);
+    let url = gateway_url(base_url, config.compression);
     let (mut socket, _) = connect_async(url).await?;
+    let mut decoder = GatewayDecoder::new(config.compression)?;
 
-    let hello = next_envelope(&mut socket).await?;
+    let hello = next_envelope(&mut socket, &mut decoder).await?;
     if hello.op != 10 {
         return Err(Error::GatewayProtocol(format!(
             "expected Hello opcode 10, received {}",
@@ -554,10 +577,13 @@ async fn open_and_handshake(
         .await?;
     }
 
-    Ok((socket, heartbeat))
+    Ok((socket, decoder, heartbeat))
 }
 
-async fn next_envelope(socket: &mut GatewaySocket) -> Result<InboundEnvelope> {
+async fn next_envelope(
+    socket: &mut GatewaySocket,
+    decoder: &mut GatewayDecoder,
+) -> Result<InboundEnvelope> {
     loop {
         let message = socket.next().await.ok_or_else(|| Error::GatewayClosed {
             code: None,
@@ -566,7 +592,11 @@ async fn next_envelope(socket: &mut GatewaySocket) -> Result<InboundEnvelope> {
 
         match message {
             Message::Text(text) => return Ok(serde_json::from_str(text.as_str())?),
-            Message::Binary(bytes) => return Ok(serde_json::from_slice(&bytes)?),
+            Message::Binary(bytes) => {
+                if let Some(decoded) = decoder.decode(&bytes)? {
+                    return Ok(serde_json::from_slice(&decoded)?);
+                }
+            }
             Message::Ping(payload) => socket.send(Message::Pong(payload)).await?,
             Message::Close(frame) => {
                 let code = frame
@@ -627,23 +657,29 @@ where
     Ok(text)
 }
 
-fn gateway_url(base_url: &str) -> String {
+fn gateway_url(base_url: &str, compression: GatewayCompression) -> String {
     let mut url = base_url.trim_end_matches('/').to_owned();
-    let mut separator = if url.contains('?') { '&' } else { '?' };
 
     if !url.contains("v=") {
-        url.push(separator);
-        url.push_str("v=");
-        url.push_str(&GATEWAY_VERSION.to_string());
-        separator = '&';
+        push_query_param(&mut url, "v", &GATEWAY_VERSION.to_string());
     }
-
     if !url.contains("encoding=") {
-        url.push(separator);
-        url.push_str("encoding=json");
+        push_query_param(&mut url, "encoding", "json");
+    }
+    if !url.contains("compress=")
+        && let Some(value) = compression.query_value()
+    {
+        push_query_param(&mut url, "compress", value);
     }
 
     url
+}
+
+fn push_query_param(url: &mut String, key: &str, value: &str) {
+    url.push(if url.contains('?') { '&' } else { '?' });
+    url.push_str(key);
+    url.push('=');
+    url.push_str(value);
 }
 
 fn reconnect_delay(attempt: u32) -> Duration {
@@ -665,21 +701,35 @@ fn reconnect_delay(attempt: u32) -> Duration {
 mod tests {
     use std::time::Duration;
 
-    use super::{gateway_url, reconnect_delay};
+    use super::{GatewayCompression, gateway_url, reconnect_delay};
 
     #[test]
     fn gateway_url_adds_protocol_query() {
         assert_eq!(
-            gateway_url("wss://gateway.discord.gg"),
+            gateway_url("wss://gateway.discord.gg", GatewayCompression::None),
             "wss://gateway.discord.gg?v=10&encoding=json"
+        );
+    }
+
+    #[test]
+    fn gateway_url_adds_transport_compression() {
+        assert_eq!(
+            gateway_url(
+                "wss://gateway.discord.gg",
+                GatewayCompression::ZstdStream
+            ),
+            "wss://gateway.discord.gg?v=10&encoding=json&compress=zstd-stream"
         );
     }
 
     #[test]
     fn gateway_url_preserves_existing_query() {
         assert_eq!(
-            gateway_url("wss://gateway.discord.gg?v=10&encoding=json"),
-            "wss://gateway.discord.gg?v=10&encoding=json"
+            gateway_url(
+                "wss://gateway.discord.gg?v=10&encoding=json&compress=zlib-stream",
+                GatewayCompression::ZlibStream
+            ),
+            "wss://gateway.discord.gg?v=10&encoding=json&compress=zlib-stream"
         );
     }
 
