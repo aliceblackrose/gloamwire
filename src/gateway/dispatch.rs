@@ -177,9 +177,7 @@ impl DispatchEvent {
             "THREAD_CREATE" => TypedDispatchEvent::ThreadCreate(serde_json::from_value(data)?),
             "THREAD_UPDATE" => TypedDispatchEvent::ThreadUpdate(serde_json::from_value(data)?),
             "THREAD_DELETE" => TypedDispatchEvent::ThreadDelete(serde_json::from_value(data)?),
-            "GUILD_MEMBER_ADD" => {
-                TypedDispatchEvent::GuildMemberAdd(serde_json::from_value(data)?)
-            }
+            "GUILD_MEMBER_ADD" => TypedDispatchEvent::GuildMemberAdd(serde_json::from_value(data)?),
             "GUILD_MEMBER_UPDATE" => {
                 TypedDispatchEvent::GuildMemberUpdate(serde_json::from_value(data)?)
             }
@@ -203,9 +201,7 @@ impl DispatchEvent {
             "MESSAGE_DELETE_BULK" => {
                 TypedDispatchEvent::MessageDeleteBulk(serde_json::from_value(data)?)
             }
-            "PRESENCE_UPDATE" => {
-                TypedDispatchEvent::PresenceUpdate(serde_json::from_value(data)?)
-            }
+            "PRESENCE_UPDATE" => TypedDispatchEvent::PresenceUpdate(serde_json::from_value(data)?),
             "VOICE_STATE_UPDATE" => {
                 TypedDispatchEvent::VoiceStateUpdate(serde_json::from_value(data)?)
             }
