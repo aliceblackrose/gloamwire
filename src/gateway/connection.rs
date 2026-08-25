@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -15,11 +15,16 @@ use tokio_tungstenite::{
     },
 };
 
-use crate::error::{Error, Result};
+use crate::{
+    error::{Error, Result},
+    http::GatewayBot,
+};
 
 use super::{
     DispatchEvent, GatewayCloseCode, GatewayEvent, GatewayIntents, GatewayReconnectStrategy,
     GatewaySession,
+    identify::GatewayIdentifyLimiter,
+    rate_limit::{GatewayRateLimiter, OutboundPriority},
 };
 
 const DEFAULT_GATEWAY_URL: &str = "wss://gateway.discord.gg";
@@ -37,6 +42,7 @@ pub struct GatewayConfig {
     intents: GatewayIntents,
     url: String,
     shard: Option<[u32; 2]>,
+    identify_limiter: Option<GatewayIdentifyLimiter>,
 }
 
 impl std::fmt::Debug for GatewayConfig {
@@ -47,6 +53,7 @@ impl std::fmt::Debug for GatewayConfig {
             .field("intents", &self.intents)
             .field("url", &self.url)
             .field("shard", &self.shard)
+            .field("identify_limited", &self.identify_limiter.is_some())
             .finish()
     }
 }
@@ -60,6 +67,26 @@ impl GatewayConfig {
             intents,
             url: DEFAULT_GATEWAY_URL.to_owned(),
             shard: None,
+            identify_limiter: None,
+        }
+    }
+
+    /// Creates configuration from Discord's Get Gateway Bot response.
+    ///
+    /// This uses Discord's discovered Gateway URL and shares the returned
+    /// session-start limits across clones of the configuration.
+    #[must_use]
+    pub fn from_gateway_bot(
+        token: impl Into<String>,
+        intents: GatewayIntents,
+        gateway: &GatewayBot,
+    ) -> Self {
+        Self {
+            token: token.into(),
+            intents,
+            url: gateway.url.clone(),
+            shard: None,
+            identify_limiter: Some(GatewayIdentifyLimiter::new(&gateway.session_start_limit)),
         }
     }
 
@@ -79,6 +106,10 @@ impl GatewayConfig {
         self.shard = Some([shard_id, shard_count]);
         self
     }
+
+    pub(crate) fn shard_id(&self) -> u32 {
+        self.shard.map_or(0, |[shard_id, _]| shard_id)
+    }
 }
 
 /// A live Discord Gateway connection with resumable session state.
@@ -96,6 +127,7 @@ pub struct GatewayConnection {
     last_heartbeat_sent: Option<Instant>,
     latency: Option<Duration>,
     shutdown: bool,
+    rate_limiter: Arc<GatewayRateLimiter>,
 }
 
 impl std::fmt::Debug for GatewayConnection {
@@ -115,7 +147,8 @@ impl std::fmt::Debug for GatewayConnection {
 impl GatewayConnection {
     /// Opens the WebSocket, receives Hello, initializes heartbeats, and identifies.
     pub async fn connect(config: GatewayConfig) -> Result<Self> {
-        let (socket, heartbeat) = open_and_handshake(&config, None).await?;
+        let rate_limiter = Arc::new(GatewayRateLimiter::default());
+        let (socket, heartbeat) = open_and_handshake(&config, None, &rate_limiter).await?;
 
         Ok(Self {
             config,
@@ -127,6 +160,7 @@ impl GatewayConnection {
             last_heartbeat_sent: None,
             latency: None,
             shutdown: false,
+            rate_limiter,
         })
     }
 
@@ -285,7 +319,7 @@ impl GatewayConnection {
 
     async fn send_heartbeat(&mut self) -> Result<()> {
         let sent_at = Instant::now();
-        send_heartbeat(&mut self.socket, self.sequence).await?;
+        send_heartbeat(&mut self.socket, &self.rate_limiter, self.sequence).await?;
         self.last_heartbeat_sent = Some(sent_at);
         self.heartbeat_acknowledged = false;
         Ok(())
@@ -315,7 +349,7 @@ impl GatewayConnection {
         let mut attempt = 0_u32;
 
         loop {
-            match open_and_handshake(&config, session.as_ref()).await {
+            match open_and_handshake(&config, session.as_ref(), &self.rate_limiter).await {
                 Ok((socket, heartbeat)) => {
                     self.socket = socket;
                     self.heartbeat = heartbeat;
@@ -388,6 +422,7 @@ struct Resume<'a> {
 async fn open_and_handshake(
     config: &GatewayConfig,
     session: Option<&GatewaySession>,
+    rate_limiter: &GatewayRateLimiter,
 ) -> Result<(GatewaySocket, Interval)> {
     let base_url = session.map_or(config.url.as_str(), GatewaySession::resume_gateway_url);
     let url = gateway_url(base_url);
@@ -417,6 +452,8 @@ async fn open_and_handshake(
     if let Some(session) = session {
         send_json(
             &mut socket,
+            rate_limiter,
+            OutboundPriority::Normal,
             &OutboundEnvelope {
                 op: 6,
                 d: Resume {
@@ -428,8 +465,14 @@ async fn open_and_handshake(
         )
         .await?;
     } else {
+        if let Some(identify_limiter) = &config.identify_limiter {
+            identify_limiter.acquire(config.shard_id()).await;
+        }
+
         send_json(
             &mut socket,
+            rate_limiter,
+            OutboundPriority::Normal,
             &OutboundEnvelope {
                 op: 2,
                 d: Identify {
@@ -476,11 +519,26 @@ async fn next_envelope(socket: &mut GatewaySocket) -> Result<InboundEnvelope> {
     }
 }
 
-async fn send_heartbeat(socket: &mut GatewaySocket, sequence: Option<u64>) -> Result<()> {
-    send_json(socket, &OutboundEnvelope { op: 1, d: sequence }).await
+async fn send_heartbeat(
+    socket: &mut GatewaySocket,
+    rate_limiter: &GatewayRateLimiter,
+    sequence: Option<u64>,
+) -> Result<()> {
+    send_json(
+        socket,
+        rate_limiter,
+        OutboundPriority::Heartbeat,
+        &OutboundEnvelope { op: 1, d: sequence },
+    )
+    .await
 }
 
-async fn send_json<T>(socket: &mut GatewaySocket, payload: &T) -> Result<()>
+async fn send_json<T>(
+    socket: &mut GatewaySocket,
+    rate_limiter: &GatewayRateLimiter,
+    priority: OutboundPriority,
+    payload: &T,
+) -> Result<()>
 where
     T: Serialize,
 {
@@ -492,6 +550,7 @@ where
         });
     }
 
+    rate_limiter.acquire(priority).await;
     socket.send(Message::Text(text.into())).await?;
     Ok(())
 }

@@ -17,13 +17,13 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 
 ## Phase 2 — Rate limiting, Gateway discovery, and sharding
 
-- [ ] Route-aware REST rate-limit buckets
-- [ ] Global/shared rate-limit handling
-- [ ] Gateway outbound 120-events/60-seconds limiter
-- [ ] Gateway URL discovery through `/gateway/bot`
-- [ ] Session-start-limit and Identify concurrency enforcement
-- [ ] Shard ID/count types and guild-to-shard routing
-- [ ] Multi-shard manager with isolated restart/shutdown
+- [x] Route-aware REST rate-limit buckets
+- [x] Global/shared rate-limit handling
+- [x] Gateway outbound 120-events/60-seconds limiter
+- [x] Gateway URL discovery through `/gateway/bot`
+- [x] Session-start-limit and Identify concurrency enforcement
+- [x] Shard ID/count types and guild-to-shard routing
+- [x] Multi-shard manager with isolated shard recovery/shutdown
 - [ ] Gateway presence, voice-state, member, soundboard, and channel-info commands
 - [ ] Gateway zlib/zstd compression
 - [ ] Configurable JSON/ETF encoding
@@ -39,7 +39,7 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 
 ## Phase 4 — REST breadth, uploads, and interactions
 
-- [ ] Central REST route abstraction with major-parameter bucket identity
+- [x] Central REST route abstraction with major-parameter bucket identity
 - [ ] JSON, empty, binary, and header-aware response handling
 - [ ] Structured Discord validation errors
 - [ ] Retry classification and safe idempotent retry policy
