@@ -4,7 +4,7 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    error::{Error, Result},
+    error::{DiscordApiError, Error, Result},
     model::{ChannelId, CreateMessage, Message, User},
 };
 
@@ -141,16 +141,25 @@ impl RestClient {
                 continue;
             }
 
-            let api_error = serde_json::from_slice::<ApiErrorResponse>(&bytes).ok();
-            let message = api_error
-                .as_ref()
-                .map(|error| error.message.clone())
-                .unwrap_or_else(|| String::from_utf8_lossy(&bytes).into_owned());
+            if let Ok(api_error) = serde_json::from_slice::<ApiErrorResponse>(&bytes) {
+                if let Some(raw_errors) = api_error.errors {
+                    return Err(Error::DiscordApi {
+                        status,
+                        error: DiscordApiError::new(api_error.code, api_error.message, raw_errors),
+                    });
+                }
+
+                return Err(Error::HttpStatus {
+                    status,
+                    code: Some(api_error.code),
+                    message: api_error.message,
+                });
+            }
 
             return Err(Error::HttpStatus {
                 status,
-                code: api_error.map(|error| error.code),
-                message,
+                code: None,
+                message: String::from_utf8_lossy(&bytes).into_owned(),
             });
         }
 
@@ -176,6 +185,8 @@ fn duration_from_seconds(seconds: f64) -> Option<Duration> {
 struct ApiErrorResponse {
     code: i64,
     message: String,
+    #[serde(default)]
+    errors: Option<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Deserialize)]
