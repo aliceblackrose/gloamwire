@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +25,12 @@ macro_rules! snowflake_ids {
                     self.0.get()
                 }
 
+                /// Returns the creation timestamp encoded by this snowflake, in Unix milliseconds.
+                #[must_use]
+                pub const fn timestamp_millis(self) -> u64 {
+                    self.0.timestamp_millis()
+                }
+
                 /// Returns the underlying generic snowflake.
                 #[must_use]
                 pub const fn snowflake(self) -> Snowflake {
@@ -35,6 +41,14 @@ macro_rules! snowflake_ids {
             impl fmt::Display for $name {
                 fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                     self.0.fmt(formatter)
+                }
+            }
+
+            impl FromStr for $name {
+                type Err = std::num::ParseIntError;
+
+                fn from_str(value: &str) -> Result<Self, Self::Err> {
+                    value.parse::<Snowflake>().map(Self)
                 }
             }
 
@@ -92,5 +106,11 @@ mod tests {
     fn typed_ids_keep_discord_string_serialization() {
         let id = GuildId::new(123);
         assert_eq!(serde_json::to_string(&id).expect("serialize"), "\"123\"");
+    }
+
+    #[test]
+    fn typed_ids_parse_from_decimal_strings() {
+        let id: GuildId = "123".parse().expect("parse");
+        assert_eq!(id, GuildId::new(123));
     }
 }

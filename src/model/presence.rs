@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{GuildId, User};
+use super::{GuildId, PartialUser};
 
 /// Presence status received from Discord.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,20 +25,41 @@ pub struct ClientStatus {
     #[serde(default)]
     pub web: Option<String>,
     #[serde(default)]
-    pub embedded: Option<String>,
+    pub vr: Option<String>,
 }
 
 /// A Discord Gateway Presence Update.
 ///
+/// Discord permits `user` to contain only an ID, so this uses [`PartialUser`].
 /// Activities remain raw JSON for now so additions to Discord's rich-presence
 /// schema cannot make the core presence event fail to deserialize.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PresenceUpdate {
-    pub user: User,
+    pub user: PartialUser,
     pub guild_id: GuildId,
     pub status: PresenceStatus,
     #[serde(default)]
     pub activities: Vec<Value>,
     #[serde(default)]
     pub client_status: ClientStatus,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PresenceUpdate;
+
+    #[test]
+    fn accepts_id_only_presence_user() {
+        let json = r#"{
+            "user":{"id":"123"},
+            "guild_id":"456",
+            "status":"online",
+            "activities":[],
+            "client_status":{"web":"online"}
+        }"#;
+
+        let presence: PresenceUpdate = serde_json::from_str(json).expect("presence");
+        assert_eq!(presence.user.id.get(), 123);
+        assert!(presence.user.username.is_none());
+    }
 }

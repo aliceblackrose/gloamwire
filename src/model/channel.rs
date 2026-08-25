@@ -32,7 +32,7 @@ impl ChannelType {
 
 bitflags! {
     /// Discord channel flags.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     pub struct ChannelFlags: u64 {
         const PINNED = 1 << 1;
         const REQUIRE_TAG = 1 << 4;

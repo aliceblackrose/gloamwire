@@ -1,0 +1,263 @@
+use serde::Deserialize;
+use serde_json::Value;
+
+use crate::model::{
+    ApplicationId, Channel, ChannelId, Guild, GuildId, GuildMember, GuildMemberFlags, Message,
+    MessageId, PresenceUpdate, Role, RoleId, Snowflake, UnavailableGuild, User, VoiceState,
+};
+
+use super::DispatchEvent;
+
+/// Typed data for commonly used Discord Gateway dispatches.
+///
+/// Unmodeled event names are preserved in [`Self::Unknown`] so a Discord API
+/// addition does not make a newer Gateway event impossible to consume.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum TypedDispatchEvent {
+    Ready(ReadyEvent),
+    Resumed,
+    GuildCreate(Guild),
+    GuildUpdate(Guild),
+    GuildDelete(UnavailableGuild),
+    ChannelCreate(Channel),
+    ChannelUpdate(Channel),
+    ChannelDelete(Channel),
+    ThreadCreate(Channel),
+    ThreadUpdate(Channel),
+    ThreadDelete(Channel),
+    GuildMemberAdd(GuildMemberAddEvent),
+    GuildMemberUpdate(GuildMemberUpdateEvent),
+    GuildMemberRemove(GuildMemberRemoveEvent),
+    GuildMembersChunk(GuildMembersChunkEvent),
+    GuildRoleCreate(GuildRoleEvent),
+    GuildRoleUpdate(GuildRoleEvent),
+    GuildRoleDelete(GuildRoleDeleteEvent),
+    MessageCreate(Message),
+    MessageDelete(MessageDeleteEvent),
+    MessageDeleteBulk(MessageDeleteBulkEvent),
+    PresenceUpdate(PresenceUpdate),
+    VoiceStateUpdate(VoiceState),
+    UserUpdate(User),
+    Unknown { name: String, data: Value },
+}
+
+/// Data delivered by Discord's `READY` dispatch.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ReadyEvent {
+    pub v: u8,
+    pub user: User,
+    #[serde(default)]
+    pub guilds: Vec<UnavailableGuild>,
+    pub session_id: String,
+    pub resume_gateway_url: String,
+    #[serde(default)]
+    pub shard: Option<[u32; 2]>,
+    pub application: ReadyApplication,
+}
+
+/// The partial application object included in `READY`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct ReadyApplication {
+    pub id: ApplicationId,
+    pub flags: u64,
+}
+
+/// A `GUILD_MEMBER_ADD` dispatch.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GuildMemberAddEvent {
+    pub guild_id: GuildId,
+    #[serde(flatten)]
+    pub member: GuildMember,
+}
+
+/// A `GUILD_MEMBER_UPDATE` dispatch.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GuildMemberUpdateEvent {
+    pub guild_id: GuildId,
+    #[serde(default)]
+    pub roles: Vec<RoleId>,
+    pub user: User,
+    #[serde(default)]
+    pub nick: Option<String>,
+    #[serde(default)]
+    pub avatar: Option<String>,
+    #[serde(default)]
+    pub banner: Option<String>,
+    #[serde(default)]
+    pub joined_at: Option<String>,
+    #[serde(default)]
+    pub premium_since: Option<String>,
+    #[serde(default)]
+    pub deaf: Option<bool>,
+    #[serde(default)]
+    pub mute: Option<bool>,
+    #[serde(default)]
+    pub pending: Option<bool>,
+    #[serde(default)]
+    pub communication_disabled_until: Option<String>,
+    #[serde(default)]
+    pub flags: Option<GuildMemberFlags>,
+}
+
+/// A `GUILD_MEMBER_REMOVE` dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GuildMemberRemoveEvent {
+    pub guild_id: GuildId,
+    pub user: User,
+}
+
+/// A `GUILD_MEMBERS_CHUNK` dispatch.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GuildMembersChunkEvent {
+    pub guild_id: GuildId,
+    #[serde(default)]
+    pub members: Vec<GuildMember>,
+    pub chunk_index: u32,
+    pub chunk_count: u32,
+    #[serde(default)]
+    pub not_found: Vec<Snowflake>,
+    #[serde(default)]
+    pub presences: Vec<Value>,
+    #[serde(default)]
+    pub nonce: Option<String>,
+}
+
+/// A role create/update dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GuildRoleEvent {
+    pub guild_id: GuildId,
+    pub role: Role,
+}
+
+/// A `GUILD_ROLE_DELETE` dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct GuildRoleDeleteEvent {
+    pub guild_id: GuildId,
+    pub role_id: RoleId,
+}
+
+/// A `MESSAGE_DELETE` dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct MessageDeleteEvent {
+    pub id: MessageId,
+    pub channel_id: ChannelId,
+    #[serde(default)]
+    pub guild_id: Option<GuildId>,
+}
+
+/// A `MESSAGE_DELETE_BULK` dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct MessageDeleteBulkEvent {
+    #[serde(default)]
+    pub ids: Vec<MessageId>,
+    pub channel_id: ChannelId,
+    #[serde(default)]
+    pub guild_id: Option<GuildId>,
+}
+
+impl DispatchEvent {
+    /// Parses this raw dispatch into a typed event when Gloamwire models the event name.
+    ///
+    /// Unknown event names are returned as [`TypedDispatchEvent::Unknown`] without
+    /// losing their payload. A known event with an invalid payload returns the
+    /// underlying serde error rather than silently degrading to raw JSON.
+    pub fn typed(&self) -> serde_json::Result<TypedDispatchEvent> {
+        let data = self.data.clone();
+
+        Ok(match self.name.as_str() {
+            "READY" => TypedDispatchEvent::Ready(serde_json::from_value(data)?),
+            "RESUMED" => TypedDispatchEvent::Resumed,
+            "GUILD_CREATE" => TypedDispatchEvent::GuildCreate(serde_json::from_value(data)?),
+            "GUILD_UPDATE" => TypedDispatchEvent::GuildUpdate(serde_json::from_value(data)?),
+            "GUILD_DELETE" => TypedDispatchEvent::GuildDelete(serde_json::from_value(data)?),
+            "CHANNEL_CREATE" => TypedDispatchEvent::ChannelCreate(serde_json::from_value(data)?),
+            "CHANNEL_UPDATE" => TypedDispatchEvent::ChannelUpdate(serde_json::from_value(data)?),
+            "CHANNEL_DELETE" => TypedDispatchEvent::ChannelDelete(serde_json::from_value(data)?),
+            "THREAD_CREATE" => TypedDispatchEvent::ThreadCreate(serde_json::from_value(data)?),
+            "THREAD_UPDATE" => TypedDispatchEvent::ThreadUpdate(serde_json::from_value(data)?),
+            "THREAD_DELETE" => TypedDispatchEvent::ThreadDelete(serde_json::from_value(data)?),
+            "GUILD_MEMBER_ADD" => {
+                TypedDispatchEvent::GuildMemberAdd(serde_json::from_value(data)?)
+            }
+            "GUILD_MEMBER_UPDATE" => {
+                TypedDispatchEvent::GuildMemberUpdate(serde_json::from_value(data)?)
+            }
+            "GUILD_MEMBER_REMOVE" => {
+                TypedDispatchEvent::GuildMemberRemove(serde_json::from_value(data)?)
+            }
+            "GUILD_MEMBERS_CHUNK" => {
+                TypedDispatchEvent::GuildMembersChunk(serde_json::from_value(data)?)
+            }
+            "GUILD_ROLE_CREATE" => {
+                TypedDispatchEvent::GuildRoleCreate(serde_json::from_value(data)?)
+            }
+            "GUILD_ROLE_UPDATE" => {
+                TypedDispatchEvent::GuildRoleUpdate(serde_json::from_value(data)?)
+            }
+            "GUILD_ROLE_DELETE" => {
+                TypedDispatchEvent::GuildRoleDelete(serde_json::from_value(data)?)
+            }
+            "MESSAGE_CREATE" => TypedDispatchEvent::MessageCreate(serde_json::from_value(data)?),
+            "MESSAGE_DELETE" => TypedDispatchEvent::MessageDelete(serde_json::from_value(data)?),
+            "MESSAGE_DELETE_BULK" => {
+                TypedDispatchEvent::MessageDeleteBulk(serde_json::from_value(data)?)
+            }
+            "PRESENCE_UPDATE" => {
+                TypedDispatchEvent::PresenceUpdate(serde_json::from_value(data)?)
+            }
+            "VOICE_STATE_UPDATE" => {
+                TypedDispatchEvent::VoiceStateUpdate(serde_json::from_value(data)?)
+            }
+            "USER_UPDATE" => TypedDispatchEvent::UserUpdate(serde_json::from_value(data)?),
+            _ => TypedDispatchEvent::Unknown {
+                name: self.name.clone(),
+                data,
+            },
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{DispatchEvent, TypedDispatchEvent};
+
+    #[test]
+    fn parses_ready() {
+        let dispatch = DispatchEvent {
+            name: "READY".to_owned(),
+            sequence: 1,
+            data: json!({
+                "v": 10,
+                "user": {"id":"1", "username":"gloam", "discriminator":"0"},
+                "guilds": [{"id":"2", "unavailable":true}],
+                "session_id": "session",
+                "resume_gateway_url": "wss://gateway.discord.gg",
+                "application": {"id":"3", "flags":0}
+            }),
+        };
+
+        let TypedDispatchEvent::Ready(ready) = dispatch.typed().expect("ready") else {
+            panic!("expected ready event");
+        };
+        assert_eq!(ready.v, 10);
+        assert_eq!(ready.guilds[0].id.get(), 2);
+    }
+
+    #[test]
+    fn preserves_unknown_dispatches() {
+        let dispatch = DispatchEvent {
+            name: "FUTURE_EVENT".to_owned(),
+            sequence: 7,
+            data: json!({"new": true}),
+        };
+
+        let TypedDispatchEvent::Unknown { name, data } = dispatch.typed().expect("unknown") else {
+            panic!("expected unknown event");
+        };
+        assert_eq!(name, "FUTURE_EVENT");
+        assert_eq!(data["new"], true);
+    }
+}

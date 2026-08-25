@@ -1,6 +1,6 @@
 use reqwest::Method;
 
-use crate::model::Snowflake;
+use crate::model::ChannelId;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Route {
@@ -19,7 +19,7 @@ impl Route {
         Self::new(Method::GET, "/gateway/bot", "/gateway/bot", None)
     }
 
-    pub(crate) fn create_message(channel_id: Snowflake) -> Self {
+    pub(crate) fn create_message(channel_id: ChannelId) -> Self {
         Self::new(
             Method::POST,
             format!("/channels/{channel_id}/messages"),

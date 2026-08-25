@@ -5,7 +5,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{RestClient, error::Result, model::Snowflake};
+use crate::{RestClient, error::Result, model::GuildId};
 
 use super::{GatewayConfig, GatewayConnection, GatewayEvent, GatewayIntents};
 
@@ -50,7 +50,7 @@ impl ShardCount {
 
 /// Returns the shard responsible for a guild according to Discord's shard formula.
 #[must_use]
-pub const fn shard_for_guild(guild_id: Snowflake, shard_count: ShardCount) -> ShardId {
+pub const fn shard_for_guild(guild_id: GuildId, shard_count: ShardCount) -> ShardId {
     ShardId::new(((guild_id.get() >> 22) % shard_count.get() as u64) as u32)
 }
 
@@ -175,7 +175,7 @@ impl ShardManager {
 #[cfg(test)]
 mod tests {
     use super::{ShardCount, ShardId, shard_for_guild};
-    use crate::model::Snowflake;
+    use crate::model::GuildId;
 
     #[test]
     fn rejects_zero_shards() {
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn computes_discord_shard_formula() {
         let count = ShardCount::new(16).expect("non-zero shard count");
-        let guild = Snowflake::new(81384788765712384);
+        let guild = GuildId::new(81384788765712384);
         let expected = ShardId::new(((guild.get() >> 22) % 16) as u32);
         assert_eq!(shard_for_guild(guild, count), expected);
     }

@@ -5,7 +5,7 @@ use super::{Permissions, RoleId, User};
 
 bitflags! {
     /// Flags attached to a Discord guild member.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
     pub struct GuildMemberFlags: u64 {
         const DID_REJOIN = 1 << 0;
         const COMPLETED_ONBOARDING = 1 << 1;

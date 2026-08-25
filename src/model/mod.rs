@@ -30,5 +30,5 @@ pub use permissions::{
 pub use presence::{ClientStatus, PresenceStatus, PresenceUpdate};
 pub use role::{Role, RoleColors};
 pub use snowflake::{DISCORD_EPOCH_MILLIS, Snowflake};
-pub use user::User;
+pub use user::{PartialUser, User};
 pub use voice::VoiceState;
