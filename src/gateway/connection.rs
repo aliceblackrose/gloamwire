@@ -103,8 +103,8 @@ impl GatewayConfig {
 
     /// Overrides the Gateway WebSocket URL.
     ///
-    /// Version, JSON-encoding, and configured transport-compression query
-    /// parameters are added when they are not already present.
+    /// Gloamwire normalizes the API version, encoding, and transport-compression
+    /// query parameters when the connection is opened.
     #[must_use]
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         self.url = url.into();
@@ -173,8 +173,7 @@ impl GatewayConnection {
     /// Opens the WebSocket, receives Hello, initializes heartbeats, and identifies.
     pub async fn connect(config: GatewayConfig) -> Result<Self> {
         let rate_limiter = Arc::new(GatewayRateLimiter::default());
-        let (socket, decoder, heartbeat) =
-            open_and_handshake(&config, None, &rate_limiter).await?;
+        let (socket, decoder, heartbeat) = open_and_handshake(&config, None, &rate_limiter).await?;
 
         Ok(Self {
             config,
@@ -659,27 +658,39 @@ where
 
 fn gateway_url(base_url: &str, compression: GatewayCompression) -> String {
     let mut url = base_url.trim_end_matches('/').to_owned();
+    let version = GATEWAY_VERSION.to_string();
 
-    if !url.contains("v=") {
-        push_query_param(&mut url, "v", &GATEWAY_VERSION.to_string());
-    }
-    if !url.contains("encoding=") {
-        push_query_param(&mut url, "encoding", "json");
-    }
-    if !url.contains("compress=")
-        && let Some(value) = compression.query_value()
-    {
-        push_query_param(&mut url, "compress", value);
-    }
-
+    set_query_param(&mut url, "v", Some(&version));
+    set_query_param(&mut url, "encoding", Some("json"));
+    set_query_param(&mut url, "compress", compression.query_value());
     url
 }
 
-fn push_query_param(url: &mut String, key: &str, value: &str) {
-    url.push(if url.contains('?') { '&' } else { '?' });
-    url.push_str(key);
-    url.push('=');
-    url.push_str(value);
+fn set_query_param(url: &mut String, key: &str, value: Option<&str>) {
+    let (base, query) = url
+        .split_once('?')
+        .map_or((url.as_str(), ""), |(base, query)| (base, query));
+    let mut parameters: Vec<String> = query
+        .split('&')
+        .filter(|parameter| {
+            !parameter.is_empty()
+                && parameter
+                    .split_once('=')
+                    .map_or(parameter != &key, |(existing_key, _)| existing_key != key)
+        })
+        .map(ToOwned::to_owned)
+        .collect();
+
+    if let Some(value) = value {
+        parameters.push(format!("{key}={value}"));
+    }
+
+    let rebuilt = if parameters.is_empty() {
+        base.to_owned()
+    } else {
+        format!("{base}?{}", parameters.join("&"))
+    };
+    *url = rebuilt;
 }
 
 fn reconnect_delay(attempt: u32) -> Duration {
@@ -714,8 +725,16 @@ mod tests {
     #[test]
     fn gateway_url_adds_transport_compression() {
         assert_eq!(
+            gateway_url("wss://gateway.discord.gg", GatewayCompression::ZstdStream),
+            "wss://gateway.discord.gg?v=10&encoding=json&compress=zstd-stream"
+        );
+    }
+
+    #[test]
+    fn gateway_url_normalizes_protocol_query() {
+        assert_eq!(
             gateway_url(
-                "wss://gateway.discord.gg",
+                "wss://gateway.discord.gg?compress=zlib-stream&encoding=etf&v=9",
                 GatewayCompression::ZstdStream
             ),
             "wss://gateway.discord.gg?v=10&encoding=json&compress=zstd-stream"
@@ -723,13 +742,13 @@ mod tests {
     }
 
     #[test]
-    fn gateway_url_preserves_existing_query() {
+    fn gateway_url_removes_disabled_compression() {
         assert_eq!(
             gateway_url(
                 "wss://gateway.discord.gg?v=10&encoding=json&compress=zlib-stream",
-                GatewayCompression::ZlibStream
+                GatewayCompression::None
             ),
-            "wss://gateway.discord.gg?v=10&encoding=json&compress=zlib-stream"
+            "wss://gateway.discord.gg?v=10&encoding=json"
         );
     }
 
