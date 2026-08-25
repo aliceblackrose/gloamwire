@@ -3,11 +3,11 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::{net::TcpStream, time::{Instant, Interval, MissedTickBehavior}};
-use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async,
-    tungstenite::Message,
+use tokio::{
+    net::TcpStream,
+    time::{Instant, Interval, MissedTickBehavior},
 };
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
 use crate::error::{Error, Result};
 
@@ -78,7 +78,7 @@ impl std::fmt::Debug for GatewayConnection {
 impl GatewayConnection {
     /// Opens the WebSocket, receives Hello, initializes heartbeats, and identifies.
     pub async fn connect(config: GatewayConfig) -> Result<Self> {
-        let (mut socket, _) = connect_async(&config.url).await?;
+        let (mut socket, _) = connect_async(config.url.as_str()).await?;
 
         let hello = next_envelope(&mut socket).await?;
         if hello.op != 10 {
@@ -97,10 +97,8 @@ impl GatewayConnection {
 
         let heartbeat_interval = Duration::from_millis(hello.heartbeat_interval);
         let first_heartbeat = heartbeat_interval.mul_f64(fastrand::f64());
-        let mut heartbeat = tokio::time::interval_at(
-            Instant::now() + first_heartbeat,
-            heartbeat_interval,
-        );
+        let mut heartbeat =
+            tokio::time::interval_at(Instant::now() + first_heartbeat, heartbeat_interval);
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         let identify = OutboundEnvelope {
@@ -239,7 +237,7 @@ async fn next_envelope(socket: &mut GatewaySocket) -> Result<InboundEnvelope> {
             .ok_or_else(|| Error::GatewayClosed("WebSocket stream ended".to_owned()))??;
 
         match message {
-            Message::Text(text) => return Ok(serde_json::from_str(text.as_ref())?),
+            Message::Text(text) => return Ok(serde_json::from_str(text.as_str())?),
             Message::Binary(bytes) => return Ok(serde_json::from_slice(&bytes)?),
             Message::Ping(payload) => socket.send(Message::Pong(payload)).await?,
             Message::Close(frame) => {
