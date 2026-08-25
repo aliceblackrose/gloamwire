@@ -12,6 +12,7 @@ mod interaction;
 mod invite;
 mod member;
 mod message;
+mod monetization;
 mod permissions;
 mod poll;
 mod presence;
@@ -48,7 +49,7 @@ pub use guild::{Guild, UnavailableGuild};
 pub use id::{
     ApplicationId, AttachmentId, AuditLogEntryId, AutoModerationRuleId, ChannelId, CommandId,
     EmojiId, EntitlementId, GuildId, InteractionId, MessageId, RoleId, ScheduledEventId, SkuId,
-    SoundboardSoundId, StickerId, UserId, WebhookId,
+    SoundboardSoundId, StickerId, SubscriptionId, UserId, WebhookId,
 };
 pub use interaction::{
     ApplicationCommandInteractionData, ApplicationCommandInteractionDataOption,
@@ -62,6 +63,9 @@ pub use invite::{
 };
 pub use member::{GuildMember, GuildMemberFlags};
 pub use message::{CreateMessage, Message};
+pub use monetization::{
+    Entitlement, EntitlementType, Sku, SkuFlags, SkuType, Subscription, SubscriptionStatus,
+};
 pub use permissions::{
     PermissionOverwrite, PermissionOverwriteType, Permissions, compute_base_permissions,
     compute_channel_permissions,

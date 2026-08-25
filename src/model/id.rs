@@ -96,6 +96,7 @@ snowflake_ids!(
     SkuId,
     SoundboardSoundId,
     StickerId,
+    SubscriptionId,
     UserId,
     WebhookId,
 );
