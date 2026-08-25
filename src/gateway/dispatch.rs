@@ -4,8 +4,9 @@ use serde_json::Value;
 use crate::model::{
     ApplicationId, AuditLogEntry, AutoModerationAction, AutoModerationRule, AutoModerationRuleId,
     AutoModerationTriggerType, Channel, ChannelId, Guild, GuildId, GuildMember, GuildMemberFlags,
-    Interaction, InviteTargetType, Message, MessageId, PartialEmoji, PresenceUpdate, ReactionType,
-    Role, RoleId, Snowflake, UnavailableGuild, User, UserId, VoiceState,
+    GuildScheduledEvent, Interaction, InviteTargetType, Message, MessageId, PartialEmoji,
+    PresenceUpdate, ReactionType, Role, RoleId, ScheduledEventId, Snowflake, UnavailableGuild,
+    User, UserId, VoiceState,
 };
 
 use super::DispatchEvent;
@@ -27,6 +28,11 @@ pub enum TypedDispatchEvent {
     GuildUpdate(Guild),
     GuildDelete(UnavailableGuild),
     GuildAuditLogEntryCreate(GuildAuditLogEntryCreateEvent),
+    GuildScheduledEventCreate(GuildScheduledEvent),
+    GuildScheduledEventUpdate(GuildScheduledEvent),
+    GuildScheduledEventDelete(GuildScheduledEvent),
+    GuildScheduledEventUserAdd(GuildScheduledEventUserEvent),
+    GuildScheduledEventUserRemove(GuildScheduledEventUserEvent),
     ChannelCreate(Channel),
     ChannelUpdate(Channel),
     ChannelDelete(Channel),
@@ -49,6 +55,8 @@ pub enum TypedDispatchEvent {
     MessageReactionRemove(MessageReactionRemoveEvent),
     MessageReactionRemoveAll(MessageReactionRemoveAllEvent),
     MessageReactionRemoveEmoji(MessageReactionRemoveEmojiEvent),
+    MessagePollVoteAdd(MessagePollVoteEvent),
+    MessagePollVoteRemove(MessagePollVoteEvent),
     InteractionCreate(Box<Interaction>),
     PresenceUpdate(PresenceUpdate),
     VoiceStateUpdate(VoiceState),
@@ -105,6 +113,14 @@ pub struct GuildAuditLogEntryCreateEvent {
     pub guild_id: GuildId,
     #[serde(flatten)]
     pub entry: AuditLogEntry,
+}
+
+/// A scheduled-event user subscription or unsubscription dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct GuildScheduledEventUserEvent {
+    pub guild_scheduled_event_id: ScheduledEventId,
+    pub user_id: UserId,
+    pub guild_id: GuildId,
 }
 
 /// A `GUILD_MEMBER_ADD` dispatch.
@@ -288,6 +304,17 @@ pub struct MessageReactionRemoveEmojiEvent {
     pub emoji: PartialEmoji,
 }
 
+/// A message poll vote add/remove dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct MessagePollVoteEvent {
+    pub user_id: UserId,
+    pub channel_id: ChannelId,
+    pub message_id: MessageId,
+    #[serde(default)]
+    pub guild_id: Option<GuildId>,
+    pub answer_id: u32,
+}
+
 /// A `WEBHOOKS_UPDATE` dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub struct WebhooksUpdateEvent {
@@ -324,6 +351,21 @@ impl DispatchEvent {
             "GUILD_DELETE" => TypedDispatchEvent::GuildDelete(serde_json::from_value(data)?),
             "GUILD_AUDIT_LOG_ENTRY_CREATE" => {
                 TypedDispatchEvent::GuildAuditLogEntryCreate(serde_json::from_value(data)?)
+            }
+            "GUILD_SCHEDULED_EVENT_CREATE" => {
+                TypedDispatchEvent::GuildScheduledEventCreate(serde_json::from_value(data)?)
+            }
+            "GUILD_SCHEDULED_EVENT_UPDATE" => {
+                TypedDispatchEvent::GuildScheduledEventUpdate(serde_json::from_value(data)?)
+            }
+            "GUILD_SCHEDULED_EVENT_DELETE" => {
+                TypedDispatchEvent::GuildScheduledEventDelete(serde_json::from_value(data)?)
+            }
+            "GUILD_SCHEDULED_EVENT_USER_ADD" => {
+                TypedDispatchEvent::GuildScheduledEventUserAdd(serde_json::from_value(data)?)
+            }
+            "GUILD_SCHEDULED_EVENT_USER_REMOVE" => {
+                TypedDispatchEvent::GuildScheduledEventUserRemove(serde_json::from_value(data)?)
             }
             "CHANNEL_CREATE" => TypedDispatchEvent::ChannelCreate(serde_json::from_value(data)?),
             "CHANNEL_UPDATE" => TypedDispatchEvent::ChannelUpdate(serde_json::from_value(data)?),
@@ -369,6 +411,12 @@ impl DispatchEvent {
             "MESSAGE_REACTION_REMOVE_EMOJI" => {
                 TypedDispatchEvent::MessageReactionRemoveEmoji(serde_json::from_value(data)?)
             }
+            "MESSAGE_POLL_VOTE_ADD" => {
+                TypedDispatchEvent::MessagePollVoteAdd(serde_json::from_value(data)?)
+            }
+            "MESSAGE_POLL_VOTE_REMOVE" => {
+                TypedDispatchEvent::MessagePollVoteRemove(serde_json::from_value(data)?)
+            }
             "INTERACTION_CREATE" => {
                 TypedDispatchEvent::InteractionCreate(Box::new(serde_json::from_value(data)?))
             }
@@ -391,8 +439,8 @@ mod tests {
     use serde_json::json;
 
     use crate::model::{
-        AuditLogEvent, AutoModerationActionType, AutoModerationTriggerType, InteractionType,
-        InviteTargetType, ReactionType,
+        AuditLogEvent, AutoModerationActionType, AutoModerationTriggerType,
+        GuildScheduledEventEntityType, InteractionType, InviteTargetType, ReactionType,
     };
 
     use super::{DispatchEvent, TypedDispatchEvent};
@@ -478,10 +526,63 @@ mod tests {
     }
 
     #[test]
+    fn parses_scheduled_event_create() {
+        let dispatch = DispatchEvent {
+            name: "GUILD_SCHEDULED_EVENT_CREATE".to_owned(),
+            sequence: 4,
+            data: json!({
+                "id":"100",
+                "guild_id":"200",
+                "channel_id":null,
+                "name":"Meetup",
+                "scheduled_start_time":"2026-09-01T18:00:00+00:00",
+                "scheduled_end_time":"2026-09-01T20:00:00+00:00",
+                "privacy_level":2,
+                "status":1,
+                "entity_type":3,
+                "entity_id":null,
+                "entity_metadata":{"location":"Chicago"},
+                "recurrence_rule":null
+            }),
+        };
+
+        let TypedDispatchEvent::GuildScheduledEventCreate(event) =
+            dispatch.typed().expect("scheduled event")
+        else {
+            panic!("expected scheduled event create");
+        };
+
+        assert_eq!(event.entity_type, GuildScheduledEventEntityType::EXTERNAL);
+        assert_eq!(event.id.get(), 100);
+    }
+
+    #[test]
+    fn parses_scheduled_event_user_add() {
+        let dispatch = DispatchEvent {
+            name: "GUILD_SCHEDULED_EVENT_USER_ADD".to_owned(),
+            sequence: 5,
+            data: json!({
+                "guild_scheduled_event_id":"100",
+                "user_id":"200",
+                "guild_id":"300"
+            }),
+        };
+
+        let TypedDispatchEvent::GuildScheduledEventUserAdd(event) =
+            dispatch.typed().expect("scheduled event user")
+        else {
+            panic!("expected scheduled event user add");
+        };
+
+        assert_eq!(event.guild_scheduled_event_id.get(), 100);
+        assert_eq!(event.user_id.get(), 200);
+    }
+
+    #[test]
     fn parses_super_reaction_add() {
         let dispatch = DispatchEvent {
             name: "MESSAGE_REACTION_ADD".to_owned(),
-            sequence: 4,
+            sequence: 6,
             data: json!({
                 "user_id":"10",
                 "channel_id":"20",
@@ -512,7 +613,7 @@ mod tests {
     fn parses_reaction_remove_emoji_with_deleted_name() {
         let dispatch = DispatchEvent {
             name: "MESSAGE_REACTION_REMOVE_EMOJI".to_owned(),
-            sequence: 5,
+            sequence: 7,
             data: json!({
                 "channel_id":"20",
                 "message_id":"30",
@@ -532,10 +633,33 @@ mod tests {
     }
 
     #[test]
+    fn parses_poll_vote_add() {
+        let dispatch = DispatchEvent {
+            name: "MESSAGE_POLL_VOTE_ADD".to_owned(),
+            sequence: 8,
+            data: json!({
+                "user_id":"10",
+                "channel_id":"20",
+                "message_id":"30",
+                "guild_id":"40",
+                "answer_id":7
+            }),
+        };
+
+        let TypedDispatchEvent::MessagePollVoteAdd(event) = dispatch.typed().expect("poll vote")
+        else {
+            panic!("expected poll vote add");
+        };
+
+        assert_eq!(event.answer_id, 7);
+        assert_eq!(event.user_id.get(), 10);
+    }
+
+    #[test]
     fn parses_interaction_create() {
         let dispatch = DispatchEvent {
             name: "INTERACTION_CREATE".to_owned(),
-            sequence: 6,
+            sequence: 9,
             data: json!({
                 "id":"100",
                 "application_id":"200",
@@ -562,7 +686,7 @@ mod tests {
     fn parses_invite_create() {
         let dispatch = DispatchEvent {
             name: "INVITE_CREATE".to_owned(),
-            sequence: 7,
+            sequence: 10,
             data: json!({
                 "channel_id":"10",
                 "code":"guest-code",
@@ -594,7 +718,7 @@ mod tests {
     fn parses_webhooks_update() {
         let dispatch = DispatchEvent {
             name: "WEBHOOKS_UPDATE".to_owned(),
-            sequence: 8,
+            sequence: 11,
             data: json!({"guild_id":"20", "channel_id":"10"}),
         };
 
@@ -611,7 +735,7 @@ mod tests {
     fn preserves_unknown_dispatches() {
         let dispatch = DispatchEvent {
             name: "FUTURE_EVENT".to_owned(),
-            sequence: 9,
+            sequence: 12,
             data: json!({"new": true}),
         };
 

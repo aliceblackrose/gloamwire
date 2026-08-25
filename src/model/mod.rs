@@ -13,9 +13,11 @@ mod invite;
 mod member;
 mod message;
 mod permissions;
+mod poll;
 mod presence;
 mod reaction;
 mod role;
+mod scheduled_event;
 mod snowflake;
 mod user;
 mod voice;
@@ -64,9 +66,20 @@ pub use permissions::{
     PermissionOverwrite, PermissionOverwriteType, Permissions, compute_base_permissions,
     compute_channel_permissions,
 };
+pub use poll::{
+    Poll, PollAnswer, PollAnswerCount, PollCreateAnswer, PollCreateRequest, PollLayoutType,
+    PollMedia, PollResults,
+};
 pub use presence::{ClientStatus, PresenceStatus, PresenceUpdate};
 pub use reaction::{PartialEmoji, Reaction, ReactionCountDetails, ReactionType};
 pub use role::{Role, RoleColors};
+pub use scheduled_event::{
+    GuildScheduledEvent, GuildScheduledEventEntityMetadata, GuildScheduledEventEntityType,
+    GuildScheduledEventPrivacyLevel, GuildScheduledEventRecurrenceFrequency,
+    GuildScheduledEventRecurrenceMonth, GuildScheduledEventRecurrenceNWeekday,
+    GuildScheduledEventRecurrenceRule, GuildScheduledEventRecurrenceWeekday,
+    GuildScheduledEventStatus, GuildScheduledEventUser,
+};
 pub use snowflake::{DISCORD_EPOCH_MILLIS, Snowflake};
 pub use user::{PartialUser, User};
 pub use voice::VoiceState;

@@ -40,7 +40,7 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] Component and modal models
 - [x] Webhook and invite models plus Gateway update events
 - [x] Audit-log and automod models plus Gateway events
-- [ ] Scheduled-event and poll models
+- [x] Scheduled-event and poll models plus Gateway events
 - [ ] Entitlement, SKU, and subscription models
 - [x] Discord permission calculation
 

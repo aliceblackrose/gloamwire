@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use super::{
     ApplicationCommand, ApplicationId, AuditLogEntryId, AutoModerationRule, Channel, ChannelId,
-    MessageId, Snowflake, User, UserId, Webhook,
+    GuildScheduledEvent, MessageId, Snowflake, User, UserId, Webhook,
 };
 
 /// Discord audit-log action type.
@@ -163,9 +163,8 @@ pub struct AuditLog {
     pub audit_log_entries: Vec<AuditLogEntry>,
     #[serde(default)]
     pub auto_moderation_rules: Vec<AutoModerationRule>,
-    /// Scheduled events remain lossless until their dedicated Phase 3 model slice.
     #[serde(default)]
-    pub guild_scheduled_events: Vec<Value>,
+    pub guild_scheduled_events: Vec<GuildScheduledEvent>,
     #[serde(default)]
     pub integrations: Vec<AuditLogIntegration>,
     #[serde(default)]
