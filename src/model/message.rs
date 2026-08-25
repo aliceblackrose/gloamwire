@@ -1,17 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-use super::{Snowflake, User};
+use super::{ChannelId, GuildId, MessageId, User};
 
 /// A Discord message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     /// The message ID.
-    pub id: Snowflake,
+    pub id: MessageId,
     /// The channel containing the message.
-    pub channel_id: Snowflake,
+    pub channel_id: ChannelId,
     /// The guild containing the message, when applicable.
     #[serde(default)]
-    pub guild_id: Option<Snowflake>,
+    pub guild_id: Option<GuildId>,
     /// The message author.
     pub author: User,
     /// Textual message content.
