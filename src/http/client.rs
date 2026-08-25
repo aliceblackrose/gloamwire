@@ -13,6 +13,116 @@ use super::{GatewayBot, HttpResponse, rate_limit::RateLimiter, route::Route};
 const API_BASE_URL: &str = "https://discord.com/api/v10";
 const USER_AGENT: &str = "Gloamwire/0.1 (+https://github.com/cybellereaper/Gloamwire)";
 const MAX_RATE_LIMIT_RETRIES: usize = 3;
+const DEFAULT_TRANSIENT_RETRIES: usize = 2;
+const DEFAULT_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
+
+/// Builder for an asynchronous Discord REST client.
+#[derive(Clone)]
+pub struct RestClientBuilder {
+    authorization: HeaderValue,
+    request_timeout: Option<Duration>,
+    connect_timeout: Option<Duration>,
+    pool_idle_timeout: Option<Duration>,
+    max_transient_retries: usize,
+    retry_base_delay: Duration,
+}
+
+impl std::fmt::Debug for RestClientBuilder {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RestClientBuilder")
+            .field("request_timeout", &self.request_timeout)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("pool_idle_timeout", &self.pool_idle_timeout)
+            .field("max_transient_retries", &self.max_transient_retries)
+            .field("retry_base_delay", &self.retry_base_delay)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RestClientBuilder {
+    fn new(token: impl AsRef<str>) -> Result<Self> {
+        let authorization = HeaderValue::from_str(&format!("Bot {}", token.as_ref()))
+            .map_err(|_| Error::InvalidToken)?;
+
+        Ok(Self {
+            authorization,
+            request_timeout: None,
+            connect_timeout: None,
+            pool_idle_timeout: None,
+            max_transient_retries: DEFAULT_TRANSIENT_RETRIES,
+            retry_base_delay: DEFAULT_RETRY_BASE_DELAY,
+        })
+    }
+
+    /// Sets the total timeout for one HTTP request.
+    #[must_use]
+    pub fn request_timeout(mut self, timeout: Duration) -> Self {
+        self.request_timeout = Some(timeout);
+        self
+    }
+
+    /// Sets the timeout for establishing a new HTTP connection.
+    #[must_use]
+    pub fn connect_timeout(mut self, timeout: Duration) -> Self {
+        self.connect_timeout = Some(timeout);
+        self
+    }
+
+    /// Sets how long idle pooled connections may remain available for reuse.
+    #[must_use]
+    pub fn pool_idle_timeout(mut self, timeout: Duration) -> Self {
+        self.pool_idle_timeout = Some(timeout);
+        self
+    }
+
+    /// Sets the number of transient retries for explicitly retry-safe routes.
+    ///
+    /// Discord rate-limit retries are tracked separately and are not affected by
+    /// this value. Non-idempotent routes are never retried for transport or 5xx
+    /// failures regardless of this setting.
+    #[must_use]
+    pub fn max_transient_retries(mut self, retries: usize) -> Self {
+        self.max_transient_retries = retries;
+        self
+    }
+
+    /// Sets the initial delay used for exponential transient-retry backoff.
+    #[must_use]
+    pub fn retry_base_delay(mut self, delay: Duration) -> Self {
+        self.retry_base_delay = delay;
+        self
+    }
+
+    /// Builds the configured REST client.
+    pub fn build(self) -> Result<RestClient> {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, self.authorization);
+
+        let mut builder = reqwest::Client::builder()
+            .default_headers(headers)
+            .user_agent(USER_AGENT);
+
+        if let Some(timeout) = self.request_timeout {
+            builder = builder.timeout(timeout);
+        }
+        if let Some(timeout) = self.connect_timeout {
+            builder = builder.connect_timeout(timeout);
+        }
+        if let Some(timeout) = self.pool_idle_timeout {
+            builder = builder.pool_idle_timeout(timeout);
+        }
+
+        Ok(RestClient {
+            http: builder.build()?,
+            base_url: API_BASE_URL.to_owned(),
+            rate_limiter: Arc::new(RateLimiter::default()),
+            max_transient_retries: self.max_transient_retries,
+            retry_base_delay: self.retry_base_delay,
+        })
+    }
+}
 
 /// An asynchronous Discord REST API client.
 #[derive(Clone)]
@@ -20,6 +130,8 @@ pub struct RestClient {
     http: reqwest::Client,
     base_url: String,
     rate_limiter: Arc<RateLimiter>,
+    max_transient_retries: usize,
+    retry_base_delay: Duration,
 }
 
 impl std::fmt::Debug for RestClient {
@@ -27,6 +139,8 @@ impl std::fmt::Debug for RestClient {
         formatter
             .debug_struct("RestClient")
             .field("base_url", &self.base_url)
+            .field("max_transient_retries", &self.max_transient_retries)
+            .field("retry_base_delay", &self.retry_base_delay)
             .finish_non_exhaustive()
     }
 }
@@ -34,22 +148,12 @@ impl std::fmt::Debug for RestClient {
 impl RestClient {
     /// Creates a client using a raw Discord bot token.
     pub fn new(token: impl AsRef<str>) -> Result<Self> {
-        let authorization = HeaderValue::from_str(&format!("Bot {}", token.as_ref()))
-            .map_err(|_| Error::InvalidToken)?;
+        Self::builder(token)?.build()
+    }
 
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, authorization);
-
-        let http = reqwest::Client::builder()
-            .default_headers(headers)
-            .user_agent(USER_AGENT)
-            .build()?;
-
-        Ok(Self {
-            http,
-            base_url: API_BASE_URL.to_owned(),
-            rate_limiter: Arc::new(RateLimiter::default()),
-        })
+    /// Creates a configurable REST client builder using a raw Discord bot token.
+    pub fn builder(token: impl AsRef<str>) -> Result<RestClientBuilder> {
+        RestClientBuilder::new(token)
     }
 
     /// Overrides the API base URL.
@@ -83,7 +187,7 @@ impl RestClient {
             .await
     }
 
-    async fn request_json<T, B>(&self, route: Route, body: Option<&B>) -> Result<T>
+    pub(crate) async fn request_json<T, B>(&self, route: Route, body: Option<&B>) -> Result<T>
     where
         T: DeserializeOwned,
         B: Serialize + ?Sized,
@@ -95,13 +199,19 @@ impl RestClient {
             .into_body())
     }
 
-    async fn request_raw<B>(&self, route: Route, body: Option<&B>) -> Result<HttpResponse<Vec<u8>>>
+    pub(crate) async fn request_raw<B>(
+        &self,
+        route: Route,
+        body: Option<&B>,
+    ) -> Result<HttpResponse<Vec<u8>>>
     where
         B: Serialize + ?Sized,
     {
         let url = format!("{}{}", self.base_url, route.path);
+        let mut rate_limit_retries = 0;
+        let mut transient_retries = 0;
 
-        for attempt in 0..=MAX_RATE_LIMIT_RETRIES {
+        loop {
             self.rate_limiter.acquire(&route).await;
 
             let mut request = self.http.request(route.method.clone(), &url);
@@ -109,7 +219,21 @@ impl RestClient {
                 request = request.json(body);
             }
 
-            let response = request.send().await?;
+            let response = match request.send().await {
+                Ok(response) => response,
+                Err(error)
+                    if route.is_retry_safe()
+                        && transient_retries < self.max_transient_retries
+                        && is_retryable_transport_error(&error) =>
+                {
+                    let delay = retry_delay(self.retry_base_delay, transient_retries);
+                    transient_retries += 1;
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
+
             let status = response.status();
             let headers = response.headers().clone();
             let bytes = response.bytes().await?.to_vec();
@@ -136,16 +260,51 @@ impl RestClient {
                 return Ok(HttpResponse::new(status, headers, bytes));
             }
 
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RATE_LIMIT_RETRIES
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                && rate_limit_retries < MAX_RATE_LIMIT_RETRIES
             {
+                rate_limit_retries += 1;
+                continue;
+            }
+
+            if route.is_retry_safe()
+                && transient_retries < self.max_transient_retries
+                && is_retryable_status(status)
+            {
+                let delay = retry_delay(self.retry_base_delay, transient_retries);
+                transient_retries += 1;
+                tokio::time::sleep(delay).await;
                 continue;
             }
 
             return Err(response_error(status, &bytes));
         }
-
-        unreachable!("rate-limit retry loop always returns or continues")
     }
+}
+
+fn is_retryable_transport_error(error: &reqwest::Error) -> bool {
+    error.is_connect() || error.is_timeout()
+}
+
+fn is_retryable_status(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::REQUEST_TIMEOUT
+            | reqwest::StatusCode::TOO_EARLY
+            | reqwest::StatusCode::INTERNAL_SERVER_ERROR
+            | reqwest::StatusCode::BAD_GATEWAY
+            | reqwest::StatusCode::SERVICE_UNAVAILABLE
+            | reqwest::StatusCode::GATEWAY_TIMEOUT
+    )
+}
+
+fn retry_delay(base: Duration, attempt: usize) -> Duration {
+    let exponent = attempt.min(6) as i32;
+    let multiplier = 2_f64.powi(exponent);
+    let jitter = 0.5 + fastrand::f64();
+    Duration::from_secs_f64(
+        (base.as_secs_f64() * multiplier * jitter).min(MAX_RETRY_DELAY.as_secs_f64()),
+    )
 }
 
 fn response_error(status: reqwest::StatusCode, bytes: &[u8]) -> Error {
@@ -202,11 +361,13 @@ struct RateLimitResponse {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use reqwest::StatusCode;
 
     use crate::Error;
 
-    use super::response_error;
+    use super::{RestClient, is_retryable_status, response_error, retry_delay};
 
     #[test]
     fn nested_validation_errors_use_structured_variant() {
@@ -263,5 +424,40 @@ mod tests {
         };
         assert_eq!(code, None);
         assert_eq!(message, "upstream unavailable");
+    }
+
+    #[test]
+    fn retries_only_transient_statuses() {
+        assert!(is_retryable_status(StatusCode::REQUEST_TIMEOUT));
+        assert!(is_retryable_status(StatusCode::BAD_GATEWAY));
+        assert!(is_retryable_status(StatusCode::SERVICE_UNAVAILABLE));
+        assert!(!is_retryable_status(StatusCode::BAD_REQUEST));
+        assert!(!is_retryable_status(StatusCode::UNAUTHORIZED));
+        assert!(!is_retryable_status(StatusCode::TOO_MANY_REQUESTS));
+    }
+
+    #[test]
+    fn retry_backoff_is_bounded() {
+        let delay = retry_delay(Duration::from_secs(10), 10);
+        assert!(delay <= super::MAX_RETRY_DELAY);
+    }
+
+    #[test]
+    fn builder_debug_does_not_expose_token() {
+        let builder = RestClient::builder("secret-token").expect("builder");
+        assert!(!format!("{builder:?}").contains("secret-token"));
+    }
+
+    #[test]
+    fn builder_accepts_transport_configuration() {
+        RestClient::builder("token")
+            .expect("builder")
+            .request_timeout(Duration::from_secs(20))
+            .connect_timeout(Duration::from_secs(5))
+            .pool_idle_timeout(Duration::from_secs(30))
+            .max_transient_retries(4)
+            .retry_base_delay(Duration::from_millis(50))
+            .build()
+            .expect("client");
     }
 }
