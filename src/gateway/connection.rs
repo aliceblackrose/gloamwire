@@ -22,7 +22,8 @@ use crate::{
 
 use super::{
     DispatchEvent, GatewayCloseCode, GatewayEvent, GatewayIntents, GatewayReconnectStrategy,
-    GatewaySession,
+    GatewaySession, RequestChannelInfo, RequestGuildMembers, RequestSoundboardSounds,
+    UpdatePresence, UpdateVoiceState,
     identify::GatewayIdentifyLimiter,
     rate_limit::{GatewayRateLimiter, OutboundPriority},
 };
@@ -32,6 +33,11 @@ const GATEWAY_VERSION: u8 = 10;
 const MAX_OUTBOUND_PAYLOAD_BYTES: usize = 4096;
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_millis(500);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
+const UPDATE_PRESENCE_OPCODE: u8 = 3;
+const UPDATE_VOICE_STATE_OPCODE: u8 = 4;
+const REQUEST_GUILD_MEMBERS_OPCODE: u8 = 8;
+const REQUEST_SOUNDBOARD_SOUNDS_OPCODE: u8 = 31;
+const REQUEST_CHANNEL_INFO_OPCODE: u8 = 43;
 
 type GatewaySocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -182,6 +188,35 @@ impl GatewayConnection {
         self.latency
     }
 
+    /// Sends Gateway opcode 3 (Update Presence).
+    pub async fn update_presence(&mut self, update: &UpdatePresence) -> Result<()> {
+        self.send_event(UPDATE_PRESENCE_OPCODE, update).await
+    }
+
+    /// Sends Gateway opcode 4 (Update Voice State).
+    pub async fn update_voice_state(&mut self, update: &UpdateVoiceState) -> Result<()> {
+        self.send_event(UPDATE_VOICE_STATE_OPCODE, update).await
+    }
+
+    /// Sends Gateway opcode 8 (Request Guild Members).
+    pub async fn request_guild_members(&mut self, request: &RequestGuildMembers) -> Result<()> {
+        self.send_event(REQUEST_GUILD_MEMBERS_OPCODE, request).await
+    }
+
+    /// Sends Gateway opcode 31 (Request Soundboard Sounds).
+    pub async fn request_soundboard_sounds(
+        &mut self,
+        request: &RequestSoundboardSounds,
+    ) -> Result<()> {
+        self.send_event(REQUEST_SOUNDBOARD_SOUNDS_OPCODE, request)
+            .await
+    }
+
+    /// Sends Gateway opcode 43 (Request Channel Info).
+    pub async fn request_channel_info(&mut self, request: &RequestChannelInfo) -> Result<()> {
+        self.send_event(REQUEST_CHANNEL_INFO_OPCODE, request).await
+    }
+
     /// Closes the Gateway with WebSocket close code 1000 and invalidates local
     /// resumable session state.
     pub async fn shutdown(&mut self) -> Result<()> {
@@ -317,6 +352,30 @@ impl GatewayConnection {
         }
     }
 
+    async fn send_event<T>(&mut self, opcode: u8, data: &T) -> Result<()>
+    where
+        T: Serialize,
+    {
+        if self.shutdown {
+            return Err(Error::GatewayClosed {
+                code: Some(GatewayCloseCode::Normal),
+                reason: "connection was shut down by the client".to_owned(),
+            });
+        }
+
+        let text = serialize_json(&OutboundEnvelope { op: opcode, d: data })?;
+        if let Some(retry_after) = self
+            .rate_limiter
+            .try_acquire(OutboundPriority::Normal)
+            .await
+        {
+            return Err(Error::GatewayOutboundRateLimited { retry_after });
+        }
+
+        self.socket.send(Message::Text(text.into())).await?;
+        Ok(())
+    }
+
     async fn send_heartbeat(&mut self) -> Result<()> {
         let sent_at = Instant::now();
         send_heartbeat(&mut self.socket, &self.rate_limiter, self.sequence).await?;
@@ -349,13 +408,15 @@ impl GatewayConnection {
         let mut attempt = 0_u32;
 
         loop {
-            match open_and_handshake(&config, session.as_ref(), &self.rate_limiter).await {
+            let rate_limiter = Arc::new(GatewayRateLimiter::default());
+            match open_and_handshake(&config, session.as_ref(), &rate_limiter).await {
                 Ok((socket, heartbeat)) => {
                     self.socket = socket;
                     self.heartbeat = heartbeat;
                     self.heartbeat_acknowledged = true;
                     self.last_heartbeat_sent = None;
                     self.latency = None;
+                    self.rate_limiter = rate_limiter;
                     return Ok(());
                 }
                 Err(Error::WebSocket(_)) | Err(Error::GatewayClosed { .. }) => {
@@ -542,6 +603,16 @@ async fn send_json<T>(
 where
     T: Serialize,
 {
+    let text = serialize_json(payload)?;
+    rate_limiter.acquire(priority).await;
+    socket.send(Message::Text(text.into())).await?;
+    Ok(())
+}
+
+fn serialize_json<T>(payload: &T) -> Result<String>
+where
+    T: Serialize,
+{
     let text = serde_json::to_string(payload)?;
     if text.len() > MAX_OUTBOUND_PAYLOAD_BYTES {
         return Err(Error::GatewayPayloadTooLarge {
@@ -550,9 +621,7 @@ where
         });
     }
 
-    rate_limiter.acquire(priority).await;
-    socket.send(Message::Text(text.into())).await?;
-    Ok(())
+    Ok(text)
 }
 
 fn gateway_url(base_url: &str) -> String {
