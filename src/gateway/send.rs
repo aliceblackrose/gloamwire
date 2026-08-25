@@ -198,10 +198,7 @@ impl RequestGuildMembers {
     }
 
     /// Requests specific guild members by user ID.
-    pub fn users(
-        guild_id: GuildId,
-        user_ids: impl IntoIterator<Item = UserId>,
-    ) -> Result<Self> {
+    pub fn users(guild_id: GuildId, user_ids: impl IntoIterator<Item = UserId>) -> Result<Self> {
         let user_ids: Vec<_> = user_ids.into_iter().collect();
         if user_ids.is_empty() {
             return Err(Error::InvalidGatewaySendEvent(
@@ -309,10 +306,7 @@ pub struct RequestChannelInfo {
 
 impl RequestChannelInfo {
     #[must_use]
-    pub fn new(
-        guild_id: GuildId,
-        fields: impl IntoIterator<Item = ChannelInfoField>,
-    ) -> Self {
+    pub fn new(guild_id: GuildId, fields: impl IntoIterator<Item = ChannelInfoField>) -> Self {
         Self {
             guild_id,
             fields: fields.into_iter().collect(),
@@ -333,8 +327,7 @@ mod tests {
     #[test]
     fn presence_uses_discord_status_and_activity_shape() {
         let presence = UpdatePresence::new(GatewayStatus::DoNotDisturb).with_activity(
-            GatewayActivity::new("Gloamwire", GatewayActivityType::PLAYING)
-                .with_state("testing"),
+            GatewayActivity::new("Gloamwire", GatewayActivityType::PLAYING).with_state("testing"),
         );
 
         assert_eq!(
@@ -391,6 +384,9 @@ mod tests {
             ],
         );
         let value = serde_json::to_value(request).expect("serialize");
-        assert_eq!(value["fields"], json!(["status", "voice_start_time", "future_field"]));
+        assert_eq!(
+            value["fields"],
+            json!(["status", "voice_start_time", "future_field"])
+        );
     }
 }
