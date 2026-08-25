@@ -2,7 +2,10 @@ use std::path::{Path, PathBuf};
 
 use reqwest::multipart::{Form, Part};
 
-use crate::{Result, model::{AttachmentRequest, AttachmentRequestId}};
+use crate::{
+    Result,
+    model::{AttachmentRequest, AttachmentRequestId},
+};
 
 /// Source used for a multipart Discord file upload.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,11 +53,7 @@ impl UploadFile {
 
     /// Creates a file-backed upload descriptor that is streamed from disk.
     #[must_use]
-    pub fn path(
-        id: u32,
-        filename: impl Into<String>,
-        path: impl AsRef<Path>,
-    ) -> Self {
+    pub fn path(id: u32, filename: impl Into<String>, path: impl AsRef<Path>) -> Self {
         Self {
             id,
             filename: filename.into(),
@@ -141,8 +140,7 @@ pub(crate) async fn multipart_form(payload_json: String, files: &[UploadFile]) -
     let mut form = Form::new().text("payload_json", payload_json);
 
     for file in files {
-        form = form
-            .part(format!("files[{}]", file.id), file.part().await?);
+        form = form.part(format!("files[{}]", file.id), file.part().await?);
     }
 
     Ok(form)
