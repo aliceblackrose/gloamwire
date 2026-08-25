@@ -1,9 +1,11 @@
 //! Discord HTTP API support.
 
+mod audit_log;
 mod channel;
 mod client;
 mod encoding;
 mod guild;
+mod invite;
 mod member;
 mod message;
 mod models;
@@ -13,8 +15,11 @@ mod rate_limit;
 mod response;
 mod role;
 mod route;
+mod scheduled_event;
 mod upload;
+mod webhook;
 
+pub use audit_log::AuditLogQuery;
 pub use channel::{
     ArchivedThreadsQuery, EditChannelPermission, FollowedChannel, ForumTagRequest,
     ForumThreadMessage, GroupDmAddRecipient, JoinedPrivateArchivedThreadsQuery, ModifyChannel,
@@ -23,6 +28,7 @@ pub use channel::{
 };
 pub use client::{RestClient, RestClientBuilder};
 pub use guild::{CreateGuildChannel, ModifyGuild, ModifyGuildChannelPosition};
+pub use invite::{CreateChannelInvite, GetInviteQuery};
 pub use member::{
     AddGuildMember, BeginGuildPrune, BulkGuildBan, BulkGuildBanResponse, CreateGuildBan,
     GuildBansQuery, GuildMembersQuery, GuildPruneQuery, GuildPruneResult, ModifyCurrentMember,
@@ -37,4 +43,13 @@ pub use moderation::{CreateAutoModerationRule, ModifyAutoModerationRule};
 pub use pagination::Pagination;
 pub use response::HttpResponse;
 pub use role::{CreateGuildRole, ModifyGuildRole, ModifyGuildRolePosition};
+pub use scheduled_event::{
+    CreateGuildScheduledEvent, GuildScheduledEventRecurrenceRuleRequest,
+    GuildScheduledEventUsersQuery, ModifyGuildScheduledEvent,
+};
 pub use upload::{UploadFile, UploadSource};
+pub use webhook::{
+    CreateWebhook, EditWebhookMessage, EditWebhookMessageQuery, ExecuteCompatibleWebhookQuery,
+    ExecuteWebhook, ExecuteWebhookQuery, ModifyWebhook, ModifyWebhookWithToken,
+    WebhookMessageQuery,
+};

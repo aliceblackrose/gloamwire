@@ -146,6 +146,19 @@ pub(crate) async fn multipart_form(payload_json: String, files: &[UploadFile]) -
     Ok(form)
 }
 
+pub(crate) async fn named_file_form(
+    payload_json: Option<String>,
+    field: &str,
+    file: &UploadFile,
+) -> Result<Form> {
+    let mut form = Form::new();
+    if let Some(payload_json) = payload_json {
+        form = form.text("payload_json", payload_json);
+    }
+
+    Ok(form.part(field.to_owned(), file.part().await?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::UploadFile;
