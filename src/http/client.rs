@@ -1,9 +1,6 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use reqwest::{
-    Method,
-    header::{AUTHORIZATION, HeaderMap, HeaderValue},
-};
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
@@ -11,7 +8,7 @@ use crate::{
     model::{CreateMessage, Message, Snowflake, User},
 };
 
-use super::GatewayBot;
+use super::{GatewayBot, rate_limit::RateLimiter, route::Route};
 
 const API_BASE_URL: &str = "https://discord.com/api/v10";
 const USER_AGENT: &str = "Gloamwire/0.1 (+https://github.com/cybellereaper/Gloamwire)";
@@ -22,6 +19,7 @@ const MAX_RATE_LIMIT_RETRIES: usize = 3;
 pub struct RestClient {
     http: reqwest::Client,
     base_url: String,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 impl std::fmt::Debug for RestClient {
@@ -50,6 +48,7 @@ impl RestClient {
         Ok(Self {
             http,
             base_url: API_BASE_URL.to_owned(),
+            rate_limiter: Arc::new(RateLimiter::default()),
         })
     }
 
@@ -64,13 +63,13 @@ impl RestClient {
 
     /// Returns the current bot user.
     pub async fn get_current_user(&self) -> Result<User> {
-        self.request_json::<User, ()>(Method::GET, "/users/@me", None)
+        self.request_json::<User, ()>(Route::current_user(), None)
             .await
     }
 
     /// Returns Discord Gateway connection and sharding information for the bot.
     pub async fn get_gateway_bot(&self) -> Result<GatewayBot> {
-        self.request_json::<GatewayBot, ()>(Method::GET, "/gateway/bot", None)
+        self.request_json::<GatewayBot, ()>(Route::gateway_bot(), None)
             .await
     }
 
@@ -80,26 +79,47 @@ impl RestClient {
         channel_id: Snowflake,
         message: &CreateMessage,
     ) -> Result<Message> {
-        let route = format!("/channels/{channel_id}/messages");
-        self.request_json(Method::POST, &route, Some(message)).await
+        self.request_json(Route::create_message(channel_id), Some(message))
+            .await
     }
 
-    async fn request_json<T, B>(&self, method: Method, route: &str, body: Option<&B>) -> Result<T>
+    async fn request_json<T, B>(&self, route: Route, body: Option<&B>) -> Result<T>
     where
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
-        let url = format!("{}{}", self.base_url, route);
+        let url = format!("{}{}", self.base_url, route.path);
 
         for attempt in 0..=MAX_RATE_LIMIT_RETRIES {
-            let mut request = self.http.request(method.clone(), &url);
+            self.rate_limiter.acquire(&route).await;
+
+            let mut request = self.http.request(route.method.clone(), &url);
             if let Some(body) = body {
                 request = request.json(body);
             }
 
             let response = request.send().await?;
             let status = response.status();
+            let headers = response.headers().clone();
             let bytes = response.bytes().await?;
+            let rate_limit = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                serde_json::from_slice::<RateLimitResponse>(&bytes).ok()
+            } else {
+                None
+            };
+            let retry_after = rate_limit
+                .as_ref()
+                .and_then(|body| duration_from_seconds(body.retry_after))
+                .or_else(|| retry_after_header(&headers));
+            let global = rate_limit.as_ref().is_some_and(|body| body.global)
+                || headers
+                    .get("x-ratelimit-scope")
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|scope| scope == "global");
+
+            self.rate_limiter
+                .update(&route, status, &headers, retry_after, global)
+                .await;
 
             if status.is_success() {
                 return Ok(serde_json::from_slice(&bytes)?);
@@ -107,13 +127,6 @@ impl RestClient {
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RATE_LIMIT_RETRIES
             {
-                let retry_after = serde_json::from_slice::<RateLimitResponse>(&bytes)
-                    .ok()
-                    .map(|body| body.retry_after)
-                    .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
-                    .unwrap_or(1.0);
-
-                tokio::time::sleep(Duration::from_secs_f64(retry_after)).await;
                 continue;
             }
 
@@ -134,6 +147,15 @@ impl RestClient {
     }
 }
 
+fn retry_after_header(headers: &HeaderMap) -> Option<Duration> {
+    let seconds = headers.get("retry-after")?.to_str().ok()?.parse::<f64>().ok()?;
+    duration_from_seconds(seconds)
+}
+
+fn duration_from_seconds(seconds: f64) -> Option<Duration> {
+    (seconds.is_finite() && seconds >= 0.0).then(|| Duration::from_secs_f64(seconds))
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct ApiErrorResponse {
     code: i64,
@@ -143,4 +165,6 @@ struct ApiErrorResponse {
 #[derive(Debug, serde::Deserialize)]
 struct RateLimitResponse {
     retry_after: f64,
+    #[serde(default)]
+    global: bool,
 }
