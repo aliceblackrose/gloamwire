@@ -95,13 +95,9 @@ mod tests {
     fn json_decoding_preserves_response_metadata() {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("x-test", HeaderValue::from_static("value"));
-        let response = HttpResponse::new(
-            StatusCode::OK,
-            headers,
-            br#"{"ok":true}"#.to_vec(),
-        )
-        .into_json::<Payload>()
-        .expect("json response");
+        let response = HttpResponse::new(StatusCode::OK, headers, br#"{"ok":true}"#.to_vec())
+            .into_json::<Payload>()
+            .expect("json response");
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()["x-test"], "value");
