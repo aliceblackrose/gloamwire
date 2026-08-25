@@ -6,8 +6,8 @@ use serde_json::Value;
 use super::{
     ApplicationCommandOptionType, ApplicationCommandType, ApplicationId,
     ApplicationIntegrationType, Attachment, AttachmentId, Channel, ChannelId, CommandId, Component,
-    ComponentType, GuildId, GuildMember, InteractionContextType, InteractionId, Message, MessageId,
-    Permissions, Role, RoleId, Snowflake, User, UserId,
+    ComponentType, Entitlement, GuildId, GuildMember, InteractionContextType, InteractionId, Message,
+    MessageId, Permissions, Role, RoleId, Snowflake, User, UserId,
 };
 
 /// Discord interaction type.
@@ -75,9 +75,8 @@ pub struct Interaction {
     pub locale: Option<String>,
     #[serde(default)]
     pub guild_locale: Option<String>,
-    /// Monetization entitlement objects are preserved until their Phase 3 model slice.
     #[serde(default)]
-    pub entitlements: Vec<Value>,
+    pub entitlements: Vec<Entitlement>,
     #[serde(default)]
     pub authorizing_integration_owners: AuthorizingIntegrationOwners,
     #[serde(default)]
