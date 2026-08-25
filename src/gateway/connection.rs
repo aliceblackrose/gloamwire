@@ -363,7 +363,10 @@ impl GatewayConnection {
             });
         }
 
-        let text = serialize_json(&OutboundEnvelope { op: opcode, d: data })?;
+        let text = serialize_json(&OutboundEnvelope {
+            op: opcode,
+            d: data,
+        })?;
         if let Some(retry_after) = self
             .rate_limiter
             .try_acquire(OutboundPriority::Normal)
