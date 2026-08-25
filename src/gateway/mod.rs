@@ -7,6 +7,7 @@ mod event;
 mod identify;
 mod intents;
 mod rate_limit;
+mod send;
 mod session;
 mod shard;
 
@@ -19,5 +20,9 @@ pub use dispatch::{
 };
 pub use event::{DispatchEvent, GatewayEvent};
 pub use intents::GatewayIntents;
+pub use send::{
+    ChannelInfoField, GatewayActivity, GatewayActivityType, GatewayStatus, RequestChannelInfo,
+    RequestGuildMembers, RequestSoundboardSounds, UpdatePresence, UpdateVoiceState,
+};
 pub use session::GatewaySession;
 pub use shard::{ShardCount, ShardEvent, ShardId, ShardManager, shard_for_guild};
