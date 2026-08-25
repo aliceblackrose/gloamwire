@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ChannelId, GuildId, MessageId, Reaction, User};
+use super::{ChannelId, Component, GuildId, MessageId, Reaction, User};
 
 /// A Discord message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -19,6 +19,9 @@ pub struct Message {
     /// Reactions currently present on the message.
     #[serde(default)]
     pub reactions: Vec<Reaction>,
+    /// Message components, including Components V2 layouts and interactive controls.
+    #[serde(default)]
+    pub components: Vec<Component>,
 }
 
 /// Parameters accepted by Discord's Create Message endpoint.
@@ -46,9 +49,10 @@ impl CreateMessage {
 #[cfg(test)]
 mod tests {
     use super::Message;
+    use crate::model::ComponentType;
 
     #[test]
-    fn message_reactions_default_when_omitted() {
+    fn message_collections_default_when_omitted() {
         let message: Message = serde_json::from_str(
             r#"{
                 "id":"1",
@@ -60,5 +64,22 @@ mod tests {
         .expect("message");
 
         assert!(message.reactions.is_empty());
+        assert!(message.components.is_empty());
+    }
+
+    #[test]
+    fn parses_components_v2_on_messages() {
+        let message: Message = serde_json::from_str(
+            r##"{
+                "id":"1",
+                "channel_id":"2",
+                "author":{"id":"3","username":"gloam","discriminator":"0"},
+                "content":"",
+                "components":[{"type":10,"content":"# Hello"}]
+            }"##,
+        )
+        .expect("message");
+
+        assert_eq!(message.components[0].kind, ComponentType::TEXT_DISPLAY);
     }
 }

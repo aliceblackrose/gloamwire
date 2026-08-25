@@ -3,6 +3,7 @@
 mod attachment;
 mod channel;
 mod command;
+mod component;
 mod guild;
 mod id;
 mod interaction;
@@ -24,6 +25,10 @@ pub use command::{
     ApplicationCommandOptionType, ApplicationCommandType, ApplicationIntegrationType,
     InteractionContextType,
 };
+pub use component::{
+    Component, ComponentOption, ComponentStyle, ComponentType, ComponentValue, MediaGalleryItem,
+    Modal, SelectDefaultValue, SeparatorSpacing, UnfurledMediaItem,
+};
 pub use guild::{Guild, UnavailableGuild};
 pub use id::{
     ApplicationId, AttachmentId, ChannelId, CommandId, EmojiId, EntitlementId, GuildId,
@@ -33,7 +38,8 @@ pub use id::{
 pub use interaction::{
     ApplicationCommandInteractionData, ApplicationCommandInteractionDataOption,
     ApplicationCommandInteractionValue, AuthorizingIntegrationOwners, Interaction,
-    InteractionResolvedData, InteractionType,
+    InteractionResolvedData, InteractionType, MessageComponentInteractionData,
+    ModalSubmitInteractionData,
 };
 pub use member::{GuildMember, GuildMemberFlags};
 pub use message::{CreateMessage, Message};

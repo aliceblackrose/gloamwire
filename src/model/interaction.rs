@@ -5,9 +5,9 @@ use serde_json::Value;
 
 use super::{
     ApplicationCommandOptionType, ApplicationCommandType, ApplicationId,
-    ApplicationIntegrationType, Attachment, AttachmentId, Channel, ChannelId, CommandId, GuildId,
-    GuildMember, InteractionContextType, InteractionId, Message, MessageId, Permissions, Role,
-    RoleId, Snowflake, User, UserId,
+    ApplicationIntegrationType, Attachment, AttachmentId, Channel, ChannelId, CommandId, Component,
+    ComponentType, GuildId, GuildMember, InteractionContextType, InteractionId, Message, MessageId,
+    Permissions, Role, RoleId, Snowflake, User, UserId,
 };
 
 /// Discord interaction type.
@@ -42,9 +42,8 @@ impl AuthorizingIntegrationOwners {
 /// A Discord interaction received over the Gateway or interactions webhook.
 ///
 /// `data` stays lossless because its shape depends on the interaction type.
-/// Use [`Self::application_command_data`] for typed application-command and
-/// autocomplete payloads. Component and modal data are modeled separately in a
-/// later Phase 3 slice.
+/// Typed accessors are available for command, message-component, and modal-submit
+/// interactions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Interaction {
     pub id: InteractionId,
@@ -100,6 +99,26 @@ impl Interaction {
 
         self.data.clone().map(serde_json::from_value).transpose()
     }
+
+    /// Parses data for a message-component interaction.
+    pub fn message_component_data(
+        &self,
+    ) -> serde_json::Result<Option<MessageComponentInteractionData>> {
+        if self.kind != InteractionType::MESSAGE_COMPONENT {
+            return Ok(None);
+        }
+
+        self.data.clone().map(serde_json::from_value).transpose()
+    }
+
+    /// Parses data for a modal-submit interaction.
+    pub fn modal_submit_data(&self) -> serde_json::Result<Option<ModalSubmitInteractionData>> {
+        if self.kind != InteractionType::MODAL_SUBMIT {
+            return Ok(None);
+        }
+
+        self.data.clone().map(serde_json::from_value).transpose()
+    }
 }
 
 /// Data sent for application-command and autocomplete interactions.
@@ -143,7 +162,30 @@ pub enum ApplicationCommandInteractionValue {
     String(String),
 }
 
-/// Objects resolved from IDs submitted in an application command.
+/// Data sent when a user activates an interactive message component.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MessageComponentInteractionData {
+    pub custom_id: String,
+    pub component_type: ComponentType,
+    #[serde(default)]
+    pub id: Option<u32>,
+    #[serde(default)]
+    pub values: Vec<String>,
+    #[serde(default)]
+    pub resolved: Option<InteractionResolvedData>,
+}
+
+/// Data submitted by a Discord modal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModalSubmitInteractionData {
+    pub custom_id: String,
+    #[serde(default)]
+    pub components: Vec<Component>,
+    #[serde(default)]
+    pub resolved: Option<InteractionResolvedData>,
+}
+
+/// Objects resolved from IDs submitted in an interaction.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InteractionResolvedData {
     #[serde(default)]
@@ -167,7 +209,9 @@ mod tests {
         ApplicationCommandInteractionValue, AuthorizingIntegrationOwners, Interaction,
         InteractionType,
     };
-    use crate::model::{ApplicationIntegrationType, InteractionContextType};
+    use crate::model::{
+        ApplicationIntegrationType, ComponentType, ComponentValue, InteractionContextType,
+    };
 
     #[test]
     fn parses_current_application_command_interaction() {
@@ -243,6 +287,91 @@ mod tests {
             data.options[0].value,
             Some(ApplicationCommandInteractionValue::String("500".to_owned()))
         );
+    }
+
+    #[test]
+    fn parses_message_component_interaction() {
+        let interaction: Interaction = serde_json::from_str(
+            r#"{
+                "id":"100",
+                "application_id":"200",
+                "type":3,
+                "data":{
+                    "component_type":8,
+                    "id":2,
+                    "custom_id":"notification_channel",
+                    "values":["333"],
+                    "resolved":{
+                        "channels":{
+                            "333":{"id":"333","type":0,"name":"general"}
+                        }
+                    }
+                },
+                "token":"token",
+                "version":1,
+                "entitlements":[],
+                "authorizing_integration_owners":{},
+                "attachment_size_limit":0
+            }"#,
+        )
+        .expect("message component interaction");
+
+        let data = interaction
+            .message_component_data()
+            .expect("component data")
+            .expect("component interaction");
+        assert_eq!(data.component_type, ComponentType::CHANNEL_SELECT);
+        assert_eq!(data.id, Some(2));
+        assert_eq!(data.values, ["333"]);
+        assert_eq!(
+            data.resolved
+                .as_ref()
+                .expect("resolved data")
+                .channels
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn parses_modal_submit_interaction() {
+        let interaction: Interaction = serde_json::from_str(
+            r#"{
+                "id":"100",
+                "application_id":"200",
+                "type":5,
+                "data":{
+                    "custom_id":"settings_modal",
+                    "components":[{
+                        "type":18,
+                        "id":1,
+                        "component":{
+                            "type":23,
+                            "id":2,
+                            "custom_id":"confirm",
+                            "value":true
+                        }
+                    }]
+                },
+                "token":"token",
+                "version":1,
+                "entitlements":[],
+                "authorizing_integration_owners":{},
+                "attachment_size_limit":0
+            }"#,
+        )
+        .expect("modal interaction");
+
+        let data = interaction
+            .modal_submit_data()
+            .expect("modal data")
+            .expect("modal submit");
+        let checkbox = data.components[0]
+            .component
+            .as_deref()
+            .expect("checkbox component");
+        assert_eq!(checkbox.kind, ComponentType::CHECKBOX);
+        assert_eq!(checkbox.value, Some(ComponentValue::Boolean(true)));
     }
 
     #[test]
