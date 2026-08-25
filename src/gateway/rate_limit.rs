@@ -73,10 +73,25 @@ mod tests {
         let limiter = GatewayRateLimiter::default();
 
         for _ in 0..NORMAL_EVENT_LIMIT {
-            assert!(limiter.try_acquire(OutboundPriority::Normal).await.is_none());
+            assert!(
+                limiter
+                    .try_acquire(OutboundPriority::Normal)
+                    .await
+                    .is_none()
+            );
         }
 
-        assert!(limiter.try_acquire(OutboundPriority::Normal).await.is_some());
-        assert!(limiter.try_acquire(OutboundPriority::Heartbeat).await.is_none());
+        assert!(
+            limiter
+                .try_acquire(OutboundPriority::Normal)
+                .await
+                .is_some()
+        );
+        assert!(
+            limiter
+                .try_acquire(OutboundPriority::Heartbeat)
+                .await
+                .is_none()
+        );
     }
 }
