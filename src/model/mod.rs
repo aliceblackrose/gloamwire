@@ -7,6 +7,7 @@ mod member;
 mod message;
 mod permissions;
 mod presence;
+mod reaction;
 mod role;
 mod snowflake;
 mod user;
@@ -26,6 +27,7 @@ pub use permissions::{
     compute_channel_permissions,
 };
 pub use presence::{ClientStatus, PresenceStatus, PresenceUpdate};
+pub use reaction::{PartialEmoji, Reaction, ReactionCountDetails, ReactionType};
 pub use role::{Role, RoleColors};
 pub use snowflake::{DISCORD_EPOCH_MILLIS, Snowflake};
 pub use user::{PartialUser, User};
