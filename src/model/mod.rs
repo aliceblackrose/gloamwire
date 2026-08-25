@@ -67,8 +67,8 @@ pub use permissions::{
     compute_channel_permissions,
 };
 pub use poll::{
-    Poll, PollAnswer, PollAnswerCount, PollCreateAnswer, PollCreateRequest, PollLayoutType, PollMedia,
-    PollResults,
+    Poll, PollAnswer, PollAnswerCount, PollCreateAnswer, PollCreateRequest, PollLayoutType,
+    PollMedia, PollResults,
 };
 pub use presence::{ClientStatus, PresenceStatus, PresenceUpdate};
 pub use reaction::{PartialEmoji, Reaction, ReactionCountDetails, ReactionType};
