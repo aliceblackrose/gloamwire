@@ -1,6 +1,7 @@
 //! Discord Gateway WebSocket support.
 
 mod close;
+mod compression;
 mod connection;
 mod dispatch;
 mod event;
@@ -12,6 +13,7 @@ mod session;
 mod shard;
 
 pub use close::{GatewayCloseCode, GatewayReconnectStrategy};
+pub use compression::GatewayCompression;
 pub use connection::{GatewayConfig, GatewayConnection};
 pub use dispatch::{
     GuildMemberAddEvent, GuildMemberRemoveEvent, GuildMemberUpdateEvent, GuildMembersChunkEvent,

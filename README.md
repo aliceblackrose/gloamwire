@@ -12,6 +12,7 @@ The `0.1` foundation includes:
 - Strong Discord ID types such as `GuildId`, `ChannelId`, `MessageId`, and `UserId`.
 - Core guild, channel/thread, member, role, permission, message, presence, user, and voice-state models.
 - Discord Gateway v10 JSON WebSocket connections.
+- Optional per-connection `zlib-stream` and `zstd-stream` Gateway transport compression.
 - Jittered heartbeat scheduling, heartbeat ACK enforcement, latency measurement, and sequence tracking.
 - READY session-state capture and opcode 6 Resume support.
 - Typed Gateway close-code recovery policy with automatic resume/re-identify backoff.
@@ -20,7 +21,7 @@ The `0.1` foundation includes:
 - Typed parsing for common Gateway dispatches while preserving unknown events as raw JSON.
 - Graceful client and shard-manager shutdown.
 
-Gloamwire does **not** yet provide a state cache, command framework, voice media transport, complete REST endpoint/model coverage, Gateway compression/ETF encoding, or every Discord dispatch model. See [ROADMAP.md](ROADMAP.md) for the phased implementation plan.
+Gloamwire does **not** yet provide a state cache, command framework, voice media transport, complete REST endpoint/model coverage, ETF Gateway encoding, or every Discord dispatch model. See [ROADMAP.md](ROADMAP.md) for the phased implementation plan.
 
 ## Requirements
 
@@ -44,12 +45,14 @@ println!("{} ({})", user.username, user.id);
 
 ```rust,no_run
 use gloamwire::gateway::{
-    GatewayConfig, GatewayConnection, GatewayEvent, GatewayIntents, TypedDispatchEvent,
+    GatewayCompression, GatewayConfig, GatewayConnection, GatewayEvent, GatewayIntents,
+    TypedDispatchEvent,
 };
 
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 let token = std::env::var("DISCORD_TOKEN")?;
-let config = GatewayConfig::new(token, GatewayIntents::GUILDS);
+let config = GatewayConfig::new(token, GatewayIntents::GUILDS)
+    .with_compression(GatewayCompression::ZstdStream);
 let mut gateway = GatewayConnection::connect(config).await?;
 
 loop {
