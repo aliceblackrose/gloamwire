@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use reqwest::StatusCode;
 use thiserror::Error;
 
@@ -56,6 +58,13 @@ pub enum Error {
     /// A typed Gateway send event violates a documented payload constraint.
     #[error("invalid Gateway send event: {0}")]
     InvalidGatewaySendEvent(String),
+
+    /// A normal outbound Gateway send would exceed the current connection's rate limit.
+    #[error("Gateway outbound rate limit reached; retry after {retry_after:?}")]
+    GatewayOutboundRateLimited {
+        /// Approximate time until a normal send slot is available.
+        retry_after: Duration,
+    },
 
     /// Discord did not acknowledge the previous heartbeat before the next one was due.
     #[error("Gateway heartbeat was not acknowledged")]
