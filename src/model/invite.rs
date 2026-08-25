@@ -2,7 +2,9 @@ use bitflags::bitflags;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use super::{ChannelId, ChannelType, GuildId, RoleColors, RoleId, User};
+use super::{
+    ChannelId, ChannelType, GuildId, GuildScheduledEvent, RoleColors, RoleId, User,
+};
 
 /// Discord invite type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -127,9 +129,8 @@ pub struct Invite {
     #[serde(default)]
     pub approximate_member_count: Option<u32>,
     pub expires_at: Option<String>,
-    /// Scheduled-event data remains lossless until the scheduled-event model slice lands.
     #[serde(default)]
-    pub guild_scheduled_event: Option<Value>,
+    pub guild_scheduled_event: Option<GuildScheduledEvent>,
     #[serde(default)]
     pub flags: Option<InviteFlags>,
     #[serde(default)]
