@@ -7,11 +7,7 @@ pub struct GatewaySession {
 }
 
 impl GatewaySession {
-    pub(crate) fn new(
-        session_id: String,
-        resume_gateway_url: String,
-        sequence: u64,
-    ) -> Self {
+    pub(crate) fn new(session_id: String, resume_gateway_url: String, sequence: u64) -> Self {
         Self {
             session_id,
             resume_gateway_url,
