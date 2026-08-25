@@ -1,9 +1,11 @@
 //! Core Discord data models.
 
+mod attachment;
 mod channel;
 mod command;
 mod guild;
 mod id;
+mod interaction;
 mod member;
 mod message;
 mod permissions;
@@ -14,6 +16,7 @@ mod snowflake;
 mod user;
 mod voice;
 
+pub use attachment::Attachment;
 pub use channel::{Channel, ChannelFlags, ChannelType, DefaultReaction, ForumTag, ThreadMetadata};
 pub use command::{
     ApplicationCommand, ApplicationCommandChoiceValue, ApplicationCommandHandlerType,
@@ -26,6 +29,11 @@ pub use id::{
     ApplicationId, AttachmentId, ChannelId, CommandId, EmojiId, EntitlementId, GuildId,
     InteractionId, MessageId, RoleId, ScheduledEventId, SkuId, SoundboardSoundId, StickerId,
     UserId, WebhookId,
+};
+pub use interaction::{
+    ApplicationCommandInteractionData, ApplicationCommandInteractionDataOption,
+    ApplicationCommandInteractionValue, AuthorizingIntegrationOwners, Interaction,
+    InteractionResolvedData, InteractionType,
 };
 pub use member::{GuildMember, GuildMemberFlags};
 pub use message::{CreateMessage, Message};

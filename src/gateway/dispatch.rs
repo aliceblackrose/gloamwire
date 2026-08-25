@@ -2,8 +2,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::model::{
-    ApplicationId, Channel, ChannelId, Guild, GuildId, GuildMember, GuildMemberFlags, Message,
-    MessageId, PartialEmoji, PresenceUpdate, ReactionType, Role, RoleId, Snowflake,
+    ApplicationId, Channel, ChannelId, Guild, GuildId, GuildMember, GuildMemberFlags, Interaction,
+    Message, MessageId, PartialEmoji, PresenceUpdate, ReactionType, Role, RoleId, Snowflake,
     UnavailableGuild, User, UserId, VoiceState,
 };
 
@@ -41,6 +41,7 @@ pub enum TypedDispatchEvent {
     MessageReactionRemove(MessageReactionRemoveEvent),
     MessageReactionRemoveAll(MessageReactionRemoveAllEvent),
     MessageReactionRemoveEmoji(MessageReactionRemoveEmojiEvent),
+    InteractionCreate(Box<Interaction>),
     PresenceUpdate(PresenceUpdate),
     VoiceStateUpdate(VoiceState),
     UserUpdate(User),
@@ -271,6 +272,9 @@ impl DispatchEvent {
             "MESSAGE_REACTION_REMOVE_EMOJI" => {
                 TypedDispatchEvent::MessageReactionRemoveEmoji(serde_json::from_value(data)?)
             }
+            "INTERACTION_CREATE" => {
+                TypedDispatchEvent::InteractionCreate(Box::new(serde_json::from_value(data)?))
+            }
             "PRESENCE_UPDATE" => TypedDispatchEvent::PresenceUpdate(serde_json::from_value(data)?),
             "VOICE_STATE_UPDATE" => {
                 TypedDispatchEvent::VoiceStateUpdate(serde_json::from_value(data)?)
@@ -288,7 +292,7 @@ impl DispatchEvent {
 mod tests {
     use serde_json::json;
 
-    use crate::model::ReactionType;
+    use crate::model::{InteractionType, ReactionType};
 
     use super::{DispatchEvent, TypedDispatchEvent};
 
@@ -366,6 +370,33 @@ mod tests {
 
         assert_eq!(event.emoji.id.expect("emoji id").get(), 50);
         assert!(event.emoji.name.is_none());
+    }
+
+    #[test]
+    fn parses_interaction_create() {
+        let dispatch = DispatchEvent {
+            name: "INTERACTION_CREATE".to_owned(),
+            sequence: 4,
+            data: json!({
+                "id":"100",
+                "application_id":"200",
+                "type":1,
+                "token":"token",
+                "version":1,
+                "entitlements":[],
+                "authorizing_integration_owners":{},
+                "attachment_size_limit":0
+            }),
+        };
+
+        let TypedDispatchEvent::InteractionCreate(interaction) =
+            dispatch.typed().expect("interaction create")
+        else {
+            panic!("expected interaction create event");
+        };
+
+        assert_eq!(interaction.kind, InteractionType::PING);
+        assert_eq!(interaction.id.get(), 100);
     }
 
     #[test]
