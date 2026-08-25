@@ -1,4 +1,7 @@
-use reqwest::{Method, header::{HeaderMap, HeaderName, HeaderValue}};
+use reqwest::{
+    Method,
+    header::{HeaderMap, HeaderName, HeaderValue},
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -438,7 +441,13 @@ impl RestClient {
         edit: &EditMessage,
     ) -> Result<Message> {
         self.request_json(
-            message_route(Method::PATCH, channel_id, message_id, "", RetrySafety::Unsafe),
+            message_route(
+                Method::PATCH,
+                channel_id,
+                message_id,
+                "",
+                RetrySafety::Unsafe,
+            ),
             Some(edit),
         )
         .await
@@ -459,7 +468,13 @@ impl RestClient {
             .extend(files.iter().map(UploadFile::attachment_request));
 
         self.request_multipart_json(
-            message_route(Method::PATCH, channel_id, message_id, "", RetrySafety::Unsafe),
+            message_route(
+                Method::PATCH,
+                channel_id,
+                message_id,
+                "",
+                RetrySafety::Unsafe,
+            ),
             &request,
             files,
             HeaderMap::new(),
@@ -468,11 +483,7 @@ impl RestClient {
     }
 
     /// Deletes a message.
-    pub async fn delete_message(
-        &self,
-        channel_id: ChannelId,
-        message_id: MessageId,
-    ) -> Result<()> {
+    pub async fn delete_message(&self, channel_id: ChannelId, message_id: MessageId) -> Result<()> {
         self.delete_message_with_reason(channel_id, message_id, None)
             .await
     }
@@ -485,7 +496,13 @@ impl RestClient {
         reason: Option<&str>,
     ) -> Result<()> {
         self.request_empty::<()>(
-            message_route(Method::DELETE, channel_id, message_id, "", RetrySafety::Safe),
+            message_route(
+                Method::DELETE,
+                channel_id,
+                message_id,
+                "",
+                RetrySafety::Safe,
+            ),
             None,
             audit_headers(reason),
         )
@@ -583,13 +600,7 @@ fn channel_route(
     channel_id: ChannelId,
     safety: RetrySafety,
 ) -> Route {
-    Route::new(
-        method,
-        path,
-        template,
-        Some(channel_id.to_string()),
-        safety,
-    )
+    Route::new(method, path, template, Some(channel_id.to_string()), safety)
 }
 
 fn message_route(
@@ -618,9 +629,7 @@ fn reaction_route(
     let encoded = percent_encode(emoji);
     channel_route(
         method,
-        format!(
-            "/channels/{channel_id}/messages/{message_id}/reactions/{encoded}{suffix}"
-        ),
+        format!("/channels/{channel_id}/messages/{message_id}/reactions/{encoded}{suffix}"),
         "/channels/{channel_id}/messages/{message_id}/reactions/{emoji}",
         channel_id,
         RetrySafety::Safe,
