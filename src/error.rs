@@ -53,6 +53,10 @@ pub enum Error {
     #[error("Gateway protocol error: {0}")]
     GatewayProtocol(String),
 
+    /// A typed Gateway send event violates a documented payload constraint.
+    #[error("invalid Gateway send event: {0}")]
+    InvalidGatewaySendEvent(String),
+
     /// Discord did not acknowledge the previous heartbeat before the next one was due.
     #[error("Gateway heartbeat was not acknowledged")]
     HeartbeatNotAcknowledged,
