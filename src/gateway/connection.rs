@@ -19,12 +19,24 @@ const MAX_OUTBOUND_PAYLOAD_BYTES: usize = 4096;
 type GatewaySocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 /// Configuration used to create a Gateway connection.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GatewayConfig {
     token: String,
     intents: GatewayIntents,
     url: String,
     shard: Option<[u32; 2]>,
+}
+
+impl std::fmt::Debug for GatewayConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GatewayConfig")
+            .field("token", &"[REDACTED]")
+            .field("intents", &self.intents)
+            .field("url", &self.url)
+            .field("shard", &self.shard)
+            .finish()
+    }
 }
 
 impl GatewayConfig {
