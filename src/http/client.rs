@@ -12,7 +12,7 @@ use super::{
     GatewayBot, HttpResponse,
     rate_limit::RateLimiter,
     route::Route,
-    upload::{UploadFile, multipart_form},
+    upload::{UploadFile, multipart_form, named_file_form},
 };
 
 const API_BASE_URL: &str = "https://discord.com/api/v10";
@@ -282,6 +282,88 @@ impl RestClient {
             .into_body())
     }
 
+    pub(crate) async fn request_optional_multipart_json<T, B>(
+        &self,
+        route: Route,
+        body: &B,
+        files: &[UploadFile],
+        headers: HeaderMap,
+    ) -> Result<Option<T>>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let payload = RequestPayload::Multipart {
+            payload_json: serde_json::to_string(body)?,
+            files,
+        };
+        Ok(self
+            .execute(route, payload, headers)
+            .await?
+            .into_optional_json::<T>()?
+            .into_body())
+    }
+
+    pub(crate) async fn request_bytes(&self, route: Route, headers: HeaderMap) -> Result<Vec<u8>> {
+        Ok(self
+            .execute(route, RequestPayload::Empty, headers)
+            .await?
+            .into_body())
+    }
+
+    pub(crate) async fn request_named_multipart_json<T, B>(
+        &self,
+        route: Route,
+        body: Option<&B>,
+        field: &'static str,
+        file: &UploadFile,
+        headers: HeaderMap,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let payload_json = body.map(serde_json::to_string).transpose()?;
+        Ok(self
+            .execute(
+                route,
+                RequestPayload::NamedFile {
+                    payload_json,
+                    field,
+                    file,
+                },
+                headers,
+            )
+            .await?
+            .into_json::<T>()?
+            .into_body())
+    }
+
+    pub(crate) async fn request_named_multipart_empty<B>(
+        &self,
+        route: Route,
+        body: Option<&B>,
+        field: &'static str,
+        file: &UploadFile,
+        headers: HeaderMap,
+    ) -> Result<()>
+    where
+        B: Serialize + ?Sized,
+    {
+        let payload_json = body.map(serde_json::to_string).transpose()?;
+        self.execute(
+            route,
+            RequestPayload::NamedFile {
+                payload_json,
+                field,
+                file,
+            },
+            headers,
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn execute(
         &self,
         route: Route,
@@ -308,6 +390,11 @@ impl RestClient {
                     payload_json,
                     files,
                 } => request.multipart(multipart_form(payload_json.clone(), files).await?),
+                RequestPayload::NamedFile {
+                    payload_json,
+                    field,
+                    file,
+                } => request.multipart(named_file_form(payload_json.clone(), field, file).await?),
             };
 
             let response = match request.send().await {
@@ -379,6 +466,11 @@ enum RequestPayload<'a> {
     Multipart {
         payload_json: String,
         files: &'a [UploadFile],
+    },
+    NamedFile {
+        payload_json: Option<String>,
+        field: &'static str,
+        file: &'a UploadFile,
     },
 }
 
