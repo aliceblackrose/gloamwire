@@ -30,12 +30,13 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 
 ## Phase 3 — Typed protocol and core Discord models
 
-- [ ] Strong ID types (`GuildId`, `ChannelId`, `MessageId`, `UserId`, and others)
-- [ ] Typed READY/RESUMED and core dispatch events
-- [ ] Forward-compatible unknown-event and unknown-enum handling
-- [ ] Guild, channel, thread, member, role, permission, presence, reaction, and voice-state models
+- [x] Strong ID types (`GuildId`, `ChannelId`, `MessageId`, `UserId`, and others)
+- [x] Typed READY/RESUMED and core dispatch events
+- [x] Forward-compatible unknown-event and unknown-value handling
+- [x] Guild, channel, thread, member, role, permission, presence, and voice-state models
+- [ ] Reaction models and dispatches
 - [ ] Interaction, command, component, modal, webhook, invite, audit-log, automod, scheduled-event, poll, entitlement, SKU, and subscription models
-- [ ] Discord permission calculation
+- [x] Discord permission calculation
 
 ## Phase 4 — REST breadth, uploads, and interactions
 

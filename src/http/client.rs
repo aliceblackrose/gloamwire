@@ -5,7 +5,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
     error::{Error, Result},
-    model::{CreateMessage, Message, Snowflake, User},
+    model::{ChannelId, CreateMessage, Message, User},
 };
 
 use super::{GatewayBot, rate_limit::RateLimiter, route::Route};
@@ -76,7 +76,7 @@ impl RestClient {
     /// Creates a message in a channel.
     pub async fn create_message(
         &self,
-        channel_id: Snowflake,
+        channel_id: ChannelId,
         message: &CreateMessage,
     ) -> Result<Message> {
         self.request_json(Route::create_message(channel_id), Some(message))
