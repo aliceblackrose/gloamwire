@@ -5,9 +5,9 @@ use serde_json::Value;
 
 use super::{
     ApplicationCommandOptionType, ApplicationCommandType, ApplicationId,
-    ApplicationIntegrationType, Attachment, AttachmentId, Channel, ChannelId, CommandId,
-    Component, ComponentType, GuildId, GuildMember, InteractionContextType, InteractionId, Message,
-    MessageId, Permissions, Role, RoleId, Snowflake, User, UserId,
+    ApplicationIntegrationType, Attachment, AttachmentId, Channel, ChannelId, CommandId, Component,
+    ComponentType, GuildId, GuildMember, InteractionContextType, InteractionId, Message, MessageId,
+    Permissions, Role, RoleId, Snowflake, User, UserId,
 };
 
 /// Discord interaction type.
