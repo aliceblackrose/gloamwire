@@ -1,5 +1,9 @@
 use std::fmt::Display;
 
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+
+const AUDIT_LOG_REASON: HeaderName = HeaderName::from_static("x-audit-log-reason");
+
 /// Percent-encodes a UTF-8 value using RFC 3986 unreserved characters.
 pub(crate) fn percent_encode(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
@@ -14,6 +18,17 @@ pub(crate) fn percent_encode(value: &str) -> String {
     }
 
     encoded
+}
+
+pub(crate) fn audit_reason_headers(reason: Option<&str>) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    if let Some(reason) = reason {
+        let encoded = percent_encode(reason);
+        if let Ok(value) = HeaderValue::from_str(&encoded) {
+            headers.insert(AUDIT_LOG_REASON, value);
+        }
+    }
+    headers
 }
 
 #[derive(Debug, Default)]
@@ -41,7 +56,7 @@ impl QueryBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::{QueryBuilder, percent_encode};
+    use super::{QueryBuilder, audit_reason_headers, percent_encode};
 
     #[test]
     fn percent_encodes_unicode_and_reserved_characters() {
@@ -54,5 +69,12 @@ mod tests {
         query.push("limit", 50);
         query.push_str("author_id", "123");
         assert_eq!(query.finish(), "?limit=50&author_id=123");
+    }
+
+    #[test]
+    fn audit_log_reasons_are_header_safe() {
+        let headers = audit_reason_headers(Some("cleanup / spam"));
+
+        assert_eq!(headers["x-audit-log-reason"], "cleanup%20%2F%20spam");
     }
 }
