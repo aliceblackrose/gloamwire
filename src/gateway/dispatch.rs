@@ -2,9 +2,10 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::model::{
-    ApplicationId, Channel, ChannelId, Guild, GuildId, GuildMember, GuildMemberFlags, Interaction,
-    InviteTargetType, Message, MessageId, PartialEmoji, PresenceUpdate, ReactionType, Role, RoleId,
-    Snowflake, UnavailableGuild, User, UserId, VoiceState,
+    ApplicationId, AuditLogEntry, AutoModerationAction, AutoModerationRule, AutoModerationRuleId,
+    AutoModerationTriggerType, Channel, ChannelId, Guild, GuildId, GuildMember, GuildMemberFlags,
+    Interaction, InviteTargetType, Message, MessageId, PartialEmoji, PresenceUpdate, ReactionType,
+    Role, RoleId, Snowflake, UnavailableGuild, User, UserId, VoiceState,
 };
 
 use super::DispatchEvent;
@@ -18,9 +19,14 @@ use super::DispatchEvent;
 pub enum TypedDispatchEvent {
     Ready(ReadyEvent),
     Resumed,
+    AutoModerationRuleCreate(AutoModerationRule),
+    AutoModerationRuleUpdate(AutoModerationRule),
+    AutoModerationRuleDelete(AutoModerationRule),
+    AutoModerationActionExecution(AutoModerationActionExecutionEvent),
     GuildCreate(Guild),
     GuildUpdate(Guild),
     GuildDelete(UnavailableGuild),
+    GuildAuditLogEntryCreate(GuildAuditLogEntryCreateEvent),
     ChannelCreate(Channel),
     ChannelUpdate(Channel),
     ChannelDelete(Channel),
@@ -70,6 +76,35 @@ pub struct ReadyEvent {
 pub struct ReadyApplication {
     pub id: ApplicationId,
     pub flags: u64,
+}
+
+/// An `AUTO_MODERATION_ACTION_EXECUTION` dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AutoModerationActionExecutionEvent {
+    pub guild_id: GuildId,
+    pub action: AutoModerationAction,
+    pub rule_id: AutoModerationRuleId,
+    pub rule_trigger_type: AutoModerationTriggerType,
+    pub user_id: UserId,
+    #[serde(default)]
+    pub channel_id: Option<ChannelId>,
+    #[serde(default)]
+    pub message_id: Option<MessageId>,
+    #[serde(default)]
+    pub alert_system_message_id: Option<MessageId>,
+    #[serde(default)]
+    pub content: String,
+    pub matched_keyword: Option<String>,
+    #[serde(default)]
+    pub matched_content: Option<String>,
+}
+
+/// A `GUILD_AUDIT_LOG_ENTRY_CREATE` dispatch.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GuildAuditLogEntryCreateEvent {
+    pub guild_id: GuildId,
+    #[serde(flatten)]
+    pub entry: AuditLogEntry,
 }
 
 /// A `GUILD_MEMBER_ADD` dispatch.
@@ -272,9 +307,24 @@ impl DispatchEvent {
         Ok(match self.name.as_str() {
             "READY" => TypedDispatchEvent::Ready(serde_json::from_value(data)?),
             "RESUMED" => TypedDispatchEvent::Resumed,
+            "AUTO_MODERATION_RULE_CREATE" => {
+                TypedDispatchEvent::AutoModerationRuleCreate(serde_json::from_value(data)?)
+            }
+            "AUTO_MODERATION_RULE_UPDATE" => {
+                TypedDispatchEvent::AutoModerationRuleUpdate(serde_json::from_value(data)?)
+            }
+            "AUTO_MODERATION_RULE_DELETE" => {
+                TypedDispatchEvent::AutoModerationRuleDelete(serde_json::from_value(data)?)
+            }
+            "AUTO_MODERATION_ACTION_EXECUTION" => {
+                TypedDispatchEvent::AutoModerationActionExecution(serde_json::from_value(data)?)
+            }
             "GUILD_CREATE" => TypedDispatchEvent::GuildCreate(serde_json::from_value(data)?),
             "GUILD_UPDATE" => TypedDispatchEvent::GuildUpdate(serde_json::from_value(data)?),
             "GUILD_DELETE" => TypedDispatchEvent::GuildDelete(serde_json::from_value(data)?),
+            "GUILD_AUDIT_LOG_ENTRY_CREATE" => {
+                TypedDispatchEvent::GuildAuditLogEntryCreate(serde_json::from_value(data)?)
+            }
             "CHANNEL_CREATE" => TypedDispatchEvent::ChannelCreate(serde_json::from_value(data)?),
             "CHANNEL_UPDATE" => TypedDispatchEvent::ChannelUpdate(serde_json::from_value(data)?),
             "CHANNEL_DELETE" => TypedDispatchEvent::ChannelDelete(serde_json::from_value(data)?),
@@ -340,7 +390,10 @@ impl DispatchEvent {
 mod tests {
     use serde_json::json;
 
-    use crate::model::{InteractionType, InviteTargetType, ReactionType};
+    use crate::model::{
+        AuditLogEvent, AutoModerationActionType, AutoModerationTriggerType, InteractionType,
+        InviteTargetType, ReactionType,
+    };
 
     use super::{DispatchEvent, TypedDispatchEvent};
 
@@ -367,10 +420,68 @@ mod tests {
     }
 
     #[test]
+    fn parses_auto_moderation_action_execution() {
+        let dispatch = DispatchEvent {
+            name: "AUTO_MODERATION_ACTION_EXECUTION".to_owned(),
+            sequence: 2,
+            data: json!({
+                "guild_id":"10",
+                "action":{"type":1,"metadata":{"custom_message":"blocked"}},
+                "rule_id":"20",
+                "rule_trigger_type":6,
+                "user_id":"30",
+                "content":"profile text",
+                "matched_keyword":"bad*",
+                "matched_content":"badname"
+            }),
+        };
+
+        let TypedDispatchEvent::AutoModerationActionExecution(event) =
+            dispatch.typed().expect("automod execution")
+        else {
+            panic!("expected automod execution");
+        };
+
+        assert_eq!(event.action.kind, AutoModerationActionType::BLOCK_MESSAGE);
+        assert_eq!(
+            event.rule_trigger_type,
+            AutoModerationTriggerType::MEMBER_PROFILE
+        );
+        assert_eq!(event.rule_id.get(), 20);
+    }
+
+    #[test]
+    fn parses_guild_audit_log_entry_create() {
+        let dispatch = DispatchEvent {
+            name: "GUILD_AUDIT_LOG_ENTRY_CREATE".to_owned(),
+            sequence: 3,
+            data: json!({
+                "guild_id":"10",
+                "target_id":"20",
+                "changes":[{"key":"name","new_value":"new name"}],
+                "user_id":"30",
+                "id":"40",
+                "action_type":31,
+                "reason":"rename"
+            }),
+        };
+
+        let TypedDispatchEvent::GuildAuditLogEntryCreate(event) =
+            dispatch.typed().expect("audit log entry")
+        else {
+            panic!("expected guild audit log entry");
+        };
+
+        assert_eq!(event.guild_id.get(), 10);
+        assert_eq!(event.entry.action_type, AuditLogEvent::ROLE_UPDATE);
+        assert_eq!(event.entry.id.get(), 40);
+    }
+
+    #[test]
     fn parses_super_reaction_add() {
         let dispatch = DispatchEvent {
             name: "MESSAGE_REACTION_ADD".to_owned(),
-            sequence: 2,
+            sequence: 4,
             data: json!({
                 "user_id":"10",
                 "channel_id":"20",
@@ -401,7 +512,7 @@ mod tests {
     fn parses_reaction_remove_emoji_with_deleted_name() {
         let dispatch = DispatchEvent {
             name: "MESSAGE_REACTION_REMOVE_EMOJI".to_owned(),
-            sequence: 3,
+            sequence: 5,
             data: json!({
                 "channel_id":"20",
                 "message_id":"30",
@@ -424,7 +535,7 @@ mod tests {
     fn parses_interaction_create() {
         let dispatch = DispatchEvent {
             name: "INTERACTION_CREATE".to_owned(),
-            sequence: 4,
+            sequence: 6,
             data: json!({
                 "id":"100",
                 "application_id":"200",
@@ -451,7 +562,7 @@ mod tests {
     fn parses_invite_create() {
         let dispatch = DispatchEvent {
             name: "INVITE_CREATE".to_owned(),
-            sequence: 5,
+            sequence: 7,
             data: json!({
                 "channel_id":"10",
                 "code":"guest-code",
@@ -483,7 +594,7 @@ mod tests {
     fn parses_webhooks_update() {
         let dispatch = DispatchEvent {
             name: "WEBHOOKS_UPDATE".to_owned(),
-            sequence: 6,
+            sequence: 8,
             data: json!({"guild_id":"20", "channel_id":"10"}),
         };
 
@@ -500,7 +611,7 @@ mod tests {
     fn preserves_unknown_dispatches() {
         let dispatch = DispatchEvent {
             name: "FUTURE_EVENT".to_owned(),
-            sequence: 7,
+            sequence: 9,
             data: json!({"new": true}),
         };
 

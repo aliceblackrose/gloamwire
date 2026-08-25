@@ -82,6 +82,8 @@ macro_rules! snowflake_ids {
 snowflake_ids!(
     ApplicationId,
     AttachmentId,
+    AuditLogEntryId,
+    AutoModerationRuleId,
     ChannelId,
     CommandId,
     EmojiId,

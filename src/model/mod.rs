@@ -1,6 +1,8 @@
 //! Core Discord data models.
 
 mod attachment;
+mod audit_log;
+mod automod;
 mod channel;
 mod command;
 mod component;
@@ -20,6 +22,15 @@ mod voice;
 mod webhook;
 
 pub use attachment::Attachment;
+pub use audit_log::{
+    AuditLog, AuditLogChange, AuditLogEntry, AuditLogEntryOptions, AuditLogEvent,
+    AuditLogIntegration,
+};
+pub use automod::{
+    AutoModerationAction, AutoModerationActionMetadata, AutoModerationActionType,
+    AutoModerationEventType, AutoModerationKeywordPresetType, AutoModerationRule,
+    AutoModerationTriggerMetadata, AutoModerationTriggerType,
+};
 pub use channel::{Channel, ChannelFlags, ChannelType, DefaultReaction, ForumTag, ThreadMetadata};
 pub use command::{
     ApplicationCommand, ApplicationCommandChoiceValue, ApplicationCommandHandlerType,
@@ -33,9 +44,9 @@ pub use component::{
 };
 pub use guild::{Guild, UnavailableGuild};
 pub use id::{
-    ApplicationId, AttachmentId, ChannelId, CommandId, EmojiId, EntitlementId, GuildId,
-    InteractionId, MessageId, RoleId, ScheduledEventId, SkuId, SoundboardSoundId, StickerId,
-    UserId, WebhookId,
+    ApplicationId, AttachmentId, AuditLogEntryId, AutoModerationRuleId, ChannelId, CommandId,
+    EmojiId, EntitlementId, GuildId, InteractionId, MessageId, RoleId, ScheduledEventId, SkuId,
+    SoundboardSoundId, StickerId, UserId, WebhookId,
 };
 pub use interaction::{
     ApplicationCommandInteractionData, ApplicationCommandInteractionDataOption,

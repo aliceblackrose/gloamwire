@@ -17,11 +17,12 @@ pub use close::{GatewayCloseCode, GatewayReconnectStrategy};
 pub use compression::GatewayCompression;
 pub use connection::{GatewayConfig, GatewayConnection};
 pub use dispatch::{
-    GuildMemberAddEvent, GuildMemberRemoveEvent, GuildMemberUpdateEvent, GuildMembersChunkEvent,
-    GuildRoleDeleteEvent, GuildRoleEvent, InviteCreateEvent, InviteDeleteEvent,
-    MessageDeleteBulkEvent, MessageDeleteEvent, MessageReactionAddEvent,
-    MessageReactionRemoveAllEvent, MessageReactionRemoveEmojiEvent, MessageReactionRemoveEvent,
-    ReadyApplication, ReadyEvent, TypedDispatchEvent, WebhooksUpdateEvent,
+    AutoModerationActionExecutionEvent, GuildAuditLogEntryCreateEvent, GuildMemberAddEvent,
+    GuildMemberRemoveEvent, GuildMemberUpdateEvent, GuildMembersChunkEvent, GuildRoleDeleteEvent,
+    GuildRoleEvent, InviteCreateEvent, InviteDeleteEvent, MessageDeleteBulkEvent,
+    MessageDeleteEvent, MessageReactionAddEvent, MessageReactionRemoveAllEvent,
+    MessageReactionRemoveEmojiEvent, MessageReactionRemoveEvent, ReadyApplication, ReadyEvent,
+    TypedDispatchEvent, WebhooksUpdateEvent,
 };
 pub use encoding::GatewayEncoding;
 pub use event::{DispatchEvent, GatewayEvent};
