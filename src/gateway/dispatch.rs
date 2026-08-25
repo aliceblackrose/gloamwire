@@ -549,7 +549,10 @@ mod tests {
         };
 
         assert_eq!(entitlement.kind, EntitlementType::PURCHASE);
-        assert_eq!(entitlement.subscription_id.expect("subscription").get(), 500);
+        assert_eq!(
+            entitlement.subscription_id.expect("subscription").get(),
+            500
+        );
     }
 
     #[test]
@@ -577,7 +580,10 @@ mod tests {
         };
 
         assert_eq!(subscription.status, SubscriptionStatus::ENDING);
-        assert_eq!(subscription.renewal_sku_ids.expect("renewal skus")[0].get(), 301);
+        assert_eq!(
+            subscription.renewal_sku_ids.expect("renewal skus")[0].get(),
+            301
+        );
     }
 
     #[test]
