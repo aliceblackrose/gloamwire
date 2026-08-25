@@ -326,9 +326,7 @@ impl DispatchEvent {
             "VOICE_STATE_UPDATE" => {
                 TypedDispatchEvent::VoiceStateUpdate(serde_json::from_value(data)?)
             }
-            "WEBHOOKS_UPDATE" => {
-                TypedDispatchEvent::WebhooksUpdate(serde_json::from_value(data)?)
-            }
+            "WEBHOOKS_UPDATE" => TypedDispatchEvent::WebhooksUpdate(serde_json::from_value(data)?),
             "USER_UPDATE" => TypedDispatchEvent::UserUpdate(serde_json::from_value(data)?),
             _ => TypedDispatchEvent::Unknown {
                 name: self.name.clone(),
@@ -469,11 +467,15 @@ mod tests {
             }),
         };
 
-        let TypedDispatchEvent::InviteCreate(event) = dispatch.typed().expect("invite create") else {
+        let TypedDispatchEvent::InviteCreate(event) = dispatch.typed().expect("invite create")
+        else {
             panic!("expected invite create event");
         };
 
-        assert_eq!(event.target_type, Some(InviteTargetType::EMBEDDED_APPLICATION));
+        assert_eq!(
+            event.target_type,
+            Some(InviteTargetType::EMBEDDED_APPLICATION)
+        );
         assert_eq!(event.role_ids[0].get(), 30);
     }
 
