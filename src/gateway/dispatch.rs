@@ -3,7 +3,8 @@ use serde_json::Value;
 
 use crate::model::{
     ApplicationId, Channel, ChannelId, Guild, GuildId, GuildMember, GuildMemberFlags, Message,
-    MessageId, PresenceUpdate, Role, RoleId, Snowflake, UnavailableGuild, User, VoiceState,
+    MessageId, PartialEmoji, PresenceUpdate, ReactionType, Role, RoleId, Snowflake,
+    UnavailableGuild, User, UserId, VoiceState,
 };
 
 use super::DispatchEvent;
@@ -36,6 +37,10 @@ pub enum TypedDispatchEvent {
     MessageCreate(Message),
     MessageDelete(MessageDeleteEvent),
     MessageDeleteBulk(MessageDeleteBulkEvent),
+    MessageReactionAdd(MessageReactionAddEvent),
+    MessageReactionRemove(MessageReactionRemoveEvent),
+    MessageReactionRemoveAll(MessageReactionRemoveAllEvent),
+    MessageReactionRemoveEmoji(MessageReactionRemoveEmojiEvent),
     PresenceUpdate(PresenceUpdate),
     VoiceStateUpdate(VoiceState),
     UserUpdate(User),
@@ -156,6 +161,59 @@ pub struct MessageDeleteBulkEvent {
     pub guild_id: Option<GuildId>,
 }
 
+/// A `MESSAGE_REACTION_ADD` dispatch.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MessageReactionAddEvent {
+    pub user_id: UserId,
+    pub channel_id: ChannelId,
+    pub message_id: MessageId,
+    #[serde(default)]
+    pub guild_id: Option<GuildId>,
+    #[serde(default)]
+    pub member: Option<GuildMember>,
+    pub emoji: PartialEmoji,
+    #[serde(default)]
+    pub message_author_id: Option<UserId>,
+    pub burst: bool,
+    #[serde(default)]
+    pub burst_colors: Vec<String>,
+    #[serde(rename = "type")]
+    pub kind: ReactionType,
+}
+
+/// A `MESSAGE_REACTION_REMOVE` dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct MessageReactionRemoveEvent {
+    pub user_id: UserId,
+    pub channel_id: ChannelId,
+    pub message_id: MessageId,
+    #[serde(default)]
+    pub guild_id: Option<GuildId>,
+    pub emoji: PartialEmoji,
+    pub burst: bool,
+    #[serde(rename = "type")]
+    pub kind: ReactionType,
+}
+
+/// A `MESSAGE_REACTION_REMOVE_ALL` dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub struct MessageReactionRemoveAllEvent {
+    pub channel_id: ChannelId,
+    pub message_id: MessageId,
+    #[serde(default)]
+    pub guild_id: Option<GuildId>,
+}
+
+/// A `MESSAGE_REACTION_REMOVE_EMOJI` dispatch.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct MessageReactionRemoveEmojiEvent {
+    pub channel_id: ChannelId,
+    pub message_id: MessageId,
+    #[serde(default)]
+    pub guild_id: Option<GuildId>,
+    pub emoji: PartialEmoji,
+}
+
 impl DispatchEvent {
     /// Parses this raw dispatch into a typed event when Gloamwire models the event name.
     ///
@@ -201,6 +259,18 @@ impl DispatchEvent {
             "MESSAGE_DELETE_BULK" => {
                 TypedDispatchEvent::MessageDeleteBulk(serde_json::from_value(data)?)
             }
+            "MESSAGE_REACTION_ADD" => {
+                TypedDispatchEvent::MessageReactionAdd(serde_json::from_value(data)?)
+            }
+            "MESSAGE_REACTION_REMOVE" => {
+                TypedDispatchEvent::MessageReactionRemove(serde_json::from_value(data)?)
+            }
+            "MESSAGE_REACTION_REMOVE_ALL" => {
+                TypedDispatchEvent::MessageReactionRemoveAll(serde_json::from_value(data)?)
+            }
+            "MESSAGE_REACTION_REMOVE_EMOJI" => {
+                TypedDispatchEvent::MessageReactionRemoveEmoji(serde_json::from_value(data)?)
+            }
             "PRESENCE_UPDATE" => TypedDispatchEvent::PresenceUpdate(serde_json::from_value(data)?),
             "VOICE_STATE_UPDATE" => {
                 TypedDispatchEvent::VoiceStateUpdate(serde_json::from_value(data)?)
@@ -217,6 +287,8 @@ impl DispatchEvent {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+
+    use crate::model::ReactionType;
 
     use super::{DispatchEvent, TypedDispatchEvent};
 
@@ -240,6 +312,61 @@ mod tests {
         };
         assert_eq!(ready.v, 10);
         assert_eq!(ready.guilds[0].id.get(), 2);
+    }
+
+    #[test]
+    fn parses_super_reaction_add() {
+        let dispatch = DispatchEvent {
+            name: "MESSAGE_REACTION_ADD".to_owned(),
+            sequence: 2,
+            data: json!({
+                "user_id":"10",
+                "channel_id":"20",
+                "message_id":"30",
+                "guild_id":"40",
+                "member":{"roles":[],"deaf":false,"mute":false,"flags":0},
+                "emoji":{"id":"50","name":"spark","animated":true},
+                "message_author_id":"60",
+                "burst":true,
+                "burst_colors":["#ff00aa"],
+                "type":1
+            }),
+        };
+
+        let TypedDispatchEvent::MessageReactionAdd(event) =
+            dispatch.typed().expect("reaction add")
+        else {
+            panic!("expected reaction add event");
+        };
+
+        assert_eq!(event.user_id.get(), 10);
+        assert_eq!(event.kind, ReactionType::BURST);
+        assert!(event.burst);
+        assert_eq!(event.burst_colors, ["#ff00aa"]);
+        assert_eq!(event.emoji.animated, Some(true));
+    }
+
+    #[test]
+    fn parses_reaction_remove_emoji_with_deleted_name() {
+        let dispatch = DispatchEvent {
+            name: "MESSAGE_REACTION_REMOVE_EMOJI".to_owned(),
+            sequence: 3,
+            data: json!({
+                "channel_id":"20",
+                "message_id":"30",
+                "guild_id":"40",
+                "emoji":{"id":"50","name":null}
+            }),
+        };
+
+        let TypedDispatchEvent::MessageReactionRemoveEmoji(event) =
+            dispatch.typed().expect("reaction remove emoji")
+        else {
+            panic!("expected reaction remove emoji event");
+        };
+
+        assert_eq!(event.emoji.id.expect("emoji id").get(), 50);
+        assert!(event.emoji.name.is_none());
     }
 
     #[test]
