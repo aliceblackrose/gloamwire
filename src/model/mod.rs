@@ -38,7 +38,8 @@ pub use id::{
 pub use interaction::{
     ApplicationCommandInteractionData, ApplicationCommandInteractionDataOption,
     ApplicationCommandInteractionValue, AuthorizingIntegrationOwners, Interaction,
-    InteractionResolvedData, InteractionType,
+    InteractionResolvedData, InteractionType, MessageComponentInteractionData,
+    ModalSubmitInteractionData,
 };
 pub use member::{GuildMember, GuildMemberFlags};
 pub use message::{CreateMessage, Message};
