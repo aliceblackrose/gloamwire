@@ -8,7 +8,7 @@ use crate::{
     model::{ChannelId, CreateMessage, Message, User},
 };
 
-use super::{GatewayBot, rate_limit::RateLimiter, route::Route};
+use super::{GatewayBot, HttpResponse, rate_limit::RateLimiter, route::Route};
 
 const API_BASE_URL: &str = "https://discord.com/api/v10";
 const USER_AGENT: &str = "Gloamwire/0.1 (+https://github.com/cybellereaper/Gloamwire)";
@@ -88,6 +88,21 @@ impl RestClient {
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
+        Ok(self
+            .request_raw(route, body)
+            .await?
+            .into_json::<T>()?
+            .into_body())
+    }
+
+    async fn request_raw<B>(
+        &self,
+        route: Route,
+        body: Option<&B>,
+    ) -> Result<HttpResponse<Vec<u8>>>
+    where
+        B: Serialize + ?Sized,
+    {
         let url = format!("{}{}", self.base_url, route.path);
 
         for attempt in 0..=MAX_RATE_LIMIT_RETRIES {
@@ -101,7 +116,7 @@ impl RestClient {
             let response = request.send().await?;
             let status = response.status();
             let headers = response.headers().clone();
-            let bytes = response.bytes().await?;
+            let bytes = response.bytes().await?.to_vec();
             let rate_limit = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 serde_json::from_slice::<RateLimitResponse>(&bytes).ok()
             } else {
@@ -122,7 +137,7 @@ impl RestClient {
                 .await;
 
             if status.is_success() {
-                return Ok(serde_json::from_slice(&bytes)?);
+                return Ok(HttpResponse::new(status, headers, bytes));
             }
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RATE_LIMIT_RETRIES
