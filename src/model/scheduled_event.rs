@@ -203,8 +203,14 @@ mod tests {
         assert_eq!(event.entity_type, GuildScheduledEventEntityType::EXTERNAL);
         assert_eq!(event.status, GuildScheduledEventStatus::SCHEDULED);
         let recurrence = event.recurrence_rule.expect("recurrence rule");
-        assert_eq!(recurrence.frequency, GuildScheduledEventRecurrenceFrequency::YEARLY);
-        assert_eq!(recurrence.by_month, Some(vec![GuildScheduledEventRecurrenceMonth::SEPTEMBER]));
+        assert_eq!(
+            recurrence.frequency,
+            GuildScheduledEventRecurrenceFrequency::YEARLY
+        );
+        assert_eq!(
+            recurrence.by_month,
+            Some(vec![GuildScheduledEventRecurrenceMonth::SEPTEMBER])
+        );
     }
 
     #[test]
