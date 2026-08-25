@@ -199,7 +199,10 @@ mod tests {
         .expect("audit log entry");
 
         assert_eq!(entry.action_type, AuditLogEvent::MEMBER_ROLE_UPDATE);
-        assert_eq!(entry.changes[1].new_value.as_ref().expect("new value")[0]["name"], "Role");
+        assert_eq!(
+            entry.changes[1].new_value.as_ref().expect("new value")[0]["name"],
+            "Role"
+        );
     }
 
     #[test]
