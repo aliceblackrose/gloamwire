@@ -54,7 +54,7 @@ pub enum TypedDispatchEvent {
     GuildRoleDelete(GuildRoleDeleteEvent),
     InviteCreate(InviteCreateEvent),
     InviteDelete(InviteDeleteEvent),
-    MessageCreate(Message),
+    MessageCreate(Box<Message>),
     MessageDelete(MessageDeleteEvent),
     MessageDeleteBulk(MessageDeleteBulkEvent),
     MessageReactionAdd(MessageReactionAddEvent),
@@ -418,7 +418,9 @@ impl DispatchEvent {
             }
             "INVITE_CREATE" => TypedDispatchEvent::InviteCreate(serde_json::from_value(data)?),
             "INVITE_DELETE" => TypedDispatchEvent::InviteDelete(serde_json::from_value(data)?),
-            "MESSAGE_CREATE" => TypedDispatchEvent::MessageCreate(serde_json::from_value(data)?),
+            "MESSAGE_CREATE" => {
+                TypedDispatchEvent::MessageCreate(Box::new(serde_json::from_value(data)?))
+            }
             "MESSAGE_DELETE" => TypedDispatchEvent::MessageDelete(serde_json::from_value(data)?),
             "MESSAGE_DELETE_BULK" => {
                 TypedDispatchEvent::MessageDeleteBulk(serde_json::from_value(data)?)

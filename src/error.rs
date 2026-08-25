@@ -142,6 +142,10 @@ pub enum Error {
     #[error(transparent)]
     Http(#[from] reqwest::Error),
 
+    /// Reading a file-backed upload failed.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+
     /// JSON serialization or deserialization failed.
     #[error(transparent)]
     Json(#[from] serde_json::Error),

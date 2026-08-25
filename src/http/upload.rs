@@ -149,7 +149,7 @@ pub(crate) async fn multipart_form(payload_json: String, files: &[UploadFile]) -
 #[cfg(test)]
 mod tests {
     use super::UploadFile;
-    use crate::model::AttachmentRequestId;
+    use crate::{Error, model::AttachmentRequestId};
 
     #[test]
     fn upload_metadata_uses_matching_file_index() {
@@ -162,5 +162,16 @@ mod tests {
         assert_eq!(attachment.filename.as_deref(), Some("image.png"));
         assert_eq!(attachment.description.as_deref(), Some("alt"));
         assert_eq!(attachment.is_spoiler, Some(true));
+    }
+
+    #[tokio::test]
+    async fn missing_file_upload_returns_an_io_error() {
+        let upload = UploadFile::path(
+            0,
+            "missing.txt",
+            "/gloamwire-test-path-that-does-not-exist/missing.txt",
+        );
+
+        assert!(matches!(upload.part().await, Err(Error::Io(_))));
     }
 }

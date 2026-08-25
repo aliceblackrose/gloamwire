@@ -1,9 +1,15 @@
 /// Reusable before/after cursor pagination for Discord collection endpoints.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pagination<I> {
     pub before: Option<I>,
     pub after: Option<I>,
     pub limit: Option<u16>,
+}
+
+impl<I> Default for Pagination<I> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<I> Pagination<I> {
@@ -55,5 +61,12 @@ mod tests {
 
         assert!(pagination.before.is_none());
         assert_eq!(pagination.after.expect("after").get(), 2);
+    }
+
+    #[test]
+    fn default_does_not_require_a_default_cursor() {
+        let pagination = Pagination::<MessageId>::default();
+
+        assert_eq!(pagination, Pagination::new());
     }
 }
