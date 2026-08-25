@@ -452,13 +452,10 @@ async fn open_and_handshake(
 
 async fn next_envelope(socket: &mut GatewaySocket) -> Result<InboundEnvelope> {
     loop {
-        let message = socket
-            .next()
-            .await
-            .ok_or_else(|| Error::GatewayClosed {
-                code: None,
-                reason: "WebSocket stream ended".to_owned(),
-            })??;
+        let message = socket.next().await.ok_or_else(|| Error::GatewayClosed {
+            code: None,
+            reason: "WebSocket stream ended".to_owned(),
+        })??;
 
         match message {
             Message::Text(text) => return Ok(serde_json::from_str(text.as_str())?),
