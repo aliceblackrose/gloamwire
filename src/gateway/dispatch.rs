@@ -3,10 +3,10 @@ use serde_json::Value;
 
 use crate::model::{
     ApplicationId, AuditLogEntry, AutoModerationAction, AutoModerationRule, AutoModerationRuleId,
-    AutoModerationTriggerType, Channel, ChannelId, Guild, GuildId, GuildMember, GuildMemberFlags,
-    GuildScheduledEvent, Interaction, InviteTargetType, Message, MessageId, PartialEmoji,
-    PresenceUpdate, ReactionType, Role, RoleId, ScheduledEventId, Snowflake, UnavailableGuild,
-    User, UserId, VoiceState,
+    AutoModerationTriggerType, Channel, ChannelId, Entitlement, Guild, GuildId, GuildMember,
+    GuildMemberFlags, GuildScheduledEvent, Interaction, InviteTargetType, Message, MessageId,
+    PartialEmoji, PresenceUpdate, ReactionType, Role, RoleId, ScheduledEventId, Snowflake,
+    Subscription, UnavailableGuild, User, UserId, VoiceState,
 };
 
 use super::DispatchEvent;
@@ -24,6 +24,12 @@ pub enum TypedDispatchEvent {
     AutoModerationRuleUpdate(AutoModerationRule),
     AutoModerationRuleDelete(AutoModerationRule),
     AutoModerationActionExecution(AutoModerationActionExecutionEvent),
+    EntitlementCreate(Entitlement),
+    EntitlementUpdate(Entitlement),
+    EntitlementDelete(Entitlement),
+    SubscriptionCreate(Subscription),
+    SubscriptionUpdate(Subscription),
+    SubscriptionDelete(Subscription),
     GuildCreate(Guild),
     GuildUpdate(Guild),
     GuildDelete(UnavailableGuild),
@@ -346,6 +352,24 @@ impl DispatchEvent {
             "AUTO_MODERATION_ACTION_EXECUTION" => {
                 TypedDispatchEvent::AutoModerationActionExecution(serde_json::from_value(data)?)
             }
+            "ENTITLEMENT_CREATE" => {
+                TypedDispatchEvent::EntitlementCreate(serde_json::from_value(data)?)
+            }
+            "ENTITLEMENT_UPDATE" => {
+                TypedDispatchEvent::EntitlementUpdate(serde_json::from_value(data)?)
+            }
+            "ENTITLEMENT_DELETE" => {
+                TypedDispatchEvent::EntitlementDelete(serde_json::from_value(data)?)
+            }
+            "SUBSCRIPTION_CREATE" => {
+                TypedDispatchEvent::SubscriptionCreate(serde_json::from_value(data)?)
+            }
+            "SUBSCRIPTION_UPDATE" => {
+                TypedDispatchEvent::SubscriptionUpdate(serde_json::from_value(data)?)
+            }
+            "SUBSCRIPTION_DELETE" => {
+                TypedDispatchEvent::SubscriptionDelete(serde_json::from_value(data)?)
+            }
             "GUILD_CREATE" => TypedDispatchEvent::GuildCreate(serde_json::from_value(data)?),
             "GUILD_UPDATE" => TypedDispatchEvent::GuildUpdate(serde_json::from_value(data)?),
             "GUILD_DELETE" => TypedDispatchEvent::GuildDelete(serde_json::from_value(data)?),
@@ -439,8 +463,9 @@ mod tests {
     use serde_json::json;
 
     use crate::model::{
-        AuditLogEvent, AutoModerationActionType, AutoModerationTriggerType,
+        AuditLogEvent, AutoModerationActionType, AutoModerationTriggerType, EntitlementType,
         GuildScheduledEventEntityType, InteractionType, InviteTargetType, ReactionType,
+        SubscriptionStatus,
     };
 
     use super::{DispatchEvent, TypedDispatchEvent};
@@ -499,10 +524,67 @@ mod tests {
     }
 
     #[test]
+    fn parses_entitlement_create() {
+        let dispatch = DispatchEvent {
+            name: "ENTITLEMENT_CREATE".to_owned(),
+            sequence: 3,
+            data: json!({
+                "id":"100",
+                "sku_id":"200",
+                "application_id":"300",
+                "user_id":"400",
+                "type":1,
+                "deleted":false,
+                "consumed":false,
+                "starts_at":"2026-08-25T20:00:00+00:00",
+                "ends_at":null,
+                "subscription_id":"500"
+            }),
+        };
+
+        let TypedDispatchEvent::EntitlementCreate(entitlement) =
+            dispatch.typed().expect("entitlement")
+        else {
+            panic!("expected entitlement create");
+        };
+
+        assert_eq!(entitlement.kind, EntitlementType::PURCHASE);
+        assert_eq!(entitlement.subscription_id.expect("subscription").get(), 500);
+    }
+
+    #[test]
+    fn parses_subscription_update() {
+        let dispatch = DispatchEvent {
+            name: "SUBSCRIPTION_UPDATE".to_owned(),
+            sequence: 4,
+            data: json!({
+                "id":"100",
+                "user_id":"200",
+                "sku_ids":["300"],
+                "entitlement_ids":["400"],
+                "renewal_sku_ids":["301"],
+                "current_period_start":"2026-08-01T00:00:00+00:00",
+                "current_period_end":"2026-09-01T00:00:00+00:00",
+                "status":2,
+                "canceled_at":"2026-08-25T20:00:00+00:00"
+            }),
+        };
+
+        let TypedDispatchEvent::SubscriptionUpdate(subscription) =
+            dispatch.typed().expect("subscription")
+        else {
+            panic!("expected subscription update");
+        };
+
+        assert_eq!(subscription.status, SubscriptionStatus::ENDING);
+        assert_eq!(subscription.renewal_sku_ids.expect("renewal skus")[0].get(), 301);
+    }
+
+    #[test]
     fn parses_guild_audit_log_entry_create() {
         let dispatch = DispatchEvent {
             name: "GUILD_AUDIT_LOG_ENTRY_CREATE".to_owned(),
-            sequence: 3,
+            sequence: 5,
             data: json!({
                 "guild_id":"10",
                 "target_id":"20",
@@ -529,7 +611,7 @@ mod tests {
     fn parses_scheduled_event_create() {
         let dispatch = DispatchEvent {
             name: "GUILD_SCHEDULED_EVENT_CREATE".to_owned(),
-            sequence: 4,
+            sequence: 6,
             data: json!({
                 "id":"100",
                 "guild_id":"200",
@@ -560,7 +642,7 @@ mod tests {
     fn parses_scheduled_event_user_add() {
         let dispatch = DispatchEvent {
             name: "GUILD_SCHEDULED_EVENT_USER_ADD".to_owned(),
-            sequence: 5,
+            sequence: 7,
             data: json!({
                 "guild_scheduled_event_id":"100",
                 "user_id":"200",
@@ -582,7 +664,7 @@ mod tests {
     fn parses_super_reaction_add() {
         let dispatch = DispatchEvent {
             name: "MESSAGE_REACTION_ADD".to_owned(),
-            sequence: 6,
+            sequence: 8,
             data: json!({
                 "user_id":"10",
                 "channel_id":"20",
@@ -613,7 +695,7 @@ mod tests {
     fn parses_reaction_remove_emoji_with_deleted_name() {
         let dispatch = DispatchEvent {
             name: "MESSAGE_REACTION_REMOVE_EMOJI".to_owned(),
-            sequence: 7,
+            sequence: 9,
             data: json!({
                 "channel_id":"20",
                 "message_id":"30",
@@ -636,7 +718,7 @@ mod tests {
     fn parses_poll_vote_add() {
         let dispatch = DispatchEvent {
             name: "MESSAGE_POLL_VOTE_ADD".to_owned(),
-            sequence: 8,
+            sequence: 10,
             data: json!({
                 "user_id":"10",
                 "channel_id":"20",
@@ -659,7 +741,7 @@ mod tests {
     fn parses_interaction_create() {
         let dispatch = DispatchEvent {
             name: "INTERACTION_CREATE".to_owned(),
-            sequence: 9,
+            sequence: 11,
             data: json!({
                 "id":"100",
                 "application_id":"200",
@@ -686,7 +768,7 @@ mod tests {
     fn parses_invite_create() {
         let dispatch = DispatchEvent {
             name: "INVITE_CREATE".to_owned(),
-            sequence: 10,
+            sequence: 12,
             data: json!({
                 "channel_id":"10",
                 "code":"guest-code",
@@ -718,7 +800,7 @@ mod tests {
     fn parses_webhooks_update() {
         let dispatch = DispatchEvent {
             name: "WEBHOOKS_UPDATE".to_owned(),
-            sequence: 11,
+            sequence: 13,
             data: json!({"guild_id":"20", "channel_id":"10"}),
         };
 
@@ -735,7 +817,7 @@ mod tests {
     fn preserves_unknown_dispatches() {
         let dispatch = DispatchEvent {
             name: "FUTURE_EVENT".to_owned(),
-            sequence: 12,
+            sequence: 14,
             data: json!({"new": true}),
         };
 
