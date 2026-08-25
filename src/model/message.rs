@@ -70,13 +70,13 @@ mod tests {
     #[test]
     fn parses_components_v2_on_messages() {
         let message: Message = serde_json::from_str(
-            r#"{
+            r##"{
                 "id":"1",
                 "channel_id":"2",
                 "author":{"id":"3","username":"gloam","discriminator":"0"},
                 "content":"",
                 "components":[{"type":10,"content":"# Hello"}]
-            }"#,
+            }"##,
         )
         .expect("message");
 
