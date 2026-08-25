@@ -24,7 +24,7 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] Session-start-limit and Identify concurrency enforcement
 - [x] Shard ID/count types and guild-to-shard routing
 - [x] Multi-shard manager with isolated shard recovery/shutdown
-- [ ] Gateway presence, voice-state, member, soundboard, and channel-info commands
+- [x] Gateway presence, voice-state, member, soundboard, and channel-info send events
 - [ ] Gateway zlib/zstd compression
 - [ ] Configurable JSON/ETF encoding
 
