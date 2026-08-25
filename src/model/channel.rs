@@ -2,8 +2,8 @@ use bitflags::bitflags;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::{
-    ApplicationId, ChannelId, EmojiId, GuildId, MessageId, PermissionOverwrite, Permissions,
-    Snowflake, User, UserId,
+    ApplicationId, ChannelId, EmojiId, GuildId, GuildMember, Message, MessageId,
+    PermissionOverwrite, Permissions, Snowflake, User, UserId,
 };
 
 /// Discord channel type.
@@ -71,6 +71,30 @@ pub struct ThreadMetadata {
     pub invitable: Option<bool>,
     #[serde(default)]
     pub create_timestamp: Option<String>,
+}
+
+/// Membership information for a user that joined a thread.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThreadMember {
+    #[serde(default)]
+    pub id: Option<ChannelId>,
+    #[serde(default)]
+    pub user_id: Option<UserId>,
+    pub join_timestamp: String,
+    pub flags: u64,
+    #[serde(default)]
+    pub member: Option<GuildMember>,
+}
+
+/// A paginated collection of active or archived threads.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThreadList {
+    #[serde(default)]
+    pub threads: Vec<Channel>,
+    #[serde(default)]
+    pub members: Vec<ThreadMember>,
+    #[serde(default)]
+    pub has_more: Option<bool>,
 }
 
 /// The default reaction configured for a forum or media channel.
@@ -146,6 +170,8 @@ pub struct Channel {
     #[serde(default)]
     pub thread_metadata: Option<ThreadMetadata>,
     #[serde(default)]
+    pub member: Option<ThreadMember>,
+    #[serde(default)]
     pub default_auto_archive_duration: Option<u32>,
     #[serde(default)]
     pub permissions: Option<Permissions>,
@@ -167,6 +193,9 @@ pub struct Channel {
     pub default_sort_order: Option<u8>,
     #[serde(default)]
     pub default_forum_layout: Option<u8>,
+    /// Initial message returned when creating a forum or media thread.
+    #[serde(default)]
+    pub message: Option<Box<Message>>,
 }
 
 impl Channel {
@@ -179,7 +208,7 @@ impl Channel {
 
 #[cfg(test)]
 mod tests {
-    use super::{Channel, ChannelFlags};
+    use super::{Channel, ChannelFlags, ThreadList};
 
     #[test]
     fn parses_obfuscated_channel_without_sensitive_metadata() {
@@ -196,5 +225,27 @@ mod tests {
         assert!(channel.is_obfuscated());
         assert!(channel.name.is_none());
         assert!(channel.flags.contains(ChannelFlags::CHANNEL_OBFUSCATED));
+    }
+
+    #[test]
+    fn parses_thread_lists_with_optional_member_details() {
+        let threads: ThreadList = serde_json::from_str(
+            r#"{
+                "threads":[],
+                "members":[{
+                    "id":"10",
+                    "user_id":"20",
+                    "join_timestamp":"2026-08-25T20:00:00+00:00",
+                    "flags":0,
+                    "member":{"roles":[],"deaf":false,"mute":false,"flags":0}
+                }],
+                "has_more":false
+            }"#,
+        )
+        .expect("thread list");
+
+        assert_eq!(threads.members[0].user_id.expect("user").get(), 20);
+        assert!(threads.members[0].member.is_some());
+        assert_eq!(threads.has_more, Some(false));
     }
 }

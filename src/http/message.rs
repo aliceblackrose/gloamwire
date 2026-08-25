@@ -1,7 +1,4 @@
-use reqwest::{
-    Method,
-    header::{HeaderMap, HeaderName, HeaderValue},
-};
+use reqwest::{Method, header::HeaderMap};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -15,11 +12,9 @@ use crate::{
 
 use super::{
     Pagination, RestClient, UploadFile,
-    encoding::{QueryBuilder, percent_encode},
+    encoding::{QueryBuilder, audit_reason_headers, percent_encode},
     route::{RetrySafety, Route},
 };
-
-const AUDIT_LOG_REASON: HeaderName = HeaderName::from_static("x-audit-log-reason");
 
 /// Pagination parameters for Discord's Get Channel Messages endpoint.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -504,7 +499,7 @@ impl RestClient {
                 RetrySafety::Safe,
             ),
             None,
-            audit_headers(reason),
+            audit_reason_headers(reason),
         )
         .await
     }
@@ -538,7 +533,7 @@ impl RestClient {
                 RetrySafety::Unsafe,
             ),
             Some(&body),
-            audit_headers(reason),
+            audit_reason_headers(reason),
         )
         .await
     }
@@ -572,7 +567,7 @@ impl RestClient {
         self.request_empty::<()>(
             pin_route(Method::PUT, channel_id, message_id),
             None,
-            audit_headers(reason),
+            audit_reason_headers(reason),
         )
         .await
     }
@@ -587,7 +582,7 @@ impl RestClient {
         self.request_empty::<()>(
             pin_route(Method::DELETE, channel_id, message_id),
             None,
-            audit_headers(reason),
+            audit_reason_headers(reason),
         )
         .await
     }
@@ -644,17 +639,6 @@ fn pin_route(method: Method, channel_id: ChannelId, message_id: MessageId) -> Ro
         channel_id,
         RetrySafety::Safe,
     )
-}
-
-fn audit_headers(reason: Option<&str>) -> HeaderMap {
-    let mut headers = HeaderMap::new();
-    if let Some(reason) = reason {
-        let encoded = percent_encode(reason);
-        if let Ok(value) = HeaderValue::from_str(&encoded) {
-            headers.insert(AUDIT_LOG_REASON, value);
-        }
-    }
-    headers
 }
 
 fn push_option<T: std::fmt::Display>(query: &mut QueryBuilder, name: &str, value: Option<T>) {

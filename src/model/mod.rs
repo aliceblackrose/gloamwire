@@ -35,7 +35,10 @@ pub use automod::{
     AutoModerationEventType, AutoModerationKeywordPresetType, AutoModerationRule,
     AutoModerationTriggerMetadata, AutoModerationTriggerType,
 };
-pub use channel::{Channel, ChannelFlags, ChannelType, DefaultReaction, ForumTag, ThreadMetadata};
+pub use channel::{
+    Channel, ChannelFlags, ChannelType, DefaultReaction, ForumTag, ThreadList, ThreadMember,
+    ThreadMetadata,
+};
 pub use command::{
     ApplicationCommand, ApplicationCommandChoiceValue, ApplicationCommandHandlerType,
     ApplicationCommandNumericValue, ApplicationCommandOption, ApplicationCommandOptionChoice,
@@ -47,7 +50,7 @@ pub use component::{
     Modal, SelectDefaultValue, SeparatorSpacing, UnfurledMediaItem,
 };
 pub use embed::{Embed, EmbedAuthor, EmbedField, EmbedFooter, EmbedMedia, EmbedProvider};
-pub use guild::{Guild, UnavailableGuild};
+pub use guild::{Guild, GuildPreview, UnavailableGuild};
 pub use id::{
     ApplicationId, AttachmentId, AuditLogEntryId, AutoModerationRuleId, ChannelId, CommandId,
     EmojiId, EntitlementId, GuildId, InteractionId, MessageId, RoleId, ScheduledEventId, SkuId,
