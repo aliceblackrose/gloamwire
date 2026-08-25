@@ -13,16 +13,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match gateway.next_event().await? {
             GatewayEvent::Dispatch(event) => println!("{} #{}", event.name, event.sequence),
             GatewayEvent::Reconnect => {
-                eprintln!("Discord requested a reconnect");
-                break;
+                eprintln!("Discord requested a reconnect; Gloamwire recovered automatically");
             }
             GatewayEvent::InvalidSession { resumable } => {
-                eprintln!("session invalid; resumable={resumable}");
-                break;
+                eprintln!("Discord invalidated the session; resumable={resumable}");
             }
-            GatewayEvent::HeartbeatAck | GatewayEvent::Unknown { .. } => {}
+            GatewayEvent::HeartbeatAck => {
+                if let Some(latency) = gateway.latency() {
+                    println!("Gateway latency: {latency:?}");
+                }
+            }
+            GatewayEvent::Unknown { .. } => {}
         }
     }
-
-    Ok(())
 }
