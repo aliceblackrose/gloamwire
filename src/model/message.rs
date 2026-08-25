@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ChannelId, Component, GuildId, MessageId, Reaction, User};
+use super::{ChannelId, Component, GuildId, MessageId, Poll, PollCreateRequest, Reaction, User};
 
 /// A Discord message.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,6 +22,9 @@ pub struct Message {
     /// Message components, including Components V2 layouts and interactive controls.
     #[serde(default)]
     pub components: Vec<Component>,
+    /// Poll attached to the message, when present.
+    #[serde(default)]
+    pub poll: Option<Poll>,
 }
 
 /// Parameters accepted by Discord's Create Message endpoint.
@@ -33,6 +36,9 @@ pub struct CreateMessage {
     /// Whether Discord should synthesize a text-to-speech message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tts: Option<bool>,
+    /// Poll to create with the message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poll: Option<PollCreateRequest>,
 }
 
 impl CreateMessage {
@@ -42,6 +48,7 @@ impl CreateMessage {
         Self {
             content: Some(content.into()),
             tts: None,
+            poll: None,
         }
     }
 }
@@ -49,7 +56,7 @@ impl CreateMessage {
 #[cfg(test)]
 mod tests {
     use super::Message;
-    use crate::model::ComponentType;
+    use crate::model::{ComponentType, PollLayoutType};
 
     #[test]
     fn message_collections_default_when_omitted() {
@@ -65,6 +72,7 @@ mod tests {
 
         assert!(message.reactions.is_empty());
         assert!(message.components.is_empty());
+        assert!(message.poll.is_none());
     }
 
     #[test]
@@ -81,5 +89,30 @@ mod tests {
         .expect("message");
 
         assert_eq!(message.components[0].kind, ComponentType::TEXT_DISPLAY);
+    }
+
+    #[test]
+    fn parses_poll_on_message() {
+        let message: Message = serde_json::from_str(
+            r#"{
+                "id":"1",
+                "channel_id":"2",
+                "author":{"id":"3","username":"gloam","discriminator":"0"},
+                "content":"",
+                "poll":{
+                    "question":{"text":"Ready?"},
+                    "answers":[{"answer_id":1,"poll_media":{"text":"Yes"}}],
+                    "expiry":null,
+                    "allow_multiselect":false,
+                    "layout_type":1
+                }
+            }"#,
+        )
+        .expect("poll message");
+
+        assert_eq!(
+            message.poll.expect("poll").layout_type,
+            PollLayoutType::DEFAULT
+        );
     }
 }
