@@ -82,10 +82,9 @@ mod tests {
 
     #[test]
     fn partial_emoji_allows_deleted_custom_emoji_name() {
-        let emoji: PartialEmoji = serde_json::from_str(
-            r#"{"id":"41771983429993937","name":null,"animated":true}"#,
-        )
-        .expect("partial emoji");
+        let emoji: PartialEmoji =
+            serde_json::from_str(r#"{"id":"41771983429993937","name":null,"animated":true}"#)
+                .expect("partial emoji");
 
         assert_eq!(emoji.id.expect("emoji id").get(), 41_771_983_429_993_937);
         assert!(emoji.name.is_none());
