@@ -3,8 +3,10 @@
 mod audit_log;
 mod channel;
 mod client;
+mod command;
 mod encoding;
 mod guild;
+mod interaction;
 mod invite;
 mod member;
 mod message;
@@ -27,7 +29,12 @@ pub use channel::{
     StartThreadFromMessage, ThreadMembersQuery,
 };
 pub use client::{RestClient, RestClientBuilder};
+pub use command::{
+    BulkOverwriteApplicationCommand, CreateApplicationCommand, EditApplicationCommand,
+    EditApplicationCommandPermissions,
+};
 pub use guild::{CreateGuildChannel, ModifyGuild, ModifyGuildChannelPosition};
+pub use interaction::{CreateInteractionResponseQuery, EditInteractionMessageQuery};
 pub use invite::{CreateChannelInvite, GetInviteQuery};
 pub use member::{
     AddGuildMember, BeginGuildPrune, BulkGuildBan, BulkGuildBanResponse, CreateGuildBan,

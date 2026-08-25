@@ -42,7 +42,8 @@ pub use channel::{
 pub use command::{
     ApplicationCommand, ApplicationCommandChoiceValue, ApplicationCommandHandlerType,
     ApplicationCommandNumericValue, ApplicationCommandOption, ApplicationCommandOptionChoice,
-    ApplicationCommandOptionType, ApplicationCommandType, ApplicationIntegrationType,
+    ApplicationCommandOptionType, ApplicationCommandPermission, ApplicationCommandPermissionType,
+    ApplicationCommandType, ApplicationIntegrationType, GuildApplicationCommandPermissions,
     InteractionContextType,
 };
 pub use component::{
@@ -58,8 +59,11 @@ pub use id::{
 };
 pub use interaction::{
     ApplicationCommandInteractionData, ApplicationCommandInteractionDataOption,
-    ApplicationCommandInteractionValue, AuthorizingIntegrationOwners, Interaction,
-    InteractionResolvedData, InteractionType, MessageComponentInteractionData,
+    ApplicationCommandInteractionValue, AuthorizingIntegrationOwners,
+    AutocompleteInteractionCallbackData, Interaction, InteractionCallback,
+    InteractionCallbackActivityInstance, InteractionCallbackData, InteractionCallbackResource,
+    InteractionCallbackResponse, InteractionCallbackType, InteractionMessageData,
+    InteractionResolvedData, InteractionResponse, InteractionType, MessageComponentInteractionData,
     ModalSubmitInteractionData,
 };
 pub use invite::{

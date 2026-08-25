@@ -134,8 +134,8 @@ pub enum Error {
         message: String,
     },
 
-    /// The supplied bot token could not be represented as an HTTP header.
-    #[error("the Discord bot token contains invalid header characters")]
+    /// The supplied Discord authorization token could not be represented as an HTTP header.
+    #[error("the Discord authorization token contains invalid header characters")]
     InvalidToken,
 
     /// An HTTP transport error occurred.
@@ -182,6 +182,10 @@ pub enum Error {
     /// A typed Gateway send event violates a documented payload constraint.
     #[error("invalid Gateway send event: {0}")]
     InvalidGatewaySendEvent(String),
+
+    /// An outgoing REST payload violates a documented endpoint constraint.
+    #[error("invalid Discord REST request: {0}")]
+    InvalidRestRequest(String),
 
     /// A normal outbound Gateway send would exceed the current connection's rate limit.
     #[error("Gateway outbound rate limit reached; retry after {retry_after:?}")]

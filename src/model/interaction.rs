@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    ApplicationCommandOptionType, ApplicationCommandType, ApplicationId,
-    ApplicationIntegrationType, Attachment, AttachmentId, Channel, ChannelId, CommandId, Component,
-    ComponentType, Entitlement, GuildId, GuildMember, InteractionContextType, InteractionId,
-    Message, MessageId, Permissions, Role, RoleId, Snowflake, User, UserId,
+    AllowedMentions, ApplicationCommandOptionChoice, ApplicationCommandOptionType,
+    ApplicationCommandType, ApplicationId, ApplicationIntegrationType, Attachment, AttachmentId,
+    AttachmentRequest, Channel, ChannelId, CommandId, Component, ComponentType, Embed, Entitlement,
+    GuildId, GuildMember, InteractionContextType, InteractionId, Message, MessageFlags, MessageId,
+    Modal, Permissions, PollCreateRequest, Role, RoleId, Snowflake, User, UserId,
 };
 
 /// Discord interaction type.
@@ -24,6 +25,138 @@ impl InteractionType {
     pub const MESSAGE_COMPONENT: Self = Self(3);
     pub const APPLICATION_COMMAND_AUTOCOMPLETE: Self = Self(4);
     pub const MODAL_SUBMIT: Self = Self(5);
+}
+
+/// Discord interaction callback type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct InteractionCallbackType(pub u8);
+
+impl InteractionCallbackType {
+    pub const PONG: Self = Self(1);
+    pub const CHANNEL_MESSAGE_WITH_SOURCE: Self = Self(4);
+    pub const DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE: Self = Self(5);
+    pub const DEFERRED_UPDATE_MESSAGE: Self = Self(6);
+    pub const UPDATE_MESSAGE: Self = Self(7);
+    pub const APPLICATION_COMMAND_AUTOCOMPLETE_RESULT: Self = Self(8);
+    pub const MODAL: Self = Self(9);
+    pub const PREMIUM_REQUIRED: Self = Self(10);
+    pub const LAUNCH_ACTIVITY: Self = Self(12);
+}
+
+/// Message fields accepted by interaction callbacks and followup webhooks.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct InteractionMessageData {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tts: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub embeds: Vec<Embed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_mentions: Option<AllowedMentions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flags: Option<MessageFlags>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<Component>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachmentRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll: Option<PollCreateRequest>,
+}
+
+impl InteractionMessageData {
+    /// Creates interaction message data containing plain text content.
+    #[must_use]
+    pub fn content(content: impl Into<String>) -> Self {
+        Self {
+            content: Some(content.into()),
+            ..Self::default()
+        }
+    }
+}
+
+/// Autocomplete choices returned by an interaction callback.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AutocompleteInteractionCallbackData {
+    #[serde(default)]
+    pub choices: Vec<ApplicationCommandOptionChoice>,
+}
+
+/// Data for one interaction callback, selected by its callback type.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InteractionCallbackData {
+    Modal(Modal),
+    Autocomplete(AutocompleteInteractionCallbackData),
+    Message(Box<InteractionMessageData>),
+}
+
+/// Outgoing response to an interaction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InteractionResponse {
+    #[serde(rename = "type")]
+    pub kind: InteractionCallbackType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<InteractionCallbackData>,
+}
+
+impl InteractionResponse {
+    /// Creates a response with no callback data, such as `PONG` or a deferred update.
+    #[must_use]
+    pub const fn new(kind: InteractionCallbackType) -> Self {
+        Self { kind, data: None }
+    }
+
+    /// Creates a channel-message callback response.
+    #[must_use]
+    pub fn message(data: InteractionMessageData) -> Self {
+        Self {
+            kind: InteractionCallbackType::CHANNEL_MESSAGE_WITH_SOURCE,
+            data: Some(InteractionCallbackData::Message(Box::new(data))),
+        }
+    }
+}
+
+/// Interaction metadata returned when `with_response` is enabled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractionCallback {
+    pub id: InteractionId,
+    #[serde(rename = "type")]
+    pub kind: InteractionType,
+    #[serde(default)]
+    pub activity_instance_id: Option<String>,
+    #[serde(default)]
+    pub response_message_id: Option<MessageId>,
+    #[serde(default)]
+    pub response_message_loading: Option<bool>,
+    #[serde(default)]
+    pub response_message_ephemeral: Option<bool>,
+}
+
+/// Activity instance created by a launch-activity callback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InteractionCallbackActivityInstance {
+    pub id: String,
+}
+
+/// Resource created by an interaction callback.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InteractionCallbackResource {
+    #[serde(rename = "type")]
+    pub kind: InteractionCallbackType,
+    #[serde(default)]
+    pub activity_instance: Option<InteractionCallbackActivityInstance>,
+    #[serde(default)]
+    pub message: Option<Box<Message>>,
+}
+
+/// Response body returned when an interaction callback requests a response resource.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InteractionCallbackResponse {
+    pub interaction: InteractionCallback,
+    #[serde(default)]
+    pub resource: Option<InteractionCallbackResource>,
 }
 
 /// Installation owners that authorized an interaction.
@@ -404,6 +537,54 @@ mod tests {
             owners
                 .get(ApplicationIntegrationType::USER_INSTALL)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn serializes_channel_message_callback() {
+        let response =
+            super::InteractionResponse::message(super::InteractionMessageData::content("hello"));
+
+        assert_eq!(
+            serde_json::to_value(response).expect("interaction response"),
+            serde_json::json!({"type":4,"data":{"content":"hello"}})
+        );
+    }
+
+    #[test]
+    fn parses_callback_response_resource() {
+        let response: super::InteractionCallbackResponse = serde_json::from_str(
+            r#"{
+                "interaction":{"id":"1","type":2,"response_message_id":"3"},
+                "resource":{
+                    "type":4,
+                    "message":{
+                        "id":"3",
+                        "channel_id":"4",
+                        "author":{"id":"5","username":"gloam","discriminator":"0"},
+                        "content":"hello"
+                    }
+                }
+            }"#,
+        )
+        .expect("callback response");
+
+        assert_eq!(
+            response
+                .interaction
+                .response_message_id
+                .expect("message")
+                .get(),
+            3
+        );
+        assert_eq!(
+            response
+                .resource
+                .expect("resource")
+                .message
+                .expect("message")
+                .content,
+            "hello"
         );
     }
 }
