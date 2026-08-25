@@ -4,7 +4,7 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
-    error::{Error, Result},
+    error::{DiscordApiError, Error, Result},
     model::{ChannelId, CreateMessage, Message, User},
 };
 
@@ -141,20 +141,33 @@ impl RestClient {
                 continue;
             }
 
-            let api_error = serde_json::from_slice::<ApiErrorResponse>(&bytes).ok();
-            let message = api_error
-                .as_ref()
-                .map(|error| error.message.clone())
-                .unwrap_or_else(|| String::from_utf8_lossy(&bytes).into_owned());
-
-            return Err(Error::HttpStatus {
-                status,
-                code: api_error.map(|error| error.code),
-                message,
-            });
+            return Err(response_error(status, &bytes));
         }
 
         unreachable!("rate-limit retry loop always returns or continues")
+    }
+}
+
+fn response_error(status: reqwest::StatusCode, bytes: &[u8]) -> Error {
+    if let Ok(api_error) = serde_json::from_slice::<ApiErrorResponse>(bytes) {
+        if let Some(raw_errors) = api_error.errors {
+            return Error::DiscordApi {
+                status,
+                error: DiscordApiError::new(api_error.code, api_error.message, raw_errors),
+            };
+        }
+
+        return Error::HttpStatus {
+            status,
+            code: Some(api_error.code),
+            message: api_error.message,
+        };
+    }
+
+    Error::HttpStatus {
+        status,
+        code: None,
+        message: String::from_utf8_lossy(bytes).into_owned(),
     }
 }
 
@@ -176,6 +189,8 @@ fn duration_from_seconds(seconds: f64) -> Option<Duration> {
 struct ApiErrorResponse {
     code: i64,
     message: String,
+    #[serde(default)]
+    errors: Option<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -183,4 +198,70 @@ struct RateLimitResponse {
     retry_after: f64,
     #[serde(default)]
     global: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use reqwest::StatusCode;
+
+    use crate::Error;
+
+    use super::response_error;
+
+    #[test]
+    fn nested_validation_errors_use_structured_variant() {
+        let error = response_error(
+            StatusCode::BAD_REQUEST,
+            br#"{
+                "code":50035,
+                "message":"Invalid Form Body",
+                "errors":{
+                    "name":{
+                        "_errors":[{
+                            "code":"BASE_TYPE_REQUIRED",
+                            "message":"This field is required"
+                        }]
+                    }
+                }
+            }"#,
+        );
+
+        let Error::DiscordApi { status, error } = error else {
+            panic!("expected structured Discord API error");
+        };
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(error.code, 50035);
+        assert_eq!(error.validation_errors[0].dotted_path(), "name");
+    }
+
+    #[test]
+    fn ordinary_discord_errors_keep_http_status_variant() {
+        let error = response_error(
+            StatusCode::NOT_FOUND,
+            br#"{"code":10008,"message":"Unknown Message"}"#,
+        );
+
+        let Error::HttpStatus {
+            status,
+            code,
+            message,
+        } = error
+        else {
+            panic!("expected HTTP status error");
+        };
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(code, Some(10008));
+        assert_eq!(message, "Unknown Message");
+    }
+
+    #[test]
+    fn non_json_errors_preserve_response_text() {
+        let error = response_error(StatusCode::BAD_GATEWAY, b"upstream unavailable");
+
+        let Error::HttpStatus { code, message, .. } = error else {
+            panic!("expected HTTP status error");
+        };
+        assert_eq!(code, None);
+        assert_eq!(message, "upstream unavailable");
+    }
 }

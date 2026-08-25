@@ -12,5 +12,5 @@ pub mod gateway;
 pub mod http;
 pub mod model;
 
-pub use error::{Error, Result};
+pub use error::{DiscordApiError, DiscordValidationError, Error, Result};
 pub use http::RestClient;
