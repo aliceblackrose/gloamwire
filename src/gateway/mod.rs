@@ -19,7 +19,8 @@ pub use connection::{GatewayConfig, GatewayConnection};
 pub use dispatch::{
     GuildMemberAddEvent, GuildMemberRemoveEvent, GuildMemberUpdateEvent, GuildMembersChunkEvent,
     GuildRoleDeleteEvent, GuildRoleEvent, MessageDeleteBulkEvent, MessageDeleteEvent,
-    ReadyApplication, ReadyEvent, TypedDispatchEvent,
+    MessageReactionAddEvent, MessageReactionRemoveAllEvent, MessageReactionRemoveEmojiEvent,
+    MessageReactionRemoveEvent, ReadyApplication, ReadyEvent, TypedDispatchEvent,
 };
 pub use encoding::GatewayEncoding;
 pub use event::{DispatchEvent, GatewayEvent};
