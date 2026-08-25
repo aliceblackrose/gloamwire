@@ -50,6 +50,8 @@ pub struct GuildMember {
     #[serde(default)]
     pub banner: Option<String>,
     #[serde(default)]
+    pub bio: Option<String>,
+    #[serde(default)]
     pub roles: Vec<RoleId>,
     #[serde(default)]
     pub joined_at: Option<String>,
@@ -67,4 +69,31 @@ pub struct GuildMember {
     pub permissions: Option<Permissions>,
     #[serde(default)]
     pub communication_disabled_until: Option<String>,
+}
+
+/// A user ban returned by Discord's guild moderation endpoints.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuildBan {
+    #[serde(default)]
+    pub reason: Option<String>,
+    pub user: User,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GuildBan;
+
+    #[test]
+    fn parses_ban_without_a_reason() {
+        let ban: GuildBan = serde_json::from_str(
+            r#"{
+                "reason":null,
+                "user":{"id":"1","username":"spammer","discriminator":"0"}
+            }"#,
+        )
+        .expect("guild ban");
+
+        assert!(ban.reason.is_none());
+        assert_eq!(ban.user.id.get(), 1);
+    }
 }

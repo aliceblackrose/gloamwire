@@ -288,7 +288,7 @@ impl RestClient {
     }
 }
 
-fn guild_route(
+pub(crate) fn guild_route(
     method: Method,
     guild_id: GuildId,
     suffix: &str,

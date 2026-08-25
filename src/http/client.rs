@@ -222,6 +222,27 @@ impl RestClient {
             .into_body())
     }
 
+    pub(crate) async fn request_optional_json<T, B>(
+        &self,
+        route: Route,
+        body: Option<&B>,
+        headers: HeaderMap,
+    ) -> Result<Option<T>>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let payload = match body {
+            Some(body) => RequestPayload::Json(serde_json::to_vec(body)?),
+            None => RequestPayload::Empty,
+        };
+        Ok(self
+            .execute(route, payload, headers)
+            .await?
+            .into_optional_json::<T>()?
+            .into_body())
+    }
+
     pub(crate) async fn request_empty<B>(
         &self,
         route: Route,
