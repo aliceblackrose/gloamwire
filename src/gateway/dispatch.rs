@@ -41,7 +41,7 @@ pub enum TypedDispatchEvent {
     MessageReactionRemove(MessageReactionRemoveEvent),
     MessageReactionRemoveAll(MessageReactionRemoveAllEvent),
     MessageReactionRemoveEmoji(MessageReactionRemoveEmojiEvent),
-    InteractionCreate(Interaction),
+    InteractionCreate(Box<Interaction>),
     PresenceUpdate(PresenceUpdate),
     VoiceStateUpdate(VoiceState),
     UserUpdate(User),
@@ -273,7 +273,7 @@ impl DispatchEvent {
                 TypedDispatchEvent::MessageReactionRemoveEmoji(serde_json::from_value(data)?)
             }
             "INTERACTION_CREATE" => {
-                TypedDispatchEvent::InteractionCreate(serde_json::from_value(data)?)
+                TypedDispatchEvent::InteractionCreate(Box::new(serde_json::from_value(data)?))
             }
             "PRESENCE_UPDATE" => TypedDispatchEvent::PresenceUpdate(serde_json::from_value(data)?),
             "VOICE_STATE_UPDATE" => {
