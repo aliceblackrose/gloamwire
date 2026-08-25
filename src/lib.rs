@@ -13,4 +13,4 @@ pub mod http;
 pub mod model;
 
 pub use error::{DiscordApiError, DiscordValidationError, Error, Result};
-pub use http::{RestClient, RestClientBuilder};
+pub use http::{Pagination, RestClient, RestClientBuilder, UploadFile, UploadSource};
