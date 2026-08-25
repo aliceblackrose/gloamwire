@@ -7,6 +7,7 @@ mod component;
 mod guild;
 mod id;
 mod interaction;
+mod invite;
 mod member;
 mod message;
 mod permissions;
@@ -16,6 +17,7 @@ mod role;
 mod snowflake;
 mod user;
 mod voice;
+mod webhook;
 
 pub use attachment::Attachment;
 pub use channel::{Channel, ChannelFlags, ChannelType, DefaultReaction, ForumTag, ThreadMetadata};
@@ -41,6 +43,10 @@ pub use interaction::{
     InteractionResolvedData, InteractionType, MessageComponentInteractionData,
     ModalSubmitInteractionData,
 };
+pub use invite::{
+    Invite, InviteChannel, InviteFlags, InviteGuild, InviteRole, InviteTargetType,
+    InviteTargetUsersJobStatus, InviteTargetUsersJobStatusType, InviteType,
+};
 pub use member::{GuildMember, GuildMemberFlags};
 pub use message::{CreateMessage, Message};
 pub use permissions::{
@@ -53,3 +59,4 @@ pub use role::{Role, RoleColors};
 pub use snowflake::{DISCORD_EPOCH_MILLIS, Snowflake};
 pub use user::{PartialUser, User};
 pub use voice::VoiceState;
+pub use webhook::{Webhook, WebhookSourceChannel, WebhookSourceGuild, WebhookType};
