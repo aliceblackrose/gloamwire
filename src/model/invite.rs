@@ -2,9 +2,7 @@ use bitflags::bitflags;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-use super::{
-    ChannelId, ChannelType, GuildId, GuildScheduledEvent, RoleColors, RoleId, User,
-};
+use super::{ChannelId, ChannelType, GuildId, GuildScheduledEvent, RoleColors, RoleId, User};
 
 /// Discord invite type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
