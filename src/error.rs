@@ -237,7 +237,10 @@ mod tests {
             "activities.0.platform"
         );
         assert_eq!(error.validation_errors[0].code, "BASE_TYPE_CHOICES");
-        assert_eq!(error.validation_errors[1].dotted_path(), "activities.0.type");
+        assert_eq!(
+            error.validation_errors[1].dotted_path(),
+            "activities.0.type"
+        );
     }
 
     #[test]
