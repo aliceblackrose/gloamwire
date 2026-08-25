@@ -1,12 +1,12 @@
 use serde::{Deserialize, Serialize};
 
-use super::Snowflake;
+use super::UserId;
 
 /// A Discord user object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct User {
     /// The user's unique ID.
-    pub id: Snowflake,
+    pub id: UserId,
     /// The user's username.
     pub username: String,
     /// The user's display name, when one is configured.
