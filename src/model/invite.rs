@@ -213,7 +213,12 @@ mod tests {
 
         assert_eq!(invite.kind, InviteType::GUILD);
         assert_eq!(invite.target_type, Some(InviteTargetType::STREAM));
-        assert!(invite.flags.expect("flags").contains(InviteFlags::IS_GUEST_INVITE));
+        assert!(
+            invite
+                .flags
+                .expect("flags")
+                .contains(InviteFlags::IS_GUEST_INVITE)
+        );
         assert_eq!(invite.roles[0].id.get(), 42);
     }
 
