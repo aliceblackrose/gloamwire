@@ -1,6 +1,8 @@
 use reqwest::StatusCode;
 use thiserror::Error;
 
+use crate::gateway::GatewayCloseCode;
+
 /// A result returned by Gloamwire operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -35,8 +37,13 @@ pub enum Error {
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
 
     /// Discord closed the Gateway connection.
-    #[error("Discord closed the Gateway connection: {0}")]
-    GatewayClosed(String),
+    #[error("Discord closed the Gateway connection with {code:?}: {reason}")]
+    GatewayClosed {
+        /// Discord or WebSocket close code, when one was supplied.
+        code: Option<GatewayCloseCode>,
+        /// Close reason supplied by the peer.
+        reason: String,
+    },
 
     /// A Gateway packet violated the expected protocol sequence.
     #[error("Gateway protocol error: {0}")]
