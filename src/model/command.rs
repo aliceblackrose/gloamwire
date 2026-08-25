@@ -200,22 +200,29 @@ mod tests {
         .expect("application command");
 
         assert_eq!(command.kind, ApplicationCommandType::CHAT_INPUT);
-        assert_eq!(command.options[0].kind, ApplicationCommandOptionType::ATTACHMENT);
+        assert_eq!(
+            command.options[0].kind,
+            ApplicationCommandOptionType::ATTACHMENT
+        );
         assert_eq!(command.options[0].file_types, ["image", ".pdf"]);
         assert_eq!(
             command.integration_types.as_deref(),
-            Some(&[
-                ApplicationIntegrationType::GUILD_INSTALL,
-                ApplicationIntegrationType::USER_INSTALL,
-            ][..])
+            Some(
+                &[
+                    ApplicationIntegrationType::GUILD_INSTALL,
+                    ApplicationIntegrationType::USER_INSTALL,
+                ][..]
+            )
         );
         assert_eq!(
             command.contexts.as_deref(),
-            Some(&[
-                InteractionContextType::GUILD,
-                InteractionContextType::BOT_DM,
-                InteractionContextType::PRIVATE_CHANNEL,
-            ][..])
+            Some(
+                &[
+                    InteractionContextType::GUILD,
+                    InteractionContextType::BOT_DM,
+                    InteractionContextType::PRIVATE_CHANNEL,
+                ][..]
+            )
         );
     }
 
