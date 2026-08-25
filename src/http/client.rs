@@ -203,7 +203,11 @@ impl RestClient {
     where
         B: Serialize + ?Sized,
     {
-        Ok(self.request_raw(route, body).await?.into_empty().into_body())
+        Ok(self
+            .request_raw(route, body)
+            .await?
+            .into_empty()
+            .into_body())
     }
 
     pub(crate) async fn request_raw<B>(
