@@ -333,8 +333,7 @@ mod tests {
             }),
         };
 
-        let TypedDispatchEvent::MessageReactionAdd(event) =
-            dispatch.typed().expect("reaction add")
+        let TypedDispatchEvent::MessageReactionAdd(event) = dispatch.typed().expect("reaction add")
         else {
             panic!("expected reaction add event");
         };
