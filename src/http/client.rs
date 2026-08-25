@@ -75,12 +75,7 @@ impl RestClient {
         self.request_json(Method::POST, &route, Some(message)).await
     }
 
-    async fn request_json<T, B>(
-        &self,
-        method: Method,
-        route: &str,
-        body: Option<&B>,
-    ) -> Result<T>
+    async fn request_json<T, B>(&self, method: Method, route: &str, body: Option<&B>) -> Result<T>
     where
         T: DeserializeOwned,
         B: Serialize + ?Sized,
@@ -101,8 +96,7 @@ impl RestClient {
                 return Ok(serde_json::from_slice(&bytes)?);
             }
 
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                && attempt < MAX_RATE_LIMIT_RETRIES
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt < MAX_RATE_LIMIT_RETRIES
             {
                 let retry_after = serde_json::from_slice::<RateLimitResponse>(&bytes)
                     .ok()
