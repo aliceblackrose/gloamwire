@@ -1,3 +1,5 @@
+use std::mem::size_of;
+
 use erltf::OwnedTerm;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map, Number, Value};
@@ -205,9 +207,8 @@ mod tests {
             op: 1,
             d: Value::Null,
         };
-        let EncodedGatewayPayload::Binary(bytes) = GatewayEncoding::Etf
-            .encode(&payload)
-            .expect("ETF payload")
+        let EncodedGatewayPayload::Binary(bytes) =
+            GatewayEncoding::Etf.encode(&payload).expect("ETF payload")
         else {
             panic!("ETF must use a binary payload");
         };
@@ -230,9 +231,8 @@ mod tests {
                 "snowflake": u64::MAX
             }),
         };
-        let EncodedGatewayPayload::Binary(bytes) = GatewayEncoding::Etf
-            .encode(&payload)
-            .expect("ETF payload")
+        let EncodedGatewayPayload::Binary(bytes) =
+            GatewayEncoding::Etf.encode(&payload).expect("ETF payload")
         else {
             panic!("ETF must use a binary payload");
         };
