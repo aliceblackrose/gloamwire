@@ -3,6 +3,7 @@
 mod attachment;
 mod channel;
 mod command;
+mod component;
 mod guild;
 mod id;
 mod interaction;
@@ -23,6 +24,10 @@ pub use command::{
     ApplicationCommandNumericValue, ApplicationCommandOption, ApplicationCommandOptionChoice,
     ApplicationCommandOptionType, ApplicationCommandType, ApplicationIntegrationType,
     InteractionContextType,
+};
+pub use component::{
+    Component, ComponentOption, ComponentStyle, ComponentType, ComponentValue, MediaGalleryItem,
+    Modal, SelectDefaultValue, SeparatorSpacing, UnfurledMediaItem,
 };
 pub use guild::{Guild, UnavailableGuild};
 pub use id::{
