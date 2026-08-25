@@ -19,10 +19,10 @@ pub use connection::{GatewayConfig, GatewayConnection};
 pub use dispatch::{
     AutoModerationActionExecutionEvent, GuildAuditLogEntryCreateEvent, GuildMemberAddEvent,
     GuildMemberRemoveEvent, GuildMemberUpdateEvent, GuildMembersChunkEvent, GuildRoleDeleteEvent,
-    GuildRoleEvent, InviteCreateEvent, InviteDeleteEvent, MessageDeleteBulkEvent,
-    MessageDeleteEvent, MessageReactionAddEvent, MessageReactionRemoveAllEvent,
-    MessageReactionRemoveEmojiEvent, MessageReactionRemoveEvent, ReadyApplication, ReadyEvent,
-    TypedDispatchEvent, WebhooksUpdateEvent,
+    GuildRoleEvent, GuildScheduledEventUserEvent, InviteCreateEvent, InviteDeleteEvent,
+    MessageDeleteBulkEvent, MessageDeleteEvent, MessagePollVoteEvent, MessageReactionAddEvent,
+    MessageReactionRemoveAllEvent, MessageReactionRemoveEmojiEvent, MessageReactionRemoveEvent,
+    ReadyApplication, ReadyEvent, TypedDispatchEvent, WebhooksUpdateEvent,
 };
 pub use encoding::GatewayEncoding;
 pub use event::{DispatchEvent, GatewayEvent};
