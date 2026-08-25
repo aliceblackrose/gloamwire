@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{
@@ -8,7 +8,12 @@ use crate::{
     model::{ChannelId, CreateMessage, Message, User},
 };
 
-use super::{GatewayBot, HttpResponse, rate_limit::RateLimiter, route::Route};
+use super::{
+    GatewayBot, HttpResponse,
+    rate_limit::RateLimiter,
+    route::Route,
+    upload::{UploadFile, multipart_form},
+};
 
 const API_BASE_URL: &str = "https://discord.com/api/v10";
 const USER_AGENT: &str = "Gloamwire/0.1 (+https://github.com/cybellereaper/Gloamwire)";
@@ -177,7 +182,7 @@ impl RestClient {
             .await
     }
 
-    /// Creates a message in a channel.
+    /// Creates a message in a channel without file uploads.
     pub async fn create_message(
         &self,
         channel_id: ChannelId,
@@ -192,21 +197,76 @@ impl RestClient {
         T: DeserializeOwned,
         B: Serialize + ?Sized,
     {
+        self.request_json_with_headers(route, body, HeaderMap::new())
+            .await
+    }
+
+    pub(crate) async fn request_json_with_headers<T, B>(
+        &self,
+        route: Route,
+        body: Option<&B>,
+        headers: HeaderMap,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let payload = match body {
+            Some(body) => RequestPayload::Json(serde_json::to_vec(body)?),
+            None => RequestPayload::Empty,
+        };
         Ok(self
-            .request_raw(route, body)
+            .execute(route, payload, headers)
             .await?
             .into_json::<T>()?
             .into_body())
     }
 
-    pub(crate) async fn request_raw<B>(
+    pub(crate) async fn request_empty<B>(
         &self,
         route: Route,
         body: Option<&B>,
-    ) -> Result<HttpResponse<Vec<u8>>>
+        headers: HeaderMap,
+    ) -> Result<()>
     where
         B: Serialize + ?Sized,
     {
+        let payload = match body {
+            Some(body) => RequestPayload::Json(serde_json::to_vec(body)?),
+            None => RequestPayload::Empty,
+        };
+        self.execute(route, payload, headers).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn request_multipart_json<T, B>(
+        &self,
+        route: Route,
+        body: &B,
+        files: &[UploadFile],
+        headers: HeaderMap,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned,
+        B: Serialize + ?Sized,
+    {
+        let payload = RequestPayload::Multipart {
+            payload_json: serde_json::to_string(body)?,
+            files,
+        };
+        Ok(self
+            .execute(route, payload, headers)
+            .await?
+            .into_json::<T>()?
+            .into_body())
+    }
+
+    async fn execute(
+        &self,
+        route: Route,
+        payload: RequestPayload<'_>,
+        headers: HeaderMap,
+    ) -> Result<HttpResponse<Vec<u8>>> {
         let url = format!("{}{}", self.base_url, route.path);
         let mut rate_limit_retries = 0;
         let mut transient_retries = 0;
@@ -214,10 +274,20 @@ impl RestClient {
         loop {
             self.rate_limiter.acquire(&route).await;
 
-            let mut request = self.http.request(route.method.clone(), &url);
-            if let Some(body) = body {
-                request = request.json(body);
-            }
+            let mut request = self
+                .http
+                .request(route.method.clone(), &url)
+                .headers(headers.clone());
+            request = match &payload {
+                RequestPayload::Empty => request,
+                RequestPayload::Json(bytes) => request
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(bytes.clone()),
+                RequestPayload::Multipart {
+                    payload_json,
+                    files,
+                } => request.multipart(multipart_form(payload_json.clone(), files).await?),
+            };
 
             let response = match request.send().await {
                 Ok(response) => response,
@@ -235,7 +305,7 @@ impl RestClient {
             };
 
             let status = response.status();
-            let headers = response.headers().clone();
+            let response_headers = response.headers().clone();
             let bytes = response.bytes().await?.to_vec();
             let rate_limit = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 serde_json::from_slice::<RateLimitResponse>(&bytes).ok()
@@ -245,19 +315,19 @@ impl RestClient {
             let retry_after = rate_limit
                 .as_ref()
                 .and_then(|body| duration_from_seconds(body.retry_after))
-                .or_else(|| retry_after_header(&headers));
+                .or_else(|| retry_after_header(&response_headers));
             let global = rate_limit.as_ref().is_some_and(|body| body.global)
-                || headers
+                || response_headers
                     .get("x-ratelimit-scope")
                     .and_then(|value| value.to_str().ok())
                     .is_some_and(|scope| scope == "global");
 
             self.rate_limiter
-                .update(&route, status, &headers, retry_after, global)
+                .update(&route, status, &response_headers, retry_after, global)
                 .await;
 
             if status.is_success() {
-                return Ok(HttpResponse::new(status, headers, bytes));
+                return Ok(HttpResponse::new(status, response_headers, bytes));
             }
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS
@@ -280,6 +350,15 @@ impl RestClient {
             return Err(response_error(status, &bytes));
         }
     }
+}
+
+enum RequestPayload<'a> {
+    Empty,
+    Json(Vec<u8>),
+    Multipart {
+        payload_json: String,
+        files: &'a [UploadFile],
+    },
 }
 
 fn is_retryable_transport_error(error: &reqwest::Error) -> bool {
