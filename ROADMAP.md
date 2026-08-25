@@ -51,11 +51,11 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] Structured Discord validation errors
 - [x] Retry classification and safe idempotent retry policy
 - [x] Configurable request/connect/pool timeouts
-- [ ] Full message API
-- [ ] Multipart attachments and streaming uploads
+- [x] Full message API
+- [x] Multipart attachments and streaming uploads
 - [ ] Guild, channel, thread, role, member, moderation, webhook, audit-log, invite, and scheduled-event APIs
 - [ ] Application commands and interaction responses/followups
-- [ ] Pagination primitives
+- [x] Pagination primitives
 - [ ] OAuth2 support
 - [ ] CDN URL helpers
 
