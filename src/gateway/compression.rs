@@ -115,8 +115,8 @@ pub(crate) struct ZstdStreamDecoder {
 
 impl ZstdStreamDecoder {
     fn new() -> Result<Self> {
-        let decoder = ZstdDecoder::new()
-            .map_err(|error| Error::GatewayCompression(error.to_string()))?;
+        let decoder =
+            ZstdDecoder::new().map_err(|error| Error::GatewayCompression(error.to_string()))?;
         Ok(Self { decoder })
     }
 
