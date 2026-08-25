@@ -148,7 +148,12 @@ impl RestClient {
 }
 
 fn retry_after_header(headers: &HeaderMap) -> Option<Duration> {
-    let seconds = headers.get("retry-after")?.to_str().ok()?.parse::<f64>().ok()?;
+    let seconds = headers
+        .get("retry-after")?
+        .to_str()
+        .ok()?
+        .parse::<f64>()
+        .ok()?;
     duration_from_seconds(seconds)
 }
 
