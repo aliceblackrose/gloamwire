@@ -12,6 +12,8 @@ categories = ["api-bindings", "asynchronous", "network-programming"]
 
 [dependencies]
 bitflags = { version = "2", features = ["serde"] }
+erltf = "0.16"
+erltf_serde = { version = "0.16", features = ["elixir-interop"] }
 fastrand = "2"
 flate2 = "1.1"
 futures-util = "0.3"

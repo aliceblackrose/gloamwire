@@ -59,6 +59,10 @@ pub enum Error {
     #[error("Gateway compression error: {0}")]
     GatewayCompression(String),
 
+    /// Gateway payload serialization or deserialization failed.
+    #[error("Gateway encoding error: {0}")]
+    GatewayEncoding(String),
+
     /// A typed Gateway send event violates a documented payload constraint.
     #[error("invalid Gateway send event: {0}")]
     InvalidGatewaySendEvent(String),

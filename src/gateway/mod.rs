@@ -4,6 +4,7 @@ mod close;
 mod compression;
 mod connection;
 mod dispatch;
+mod encoding;
 mod event;
 mod identify;
 mod intents;
@@ -20,6 +21,7 @@ pub use dispatch::{
     GuildRoleDeleteEvent, GuildRoleEvent, MessageDeleteBulkEvent, MessageDeleteEvent,
     ReadyApplication, ReadyEvent, TypedDispatchEvent,
 };
+pub use encoding::GatewayEncoding;
 pub use event::{DispatchEvent, GatewayEvent};
 pub use intents::GatewayIntents;
 pub use send::{
