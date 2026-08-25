@@ -462,7 +462,10 @@ mod tests {
             ..existing.clone()
         };
 
-        assert_eq!(serde_json::to_value(existing).expect("existing")["id"], "10");
+        assert_eq!(
+            serde_json::to_value(existing).expect("existing")["id"],
+            "10"
+        );
         assert_eq!(serde_json::to_value(upload).expect("upload")["id"], 0);
     }
 
