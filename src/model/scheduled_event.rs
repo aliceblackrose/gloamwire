@@ -92,14 +92,21 @@ pub struct GuildScheduledEventRecurrenceNWeekday {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuildScheduledEventRecurrenceRule {
     pub start: String,
+    #[serde(default)]
     pub end: Option<String>,
     pub frequency: GuildScheduledEventRecurrenceFrequency,
     pub interval: u32,
+    #[serde(default)]
     pub by_weekday: Option<Vec<GuildScheduledEventRecurrenceWeekday>>,
+    #[serde(default)]
     pub by_n_weekday: Option<Vec<GuildScheduledEventRecurrenceNWeekday>>,
+    #[serde(default)]
     pub by_month: Option<Vec<GuildScheduledEventRecurrenceMonth>>,
+    #[serde(default)]
     pub by_month_day: Option<Vec<i16>>,
+    #[serde(default)]
     pub by_year_day: Option<Vec<u16>>,
+    #[serde(default)]
     pub count: Option<u32>,
 }
 
@@ -115,6 +122,7 @@ pub struct GuildScheduledEventEntityMetadata {
 pub struct GuildScheduledEvent {
     pub id: ScheduledEventId,
     pub guild_id: GuildId,
+    #[serde(default)]
     pub channel_id: Option<ChannelId>,
     #[serde(default)]
     pub creator_id: Option<UserId>,
@@ -122,11 +130,14 @@ pub struct GuildScheduledEvent {
     #[serde(default)]
     pub description: Option<String>,
     pub scheduled_start_time: String,
+    #[serde(default)]
     pub scheduled_end_time: Option<String>,
     pub privacy_level: GuildScheduledEventPrivacyLevel,
     pub status: GuildScheduledEventStatus,
     pub entity_type: GuildScheduledEventEntityType,
+    #[serde(default)]
     pub entity_id: Option<Snowflake>,
+    #[serde(default)]
     pub entity_metadata: Option<GuildScheduledEventEntityMetadata>,
     #[serde(default)]
     pub creator: Option<User>,
@@ -134,6 +145,7 @@ pub struct GuildScheduledEvent {
     pub user_count: Option<u32>,
     #[serde(default)]
     pub image: Option<String>,
+    #[serde(default)]
     pub recurrence_rule: Option<GuildScheduledEventRecurrenceRule>,
 }
 
