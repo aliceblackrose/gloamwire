@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn parses_components_v2_container() {
         let component: Component = serde_json::from_str(
-            r#"{
+            r##"{
                 "type":17,
                 "accent_color":703487,
                 "components":[
@@ -229,7 +229,7 @@ mod tests {
                         {"type":2,"custom_id":"pet","label":"Pet it!","style":1}
                     ]}
                 ]
-            }"#,
+            }"##,
         )
         .expect("container");
 
