@@ -25,6 +25,7 @@ use super::{
     GatewaySession, RequestChannelInfo, RequestGuildMembers, RequestSoundboardSounds,
     UpdatePresence, UpdateVoiceState,
     compression::{GatewayCompression, GatewayDecoder},
+    encoding::{EncodedGatewayPayload, GatewayEncoding},
     identify::GatewayIdentifyLimiter,
     rate_limit::{GatewayRateLimiter, OutboundPriority},
 };
@@ -50,6 +51,7 @@ pub struct GatewayConfig {
     url: String,
     shard: Option<[u32; 2]>,
     identify_limiter: Option<GatewayIdentifyLimiter>,
+    encoding: GatewayEncoding,
     compression: GatewayCompression,
 }
 
@@ -62,6 +64,7 @@ impl std::fmt::Debug for GatewayConfig {
             .field("url", &self.url)
             .field("shard", &self.shard)
             .field("identify_limited", &self.identify_limiter.is_some())
+            .field("encoding", &self.encoding)
             .field("compression", &self.compression)
             .finish()
     }
@@ -77,6 +80,7 @@ impl GatewayConfig {
             url: DEFAULT_GATEWAY_URL.to_owned(),
             shard: None,
             identify_limiter: None,
+            encoding: GatewayEncoding::Json,
             compression: GatewayCompression::None,
         }
     }
@@ -97,6 +101,7 @@ impl GatewayConfig {
             url: gateway.url.clone(),
             shard: None,
             identify_limiter: Some(GatewayIdentifyLimiter::new(&gateway.session_start_limit)),
+            encoding: GatewayEncoding::Json,
             compression: GatewayCompression::None,
         }
     }
@@ -109,6 +114,19 @@ impl GatewayConfig {
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         self.url = url.into();
         self
+    }
+
+    /// Configures Discord Gateway wire encoding.
+    #[must_use]
+    pub const fn with_encoding(mut self, encoding: GatewayEncoding) -> Self {
+        self.encoding = encoding;
+        self
+    }
+
+    /// Returns the configured Gateway wire encoding.
+    #[must_use]
+    pub const fn encoding(&self) -> GatewayEncoding {
+        self.encoding
     }
 
     /// Configures Discord Gateway transport compression.
@@ -282,7 +300,7 @@ impl GatewayConnection {
 
                     self.send_heartbeat().await?;
                 }
-                envelope = next_envelope(&mut self.socket, &mut self.decoder) => {
+                envelope = next_envelope(&mut self.socket, &mut self.decoder, self.config.encoding) => {
                     let envelope = match envelope {
                         Ok(envelope) => envelope,
                         Err(Error::GatewayClosed { code, reason }) => {
@@ -383,10 +401,13 @@ impl GatewayConnection {
             });
         }
 
-        let text = serialize_json(&OutboundEnvelope {
-            op: opcode,
-            d: data,
-        })?;
+        let payload = encode_payload(
+            self.config.encoding,
+            &OutboundEnvelope {
+                op: opcode,
+                d: data,
+            },
+        )?;
         if let Some(retry_after) = self
             .rate_limiter
             .try_acquire(OutboundPriority::Normal)
@@ -395,13 +416,18 @@ impl GatewayConnection {
             return Err(Error::GatewayOutboundRateLimited { retry_after });
         }
 
-        self.socket.send(Message::Text(text.into())).await?;
-        Ok(())
+        send_payload(&mut self.socket, payload).await
     }
 
     async fn send_heartbeat(&mut self) -> Result<()> {
         let sent_at = Instant::now();
-        send_heartbeat(&mut self.socket, &self.rate_limiter, self.sequence).await?;
+        send_heartbeat(
+            &mut self.socket,
+            &self.rate_limiter,
+            self.config.encoding,
+            self.sequence,
+        )
+        .await?;
         self.last_heartbeat_sent = Some(sent_at);
         self.heartbeat_acknowledged = false;
         Ok(())
@@ -510,11 +536,11 @@ async fn open_and_handshake(
     rate_limiter: &GatewayRateLimiter,
 ) -> Result<(GatewaySocket, GatewayDecoder, Interval)> {
     let base_url = session.map_or(config.url.as_str(), GatewaySession::resume_gateway_url);
-    let url = gateway_url(base_url, config.compression);
+    let url = gateway_url(base_url, config.encoding, config.compression);
     let (mut socket, _) = connect_async(url).await?;
     let mut decoder = GatewayDecoder::new(config.compression)?;
 
-    let hello = next_envelope(&mut socket, &mut decoder).await?;
+    let hello = next_envelope(&mut socket, &mut decoder, config.encoding).await?;
     if hello.op != 10 {
         return Err(Error::GatewayProtocol(format!(
             "expected Hello opcode 10, received {}",
@@ -536,9 +562,10 @@ async fn open_and_handshake(
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     if let Some(session) = session {
-        send_json(
+        send_encoded(
             &mut socket,
             rate_limiter,
+            config.encoding,
             OutboundPriority::Normal,
             &OutboundEnvelope {
                 op: 6,
@@ -555,9 +582,10 @@ async fn open_and_handshake(
             identify_limiter.acquire(config.shard_id()).await;
         }
 
-        send_json(
+        send_encoded(
             &mut socket,
             rate_limiter,
+            config.encoding,
             OutboundPriority::Normal,
             &OutboundEnvelope {
                 op: 2,
@@ -582,6 +610,7 @@ async fn open_and_handshake(
 async fn next_envelope(
     socket: &mut GatewaySocket,
     decoder: &mut GatewayDecoder,
+    encoding: GatewayEncoding,
 ) -> Result<InboundEnvelope> {
     loop {
         let message = socket.next().await.ok_or_else(|| Error::GatewayClosed {
@@ -590,10 +619,10 @@ async fn next_envelope(
         })??;
 
         match message {
-            Message::Text(text) => return Ok(serde_json::from_str(text.as_str())?),
+            Message::Text(text) => return encoding.decode_text(text.as_str()),
             Message::Binary(bytes) => {
                 if let Some(decoded) = decoder.decode(&bytes)? {
-                    return Ok(serde_json::from_slice(&decoded)?);
+                    return encoding.decode_bytes(&decoded);
                 }
             }
             Message::Ping(payload) => socket.send(Message::Pong(payload)).await?,
@@ -615,53 +644,68 @@ async fn next_envelope(
 async fn send_heartbeat(
     socket: &mut GatewaySocket,
     rate_limiter: &GatewayRateLimiter,
+    encoding: GatewayEncoding,
     sequence: Option<u64>,
 ) -> Result<()> {
-    send_json(
+    send_encoded(
         socket,
         rate_limiter,
+        encoding,
         OutboundPriority::Heartbeat,
         &OutboundEnvelope { op: 1, d: sequence },
     )
     .await
 }
 
-async fn send_json<T>(
+async fn send_encoded<T>(
     socket: &mut GatewaySocket,
     rate_limiter: &GatewayRateLimiter,
+    encoding: GatewayEncoding,
     priority: OutboundPriority,
     payload: &T,
 ) -> Result<()>
 where
     T: Serialize,
 {
-    let text = serialize_json(payload)?;
+    let payload = encode_payload(encoding, payload)?;
     rate_limiter.acquire(priority).await;
-    socket.send(Message::Text(text.into())).await?;
-    Ok(())
+    send_payload(socket, payload).await
 }
 
-fn serialize_json<T>(payload: &T) -> Result<String>
+fn encode_payload<T>(encoding: GatewayEncoding, payload: &T) -> Result<EncodedGatewayPayload>
 where
     T: Serialize,
 {
-    let text = serde_json::to_string(payload)?;
-    if text.len() > MAX_OUTBOUND_PAYLOAD_BYTES {
+    let payload = encoding.encode(payload)?;
+    if payload.len() > MAX_OUTBOUND_PAYLOAD_BYTES {
         return Err(Error::GatewayPayloadTooLarge {
-            actual: text.len(),
+            actual: payload.len(),
             limit: MAX_OUTBOUND_PAYLOAD_BYTES,
         });
     }
 
-    Ok(text)
+    Ok(payload)
 }
 
-fn gateway_url(base_url: &str, compression: GatewayCompression) -> String {
+async fn send_payload(socket: &mut GatewaySocket, payload: EncodedGatewayPayload) -> Result<()> {
+    let message = match payload {
+        EncodedGatewayPayload::Text(text) => Message::Text(text.into()),
+        EncodedGatewayPayload::Binary(bytes) => Message::Binary(bytes.into()),
+    };
+    socket.send(message).await?;
+    Ok(())
+}
+
+fn gateway_url(
+    base_url: &str,
+    encoding: GatewayEncoding,
+    compression: GatewayCompression,
+) -> String {
     let mut url = base_url.trim_end_matches('/').to_owned();
     let version = GATEWAY_VERSION.to_string();
 
     set_query_param(&mut url, "v", Some(&version));
-    set_query_param(&mut url, "encoding", Some("json"));
+    set_query_param(&mut url, "encoding", Some(encoding.query_value()));
     set_query_param(&mut url, "compress", compression.query_value());
     url
 }
@@ -712,21 +756,29 @@ fn reconnect_delay(attempt: u32) -> Duration {
 mod tests {
     use std::time::Duration;
 
-    use super::{GatewayCompression, gateway_url, reconnect_delay};
+    use super::{GatewayCompression, GatewayEncoding, gateway_url, reconnect_delay};
 
     #[test]
     fn gateway_url_adds_protocol_query() {
         assert_eq!(
-            gateway_url("wss://gateway.discord.gg", GatewayCompression::None),
+            gateway_url(
+                "wss://gateway.discord.gg",
+                GatewayEncoding::Json,
+                GatewayCompression::None
+            ),
             "wss://gateway.discord.gg?v=10&encoding=json"
         );
     }
 
     #[test]
-    fn gateway_url_adds_transport_compression() {
+    fn gateway_url_adds_etf_and_transport_compression() {
         assert_eq!(
-            gateway_url("wss://gateway.discord.gg", GatewayCompression::ZstdStream),
-            "wss://gateway.discord.gg?v=10&encoding=json&compress=zstd-stream"
+            gateway_url(
+                "wss://gateway.discord.gg",
+                GatewayEncoding::Etf,
+                GatewayCompression::ZstdStream
+            ),
+            "wss://gateway.discord.gg?v=10&encoding=etf&compress=zstd-stream"
         );
     }
 
@@ -734,10 +786,11 @@ mod tests {
     fn gateway_url_normalizes_protocol_query() {
         assert_eq!(
             gateway_url(
-                "wss://gateway.discord.gg?compress=zlib-stream&encoding=etf&v=9",
+                "wss://gateway.discord.gg?compress=zlib-stream&encoding=json&v=9",
+                GatewayEncoding::Etf,
                 GatewayCompression::ZstdStream
             ),
-            "wss://gateway.discord.gg?v=10&encoding=json&compress=zstd-stream"
+            "wss://gateway.discord.gg?v=10&encoding=etf&compress=zstd-stream"
         );
     }
 
@@ -745,10 +798,11 @@ mod tests {
     fn gateway_url_removes_disabled_compression() {
         assert_eq!(
             gateway_url(
-                "wss://gateway.discord.gg?v=10&encoding=json&compress=zlib-stream",
+                "wss://gateway.discord.gg?v=10&encoding=etf&compress=zlib-stream",
+                GatewayEncoding::Etf,
                 GatewayCompression::None
             ),
-            "wss://gateway.discord.gg?v=10&encoding=json"
+            "wss://gateway.discord.gg?v=10&encoding=etf"
         );
     }
 
