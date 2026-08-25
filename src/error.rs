@@ -1,6 +1,7 @@
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use reqwest::StatusCode;
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::gateway::GatewayCloseCode;
@@ -8,10 +9,121 @@ use crate::gateway::GatewayCloseCode;
 /// A result returned by Gloamwire operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// One field-level validation failure returned by Discord.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscordValidationError {
+    /// Object keys and array indexes locating the invalid field.
+    pub path: Vec<String>,
+    /// Discord's machine-readable validation error code.
+    pub code: String,
+    /// Human-readable validation error message.
+    pub message: String,
+}
+
+impl DiscordValidationError {
+    /// Returns the validation path in dotted form, such as `activities.0.platform`.
+    #[must_use]
+    pub fn dotted_path(&self) -> String {
+        self.path.join(".")
+    }
+}
+
+/// Structured form-validation details returned by Discord's HTTP API.
+///
+/// Discord may add new nested error shapes over time. `raw_errors` therefore
+/// retains the complete error tree while `validation_errors` provides a
+/// convenient flattened view of every `_errors` entry found within it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiscordApiError {
+    /// Discord's numeric API error code.
+    pub code: i64,
+    /// Top-level human-readable error message.
+    pub message: String,
+    /// Complete nested value from Discord's `errors` response field.
+    pub raw_errors: Value,
+    /// Flattened field-level validation errors.
+    pub validation_errors: Vec<DiscordValidationError>,
+}
+
+impl DiscordApiError {
+    pub(crate) fn new(code: i64, message: String, raw_errors: Value) -> Self {
+        let mut validation_errors = Vec::new();
+        let mut path = Vec::new();
+        collect_validation_errors(&raw_errors, &mut path, &mut validation_errors);
+
+        Self {
+            code,
+            message,
+            raw_errors,
+            validation_errors,
+        }
+    }
+}
+
+impl fmt::Display for DiscordApiError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{} (Discord code {})", self.message, self.code)
+    }
+}
+
+fn collect_validation_errors(
+    value: &Value,
+    path: &mut Vec<String>,
+    validation_errors: &mut Vec<DiscordValidationError>,
+) {
+    match value {
+        Value::Object(object) => {
+            if let Some(Value::Array(errors)) = object.get("_errors") {
+                for error in errors {
+                    let Some(code) = error.get("code").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let Some(message) = error.get("message").and_then(Value::as_str) else {
+                        continue;
+                    };
+
+                    validation_errors.push(DiscordValidationError {
+                        path: path.clone(),
+                        code: code.to_owned(),
+                        message: message.to_owned(),
+                    });
+                }
+            }
+
+            for (key, child) in object {
+                if key == "_errors" {
+                    continue;
+                }
+
+                path.push(key.clone());
+                collect_validation_errors(child, path, validation_errors);
+                path.pop();
+            }
+        }
+        Value::Array(values) => {
+            for (index, child) in values.iter().enumerate() {
+                path.push(index.to_string());
+                collect_validation_errors(child, path, validation_errors);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Errors produced by the REST and Gateway clients.
 #[derive(Debug, Error)]
 pub enum Error {
-    /// Discord returned an unsuccessful HTTP response.
+    /// Discord returned structured form-validation errors.
+    #[error("Discord API returned HTTP {status}: {error}")]
+    DiscordApi {
+        /// HTTP status returned by Discord.
+        status: StatusCode,
+        /// Structured Discord API validation error.
+        error: DiscordApiError,
+    },
+
+    /// Discord returned an unsuccessful HTTP response without structured validation details.
     #[error("Discord API returned HTTP {status}: {message}")]
     HttpStatus {
         /// HTTP status returned by Discord.
@@ -81,9 +193,82 @@ pub enum Error {
     /// An outgoing Gateway payload exceeded Discord's size limit.
     #[error("Gateway payload is {actual} bytes; Discord allows at most {limit} bytes")]
     GatewayPayloadTooLarge {
-        /// Serialized payload size in bytes.
+        /// Serialized payload size.
         actual: usize,
         /// Maximum accepted payload size.
         limit: usize,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::DiscordApiError;
+
+    #[test]
+    fn flattens_nested_object_and_array_index_paths() {
+        let error = DiscordApiError::new(
+            50035,
+            "Invalid Form Body".to_owned(),
+            json!({
+                "activities": {
+                    "0": {
+                        "platform": {
+                            "_errors": [{
+                                "code": "BASE_TYPE_CHOICES",
+                                "message": "Value must be one of the allowed platforms."
+                            }]
+                        },
+                        "type": {
+                            "_errors": [{
+                                "code": "BASE_TYPE_CHOICES",
+                                "message": "Value must be one of the allowed types."
+                            }]
+                        }
+                    }
+                }
+            }),
+        );
+
+        assert_eq!(error.validation_errors.len(), 2);
+        assert_eq!(
+            error.validation_errors[0].dotted_path(),
+            "activities.0.platform"
+        );
+        assert_eq!(error.validation_errors[0].code, "BASE_TYPE_CHOICES");
+        assert_eq!(error.validation_errors[1].dotted_path(), "activities.0.type");
+    }
+
+    #[test]
+    fn flattens_root_request_errors() {
+        let raw = json!({
+            "_errors": [{
+                "code": "APPLICATION_COMMAND_TOO_LARGE",
+                "message": "Command exceeds maximum size (8000)"
+            }]
+        });
+        let error = DiscordApiError::new(50035, "Invalid Form Body".to_owned(), raw.clone());
+
+        assert_eq!(error.raw_errors, raw);
+        assert!(error.validation_errors[0].path.is_empty());
+        assert_eq!(
+            error.validation_errors[0].code,
+            "APPLICATION_COMMAND_TOO_LARGE"
+        );
+    }
+
+    #[test]
+    fn ignores_unknown_error_nodes_without_losing_raw_tree() {
+        let raw = json!({
+            "future": {
+                "unexpected": true,
+                "_errors": [{"code": 123, "message": {"nested": true}}]
+            }
+        });
+        let error = DiscordApiError::new(50035, "Invalid Form Body".to_owned(), raw.clone());
+
+        assert_eq!(error.raw_errors, raw);
+        assert!(error.validation_errors.is_empty());
+    }
 }
