@@ -18,10 +18,19 @@ const USER_AGENT: &str = "Gloamwire/0.1 (+https://github.com/cybellereaper/Gloam
 const MAX_RATE_LIMIT_RETRIES: usize = 3;
 
 /// An asynchronous Discord REST API client.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RestClient {
     http: reqwest::Client,
     base_url: String,
+}
+
+impl std::fmt::Debug for RestClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RestClient")
+            .field("base_url", &self.base_url)
+            .finish_non_exhaustive()
+    }
 }
 
 impl RestClient {
