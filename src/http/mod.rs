@@ -4,7 +4,7 @@ mod audit_log;
 mod channel;
 mod client;
 mod command;
-mod encoding;
+pub(crate) mod encoding;
 mod guild;
 mod interaction;
 mod invite;
