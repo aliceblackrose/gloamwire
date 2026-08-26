@@ -720,10 +720,7 @@ fn ensure_gateway_path(url: &str) -> String {
         return url.to_owned();
     }
 
-    query.map_or_else(
-        || format!("{base}/"),
-        |query| format!("{base}/?{query}"),
-    )
+    query.map_or_else(|| format!("{base}/"), |query| format!("{base}/?{query}"))
 }
 
 fn set_query_param(url: &mut String, key: &str, value: Option<&str>) {
