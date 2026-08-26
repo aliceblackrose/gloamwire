@@ -222,11 +222,7 @@ impl Cdn {
     }
 
     #[must_use]
-    pub fn custom_emoji(
-        &self,
-        emoji_id: EmojiId,
-        options: CdnAnimatedImageOptions,
-    ) -> String {
+    pub fn custom_emoji(&self, emoji_id: EmojiId, options: CdnAnimatedImageOptions) -> String {
         self.animated_image(&format!("emojis/{emoji_id}"), None, options)
     }
 
@@ -241,12 +237,7 @@ impl Cdn {
     }
 
     #[must_use]
-    pub fn guild_splash(
-        &self,
-        guild_id: GuildId,
-        hash: &str,
-        options: CdnImageOptions,
-    ) -> String {
+    pub fn guild_splash(&self, guild_id: GuildId, hash: &str, options: CdnImageOptions) -> String {
         self.image(&format!("splashes/{guild_id}/{hash}"), options)
     }
 
@@ -257,10 +248,7 @@ impl Cdn {
         hash: &str,
         options: CdnImageOptions,
     ) -> String {
-        self.image(
-            &format!("discovery-splashes/{guild_id}/{hash}"),
-            options,
-        )
+        self.image(&format!("discovery-splashes/{guild_id}/{hash}"), options)
     }
 
     #[must_use]
@@ -381,9 +369,7 @@ impl Cdn {
         options: CdnImageOptions,
     ) -> String {
         self.image(
-            &format!(
-                "app-assets/{application_id}/achievements/{achievement_id}/icons/{hash}"
-            ),
+            &format!("app-assets/{application_id}/achievements/{achievement_id}/icons/{hash}"),
             options,
         )
     }
@@ -397,12 +383,7 @@ impl Cdn {
     }
 
     #[must_use]
-    pub fn team_icon(
-        &self,
-        team_id: Snowflake,
-        hash: &str,
-        options: CdnImageOptions,
-    ) -> String {
+    pub fn team_icon(&self, team_id: Snowflake, hash: &str, options: CdnImageOptions) -> String {
         self.image(&format!("team-icons/{team_id}/{hash}"), options)
     }
 
@@ -417,12 +398,7 @@ impl Cdn {
     }
 
     #[must_use]
-    pub fn role_icon(
-        &self,
-        role_id: RoleId,
-        hash: &str,
-        options: CdnImageOptions,
-    ) -> String {
+    pub fn role_icon(&self, role_id: RoleId, hash: &str, options: CdnImageOptions) -> String {
         self.image(&format!("role-icons/{role_id}/{hash}"), options)
     }
 
@@ -504,9 +480,7 @@ fn image_url(
 mod tests {
     use crate::model::{EmojiId, GuildId, StickerId, UserId};
 
-    use super::{
-        Cdn, CdnAnimatedImageOptions, CdnImageOptions, CdnImageSize, CdnStickerFormat,
-    };
+    use super::{Cdn, CdnAnimatedImageOptions, CdnImageOptions, CdnImageSize, CdnStickerFormat};
 
     #[test]
     fn validates_discord_image_sizes() {
@@ -533,18 +507,17 @@ mod tests {
 
     #[test]
     fn static_hash_does_not_request_animation() {
-        let url = Cdn::new().guild_icon(
-            GuildId::new(2),
-            "hash",
-            CdnAnimatedImageOptions::new(),
-        );
+        let url = Cdn::new().guild_icon(GuildId::new(2), "hash", CdnAnimatedImageOptions::new());
         assert_eq!(url, "https://cdn.discordapp.com/icons/2/hash.webp");
     }
 
     #[test]
     fn custom_emoji_defaults_to_animated_webp() {
         let url = Cdn::new().custom_emoji(EmojiId::new(3), CdnAnimatedImageOptions::new());
-        assert_eq!(url, "https://cdn.discordapp.com/emojis/3.webp?animated=true");
+        assert_eq!(
+            url,
+            "https://cdn.discordapp.com/emojis/3.webp?animated=true"
+        );
     }
 
     #[test]
