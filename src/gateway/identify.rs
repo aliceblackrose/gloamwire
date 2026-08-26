@@ -59,13 +59,34 @@ impl GatewayIdentifyLimiter {
                     } else {
                         state.remaining -= 1;
                         state.next_bucket_allowed[bucket] = now + IDENTIFY_BUCKET_WINDOW;
+
+                        #[cfg(feature = "tracing")]
+                        tracing::trace!(
+                            target: "gloamwire::gateway",
+                            shard_id,
+                            remaining = state.remaining,
+                            "reserved Discord Gateway Identify session"
+                        );
+
                         None
                     }
                 }
             };
 
             match wait_until {
-                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                Some(deadline) => {
+                    #[cfg(feature = "tracing")]
+                    {
+                        let wait = deadline.saturating_duration_since(Instant::now());
+                        tracing::debug!(
+                            target: "gloamwire::gateway",
+                            shard_id,
+                            wait_ms = %wait.as_millis(),
+                            "waiting for Discord Gateway Identify capacity"
+                        );
+                    }
+                    tokio::time::sleep_until(deadline).await;
+                }
                 None => return,
             }
         }
