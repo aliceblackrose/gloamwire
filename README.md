@@ -1,6 +1,6 @@
 # Gloamwire
 
-Gloamwire is an asynchronous Discord Gateway and REST API library for Rust. It provides the transport and protocol primitives needed to build bots and services without imposing a command framework, cache, or application architecture.
+Gloamwire is an asynchronous Discord Gateway and REST API library for Rust. It provides the transport and protocol primitives needed to build bots and services without imposing a command framework or application architecture.
 
 ## Current scope
 
@@ -21,10 +21,11 @@ The `0.1` foundation includes:
 - Typed parsing for common Gateway dispatches while preserving unknown events as raw JSON.
 - OAuth2 helpers and typed Discord CDN URL construction.
 - Optional credential-safe `tracing` instrumentation for REST rate limits and Gateway shard/throttling lifecycle.
+- Optional normalized Gateway state cache with direct typed-event synchronization and bounded message retention.
 - Local HTTP/Gateway protocol integration fixtures covering rate-limit, empty-response, reconnect, and Resume behavior.
 - Graceful client and shard-manager shutdown.
 
-Gloamwire does **not** yet provide a state cache, command framework, or voice media transport. See [ROADMAP.md](ROADMAP.md) for the phased implementation plan.
+Gloamwire does **not** provide a command framework or voice media transport. See [ROADMAP.md](ROADMAP.md) for the phased implementation plan.
 
 ## Requirements
 
@@ -73,6 +74,37 @@ loop {
 ```
 
 `GatewayConnection::next_event` must be continuously polled because it drives heartbeats and recoverable reconnects.
+
+## Optional state cache
+
+Enable the cache with the `cache` Cargo feature:
+
+```toml
+[dependencies]
+gloamwire = { version = "0.1", features = ["cache"] }
+```
+
+The cache is explicit state owned by the application; Gloamwire does not hide a lock or background task inside it. Feed Gateway events into it from the same loop that consumes them:
+
+```rust,no_run
+use gloamwire::{Cache, CacheConfig};
+use gloamwire::gateway::{GatewayConnection, GatewayEvent};
+
+# async fn example(mut gateway: GatewayConnection) -> gloamwire::Result<()> {
+let mut cache = Cache::new(CacheConfig::new().message_capacity(500));
+
+loop {
+    let event = gateway.next_event().await?;
+    if let GatewayEvent::Dispatch(dispatch) = &event {
+        let typed = cache.update_dispatch(dispatch)?;
+        // Handle `typed` without parsing the dispatch a second time.
+        drop(typed);
+    }
+}
+# }
+```
+
+Guilds, channels/threads, roles, members, presences, voice states, scheduled events, and users are normalized in the cache. Message retention is disabled by default and must be assigned an explicit bounded capacity.
 
 ## Optional tracing
 
