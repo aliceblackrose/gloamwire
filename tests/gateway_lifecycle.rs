@@ -3,7 +3,10 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use gloamwire::gateway::{GatewayConfig, GatewayConnection, GatewayEvent, GatewayIntents};
 use serde_json::Value;
-use tokio::{net::{TcpListener, TcpStream}, time::timeout};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    time::timeout,
+};
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
 const HELLO: &str = include_str!("fixtures/gateway/hello.json");
@@ -34,7 +37,9 @@ async fn reconnect_opcode_resumes_the_existing_gateway_session() {
         drop(first);
 
         let (second_stream, _) = listener.accept().await.expect("resumed Gateway connection");
-        let mut second = accept_async(second_stream).await.expect("resumed WebSocket");
+        let mut second = accept_async(second_stream)
+            .await
+            .expect("resumed WebSocket");
         send_fixture(&mut second, HELLO).await;
 
         let resume = read_client_payload(&mut second).await;
