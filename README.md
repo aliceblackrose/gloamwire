@@ -19,9 +19,12 @@ The `0.1` foundation includes:
 - Gateway outbound rate limiting and Identify session-start concurrency enforcement.
 - `/gateway/bot` discovery, guild-to-shard routing, and a multi-shard manager.
 - Typed parsing for common Gateway dispatches while preserving unknown events as raw JSON.
+- OAuth2 helpers and typed Discord CDN URL construction.
+- Optional credential-safe `tracing` instrumentation for REST rate limits and Gateway shard/throttling lifecycle.
+- Local HTTP/Gateway protocol integration fixtures covering rate-limit, empty-response, reconnect, and Resume behavior.
 - Graceful client and shard-manager shutdown.
 
-Gloamwire does **not** yet provide a state cache, command framework, voice media transport, complete REST endpoint/model coverage, or every Discord dispatch model. See [ROADMAP.md](ROADMAP.md) for the phased implementation plan.
+Gloamwire does **not** yet provide a state cache, command framework, or voice media transport. See [ROADMAP.md](ROADMAP.md) for the phased implementation plan.
 
 ## Requirements
 
@@ -70,6 +73,19 @@ loop {
 ```
 
 `GatewayConnection::next_event` must be continuously polled because it drives heartbeats and recoverable reconnects.
+
+## Optional tracing
+
+Enable Gloamwire's instrumentation with the `tracing` Cargo feature:
+
+```toml
+[dependencies]
+gloamwire = { version = "0.1", features = ["tracing"] }
+```
+
+Gloamwire emits structured events through the standard `tracing` facade and does not install a subscriber. Applications remain responsible for choosing and configuring their subscriber/exporter.
+
+Telemetry intentionally excludes authorization headers, bot/OAuth tokens, message bodies, Gateway payload contents, and concrete REST paths. REST records use normalized route templates so webhook, interaction, and invite tokens embedded in URLs are never emitted.
 
 ## Design principles
 

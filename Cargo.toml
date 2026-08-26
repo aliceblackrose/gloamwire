@@ -10,6 +10,10 @@ readme = "README.md"
 keywords = ["discord", "gateway", "api", "async", "bot"]
 categories = ["api-bindings", "asynchronous", "network-programming"]
 
+[features]
+default = []
+tracing = ["dep:tracing"]
+
 [dependencies]
 bitflags = { version = "2", features = ["serde"] }
 erltf = "0.16"
@@ -23,6 +27,7 @@ serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+tracing = { version = "0.1.44", optional = true }
 zstd = "0.13"
 
 [dev-dependencies]

@@ -95,6 +95,13 @@ impl ShardManager {
         let (shutdown, _) = watch::channel(false);
         let mut tasks = Vec::with_capacity(shard_count.get() as usize);
 
+        #[cfg(feature = "tracing")]
+        tracing::debug!(
+            target: "gloamwire::gateway",
+            shard_count = shard_count.get(),
+            "starting Discord Gateway shard manager"
+        );
+
         for raw_shard_id in 0..shard_count.get() {
             let shard_id = ShardId::new(raw_shard_id);
             let config = base_config
@@ -104,9 +111,30 @@ impl ShardManager {
             let mut shutdown_rx = shutdown.subscribe();
 
             tasks.push(tokio::spawn(async move {
+                #[cfg(feature = "tracing")]
+                tracing::debug!(
+                    target: "gloamwire::gateway",
+                    shard_id = raw_shard_id,
+                    "connecting Discord Gateway shard"
+                );
+
                 let mut gateway = match GatewayConnection::connect(config).await {
-                    Ok(gateway) => gateway,
+                    Ok(gateway) => {
+                        #[cfg(feature = "tracing")]
+                        tracing::debug!(
+                            target: "gloamwire::gateway",
+                            shard_id = raw_shard_id,
+                            "Discord Gateway shard connected"
+                        );
+                        gateway
+                    }
                     Err(error) => {
+                        #[cfg(feature = "tracing")]
+                        tracing::debug!(
+                            target: "gloamwire::gateway",
+                            shard_id = raw_shard_id,
+                            "Discord Gateway shard connection failed"
+                        );
                         let _ = event_tx.send(Err(error)).await;
                         return;
                     }
@@ -116,6 +144,12 @@ impl ShardManager {
                     tokio::select! {
                         changed = shutdown_rx.changed() => {
                             if changed.is_err() || *shutdown_rx.borrow() {
+                                #[cfg(feature = "tracing")]
+                                tracing::debug!(
+                                    target: "gloamwire::gateway",
+                                    shard_id = raw_shard_id,
+                                    "shutting down Discord Gateway shard"
+                                );
                                 let _ = gateway.shutdown().await;
                                 break;
                             }
@@ -124,11 +158,23 @@ impl ShardManager {
                             match event {
                                 Ok(event) => {
                                     if event_tx.send(Ok(ShardEvent { shard_id, event })).await.is_err() {
+                                        #[cfg(feature = "tracing")]
+                                        tracing::debug!(
+                                            target: "gloamwire::gateway",
+                                            shard_id = raw_shard_id,
+                                            "Gateway shard event receiver dropped"
+                                        );
                                         let _ = gateway.shutdown().await;
                                         break;
                                     }
                                 }
                                 Err(error) => {
+                                    #[cfg(feature = "tracing")]
+                                    tracing::debug!(
+                                        target: "gloamwire::gateway",
+                                        shard_id = raw_shard_id,
+                                        "Discord Gateway shard stopped with an error"
+                                    );
                                     let _ = event_tx.send(Err(error)).await;
                                     break;
                                 }
@@ -162,6 +208,13 @@ impl ShardManager {
 
     /// Requests graceful shutdown of every shard and waits for their tasks to exit.
     pub async fn shutdown(&mut self) -> Result<()> {
+        #[cfg(feature = "tracing")]
+        tracing::debug!(
+            target: "gloamwire::gateway",
+            shard_count = self.shard_count.get(),
+            "requesting Discord Gateway shard-manager shutdown"
+        );
+
         let _ = self.shutdown.send(true);
 
         while let Some(task) = self.tasks.pop() {
