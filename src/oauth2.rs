@@ -9,9 +9,7 @@ use serde_json::Value;
 use crate::{
     error::{Error, OAuth2ApiError, Result},
     http::encoding::QueryBuilder,
-    model::{
-        ApplicationId, ApplicationIntegrationType, GuildId, Permissions, User,
-    },
+    model::{ApplicationId, ApplicationIntegrationType, GuildId, Permissions, User},
 };
 
 const API_BASE_URL: &str = "https://discord.com/api/v10";
@@ -482,13 +480,10 @@ fn oauth2_response_error(status: StatusCode, bytes: &[u8]) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use crate::model::{
-        ApplicationId, ApplicationIntegrationType, GuildId, Permissions,
-    };
+    use crate::model::{ApplicationId, ApplicationIntegrationType, GuildId, Permissions};
 
     use super::{
-        OAuth2AuthorizationUrl, OAuth2Client, OAuth2Prompt, OAuth2ResponseType,
-        OAuth2TokenResponse,
+        OAuth2AuthorizationUrl, OAuth2Client, OAuth2Prompt, OAuth2ResponseType, OAuth2TokenResponse,
     };
 
     #[test]
@@ -530,7 +525,10 @@ mod tests {
         let debug = format!("{token:?}");
         assert!(!debug.contains("access-secret"));
         assert!(!debug.contains("refresh-secret"));
-        assert_eq!(token.scopes().collect::<Vec<_>>(), ["identify", "connections"]);
+        assert_eq!(
+            token.scopes().collect::<Vec<_>>(),
+            ["identify", "connections"]
+        );
     }
 
     #[test]
