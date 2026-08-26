@@ -7,6 +7,8 @@
 
 #![deny(unsafe_code)]
 
+#[cfg(feature = "cache")]
+pub mod cache;
 pub mod cdn;
 pub mod error;
 pub mod gateway;
@@ -14,6 +16,8 @@ pub mod http;
 pub mod model;
 pub mod oauth2;
 
+#[cfg(feature = "cache")]
+pub use cache::{Cache, CacheConfig};
 pub use cdn::{
     Cdn, CdnAnimatedImageFormat, CdnAnimatedImageOptions, CdnImageFormat, CdnImageOptions,
     CdnImageSize, CdnStickerFormat, InvalidCdnImageSize,
