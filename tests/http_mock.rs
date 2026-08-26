@@ -112,12 +112,7 @@ async fn read_request(stream: &mut TcpStream) -> String {
     String::from_utf8(request).expect("HTTP request is UTF-8")
 }
 
-async fn write_response(
-    stream: &mut TcpStream,
-    status: &str,
-    body: &str,
-    headers: &[&str],
-) {
+async fn write_response(stream: &mut TcpStream, status: &str, body: &str, headers: &[&str]) {
     let mut response = format!(
         "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n",
         body.len()
