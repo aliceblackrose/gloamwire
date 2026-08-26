@@ -66,6 +66,26 @@ impl fmt::Display for DiscordApiError {
     }
 }
 
+/// Structured OAuth2 error returned by Discord's authorization server.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct OAuth2ApiError {
+    /// Machine-readable OAuth2 error code.
+    pub error: String,
+    /// Optional human-readable OAuth2 error description.
+    #[serde(default)]
+    pub error_description: Option<String>,
+}
+
+impl fmt::Display for OAuth2ApiError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(description) = &self.error_description {
+            write!(formatter, "{}: {description}", self.error)
+        } else {
+            formatter.write_str(&self.error)
+        }
+    }
+}
+
 fn collect_validation_errors(
     value: &Value,
     path: &mut Vec<String>,
@@ -121,6 +141,15 @@ pub enum Error {
         status: StatusCode,
         /// Structured Discord API validation error.
         error: DiscordApiError,
+    },
+
+    /// Discord returned a structured OAuth2 error.
+    #[error("Discord OAuth2 returned HTTP {status}: {error}")]
+    OAuth2 {
+        /// HTTP status returned by Discord's authorization server.
+        status: StatusCode,
+        /// Structured OAuth2 error details.
+        error: OAuth2ApiError,
     },
 
     /// Discord returned an unsuccessful HTTP response without structured validation details.
