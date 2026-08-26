@@ -8,9 +8,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     Result,
-    gateway::{
-        DispatchEvent, GatewayEvent, GuildMemberUpdateEvent, TypedDispatchEvent,
-    },
+    gateway::{DispatchEvent, GatewayEvent, GuildMemberUpdateEvent, TypedDispatchEvent},
     model::{
         Channel, ChannelId, ChannelType, Guild, GuildId, GuildMember, GuildMemberFlags,
         GuildScheduledEvent, Message, MessageId, PresenceUpdate, Role, RoleId, ScheduledEventId,
@@ -45,7 +43,7 @@ impl CacheConfig {
 
     /// Returns the configured message capacity.
     #[must_use]
-    pub const fn max_messages(self) -> usize {
+    pub const fn max_messages(&self) -> usize {
         self.message_capacity
     }
 }
@@ -144,7 +142,8 @@ impl Cache {
             | TypedDispatchEvent::ChannelUpdate(channel)
             | TypedDispatchEvent::ThreadCreate(channel)
             | TypedDispatchEvent::ThreadUpdate(channel) => self.upsert_channel(channel),
-            TypedDispatchEvent::ChannelDelete(channel) | TypedDispatchEvent::ThreadDelete(channel) => {
+            TypedDispatchEvent::ChannelDelete(channel)
+            | TypedDispatchEvent::ThreadDelete(channel) => {
                 self.remove_channel(channel.id);
             }
             TypedDispatchEvent::GuildMemberAdd(event) => {
@@ -163,13 +162,16 @@ impl Cache {
             }
             TypedDispatchEvent::GuildMemberUpdate(event) => self.merge_member_update(event),
             TypedDispatchEvent::GuildMemberRemove(event) => {
-                let removed = self.members.remove(&(event.guild_id, event.user.id)).is_some();
+                let removed = self
+                    .members
+                    .remove(&(event.guild_id, event.user.id))
+                    .is_some();
                 self.users.insert(event.user.id, event.user.clone());
                 if let Some(guild) = self.guilds.get_mut(&event.guild_id) {
-                    guild.members.retain(|member| member_user_id(member) != Some(event.user.id));
-                    if removed
-                        && let Some(member_count) = &mut guild.member_count
-                    {
+                    guild
+                        .members
+                        .retain(|member| member_user_id(member) != Some(event.user.id));
+                    if removed && let Some(member_count) = &mut guild.member_count {
                         *member_count = member_count.saturating_sub(1);
                     }
                 }
@@ -198,7 +200,9 @@ impl Cache {
             TypedDispatchEvent::GuildScheduledEventDelete(event) => {
                 self.scheduled_events.remove(&event.id);
                 if let Some(guild) = self.guilds.get_mut(&event.guild_id) {
-                    guild.guild_scheduled_events.retain(|cached| cached.id != event.id);
+                    guild
+                        .guild_scheduled_events
+                        .retain(|cached| cached.id != event.id);
                 }
             }
             TypedDispatchEvent::MessageCreate(message) => self.cache_message(message),
@@ -213,7 +217,9 @@ impl Cache {
                 self.presences
                     .insert((presence.guild_id, presence.user.id), presence.clone());
             }
-            TypedDispatchEvent::VoiceStateUpdate(voice_state) => self.update_voice_state(voice_state),
+            TypedDispatchEvent::VoiceStateUpdate(voice_state) => {
+                self.update_voice_state(voice_state)
+            }
             TypedDispatchEvent::UserUpdate(user) => {
                 self.current_user_id = Some(user.id);
                 self.users.insert(user.id, user.clone());
@@ -233,7 +239,10 @@ impl Cache {
     ///
     /// Heartbeat/reconnect lifecycle events do not mutate cache state and return
     /// `Ok(None)`.
-    pub fn update_gateway_event(&mut self, event: &GatewayEvent) -> Result<Option<TypedDispatchEvent>> {
+    pub fn update_gateway_event(
+        &mut self,
+        event: &GatewayEvent,
+    ) -> Result<Option<TypedDispatchEvent>> {
         match event {
             GatewayEvent::Dispatch(dispatch) => self.update_dispatch(dispatch).map(Some),
             _ => Ok(None),
@@ -307,9 +316,11 @@ impl Cache {
 
     /// Iterates cached members for one guild.
     pub fn guild_members(&self, guild_id: GuildId) -> impl Iterator<Item = &GuildMember> {
-        self.members.iter().filter_map(move |(&(cached_guild_id, _), member)| {
-            (cached_guild_id == guild_id).then_some(member)
-        })
+        self.members
+            .iter()
+            .filter_map(move |(&(cached_guild_id, _), member)| {
+                (cached_guild_id == guild_id).then_some(member)
+            })
     }
 
     fn seed_guild(&mut self, guild: &Guild) {
@@ -430,7 +441,10 @@ impl Cache {
     }
 
     fn remove_channel(&mut self, channel_id: ChannelId) {
-        let guild_id = self.channels.remove(&channel_id).and_then(|channel| channel.guild_id);
+        let guild_id = self
+            .channels
+            .remove(&channel_id)
+            .and_then(|channel| channel.guild_id);
         if let Some(guild_id) = guild_id
             && let Some(guild) = self.guilds.get_mut(&guild_id)
         {
@@ -616,11 +630,11 @@ impl Cache {
     }
 
     fn remove_message(&mut self, message_id: MessageId) {
-        if let Some(message) = self.messages.remove(&message_id)
-            && let Some(channel) = self.channels.get_mut(&message.channel_id)
-            && channel.last_message_id == Some(message_id)
-        {
-            channel.last_message_id = None;
+        self.messages.remove(&message_id);
+        for channel in self.channels.values_mut() {
+            if channel.last_message_id == Some(message_id) {
+                channel.last_message_id = None;
+            }
         }
         self.message_order.retain(|cached| *cached != message_id);
     }
@@ -697,7 +711,10 @@ mod tests {
 
         assert!(cache.guild(GuildId::new(1)).is_some());
         assert_eq!(
-            cache.channel(crate::model::ChannelId::new(10)).expect("channel").guild_id,
+            cache
+                .channel(crate::model::ChannelId::new(10))
+                .expect("channel")
+                .guild_id,
             Some(GuildId::new(1))
         );
         assert!(cache.member(GuildId::new(1), UserId::new(2)).is_some());
@@ -757,7 +774,10 @@ mod tests {
             .expect("member");
         assert_eq!(member.nick.as_deref(), Some("wire"));
         assert_eq!(member.roles[0].get(), 9);
-        assert_eq!(cache.user(UserId::new(2)).expect("user").username, "after");
+        assert_eq!(
+            cache.user(UserId::new(2)).expect("user").username,
+            "after"
+        );
     }
 
     #[test]
@@ -783,7 +803,10 @@ mod tests {
 
         assert!(cache.message(MessageId::new(1)).is_none());
         assert_eq!(
-            cache.message(MessageId::new(2)).expect("newest message").content,
+            cache
+                .message(MessageId::new(2))
+                .expect("newest message")
+                .content,
             "second"
         );
     }
@@ -805,7 +828,10 @@ mod tests {
         let event = cache.update_dispatch(&dispatch).expect("typed dispatch");
         assert!(matches!(event, TypedDispatchEvent::MessageCreate(_)));
         assert_eq!(
-            cache.message(MessageId::new(50)).expect("cached message").content,
+            cache
+                .message(MessageId::new(50))
+                .expect("cached message")
+                .content,
             "cached"
         );
     }
