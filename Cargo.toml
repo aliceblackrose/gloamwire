@@ -12,6 +12,7 @@ categories = ["api-bindings", "asynchronous", "network-programming"]
 
 [features]
 default = []
+cache = []
 tracing = ["dep:tracing"]
 
 [dependencies]
