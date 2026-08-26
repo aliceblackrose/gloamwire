@@ -774,10 +774,7 @@ mod tests {
             .expect("member");
         assert_eq!(member.nick.as_deref(), Some("wire"));
         assert_eq!(member.roles[0].get(), 9);
-        assert_eq!(
-            cache.user(UserId::new(2)).expect("user").username,
-            "after"
-        );
+        assert_eq!(cache.user(UserId::new(2)).expect("user").username, "after");
     }
 
     #[test]
