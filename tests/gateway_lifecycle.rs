@@ -3,7 +3,7 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use gloamwire::gateway::{GatewayConfig, GatewayConnection, GatewayEvent, GatewayIntents};
 use serde_json::Value;
-use tokio::{net::TcpListener, time::timeout};
+use tokio::{net::{TcpListener, TcpStream}, time::timeout};
 use tokio_tungstenite::{WebSocketStream, accept_async, tungstenite::Message};
 
 const HELLO: &str = include_str!("fixtures/gateway/hello.json");
@@ -86,22 +86,14 @@ async fn reconnect_opcode_resumes_the_existing_gateway_session() {
     server.await.expect("Gateway fixture server");
 }
 
-async fn send_fixture<S>(socket: &mut WebSocketStream<S>, fixture: &str)
-where
-    WebSocketStream<S>: SinkExt<Message> + Unpin,
-    <WebSocketStream<S> as futures_util::Sink<Message>>::Error: std::fmt::Debug,
-{
+async fn send_fixture(socket: &mut WebSocketStream<TcpStream>, fixture: &str) {
     socket
         .send(Message::Text(fixture.trim().to_owned().into()))
         .await
         .expect("send Gateway fixture");
 }
 
-async fn read_client_payload<S>(socket: &mut WebSocketStream<S>) -> Value
-where
-    WebSocketStream<S>: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
-        + Unpin,
-{
+async fn read_client_payload(socket: &mut WebSocketStream<TcpStream>) -> Value {
     loop {
         let message = socket
             .next()
