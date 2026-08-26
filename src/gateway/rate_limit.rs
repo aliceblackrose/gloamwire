@@ -27,7 +27,16 @@ impl GatewayRateLimiter {
     pub(crate) async fn acquire(&self, priority: OutboundPriority) {
         loop {
             match self.try_acquire(priority).await {
-                Some(retry_after) => tokio::time::sleep(retry_after).await,
+                Some(retry_after) => {
+                    #[cfg(feature = "tracing")]
+                    tracing::debug!(
+                        target: "gloamwire::gateway",
+                        priority = ?priority,
+                        retry_after_ms = %retry_after.as_millis(),
+                        "waiting for Discord Gateway outbound rate-limit capacity"
+                    );
+                    tokio::time::sleep(retry_after).await;
+                }
                 None => return,
             }
         }
@@ -58,9 +67,21 @@ impl GatewayRateLimiter {
             return None;
         }
 
-        events
+        let retry_after = events
             .front()
-            .map(|oldest| (*oldest + WINDOW).saturating_duration_since(now))
+            .map(|oldest| (*oldest + WINDOW).saturating_duration_since(now));
+
+        #[cfg(feature = "tracing")]
+        if let Some(retry_after) = retry_after {
+            tracing::trace!(
+                target: "gloamwire::gateway",
+                priority = ?priority,
+                retry_after_ms = %retry_after.as_millis(),
+                "Discord Gateway outbound rate limit reached"
+            );
+        }
+
+        retry_after
     }
 }
 
