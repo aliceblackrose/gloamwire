@@ -66,8 +66,8 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] HTTP and Gateway mock integration servers
 - [x] Captured/synthetic protocol fixtures
 - [x] Optional `tracing` instrumentation without credential leakage
-- [ ] Optional cache layer
-- [ ] Event-to-cache synchronization
+- [x] Optional cache layer
+- [x] Event-to-cache synchronization
 - [ ] Feature flags for transport/model/cache/compression/TLS capabilities
 - [ ] Fuzz/property tests for protocol parsing and route/rate-limit behavior
 
