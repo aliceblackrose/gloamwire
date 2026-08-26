@@ -26,4 +26,4 @@ tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 zstd = "0.13"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread"] }

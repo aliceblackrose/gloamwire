@@ -13,7 +13,7 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] Heartbeat ACK enforcement
 - [x] Heartbeat latency measurement
 - [x] Graceful client shutdown
-- [ ] Protocol-fixture integration tests for reconnect/resume sequences
+- [x] Protocol-fixture integration tests for reconnect/resume sequences
 
 ## Phase 2 — Rate limiting, Gateway discovery, and sharding
 
@@ -63,8 +63,8 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 
 ## Phase 5 — Reliability, observability, and optional state
 
-- [ ] HTTP and Gateway mock integration servers
-- [ ] Captured/synthetic protocol fixtures
+- [x] HTTP and Gateway mock integration servers
+- [x] Captured/synthetic protocol fixtures
 - [ ] Optional `tracing` instrumentation without credential leakage
 - [ ] Optional cache layer
 - [ ] Event-to-cache synchronization
