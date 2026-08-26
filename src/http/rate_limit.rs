@@ -81,7 +81,19 @@ impl RateLimiter {
             };
 
             match wait_until {
-                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                Some(deadline) => {
+                    #[cfg(feature = "tracing")]
+                    {
+                        let wait = deadline.saturating_duration_since(Instant::now());
+                        tracing::debug!(
+                            target: "gloamwire::http",
+                            route = %route.identity(),
+                            wait_ms = %wait.as_millis(),
+                            "waiting for Discord REST rate-limit capacity"
+                        );
+                    }
+                    tokio::time::sleep_until(deadline).await;
+                }
                 None => return,
             }
         }
@@ -100,6 +112,15 @@ impl RateLimiter {
         let route_identity = route.identity();
         let bucket_hash = header_str(headers, "x-ratelimit-bucket").map(str::to_owned);
 
+        #[cfg(feature = "tracing")]
+        tracing::trace!(
+            target: "gloamwire::http",
+            route = %route_identity,
+            status = status.as_u16(),
+            global,
+            "updated Discord REST rate-limit state"
+        );
+
         if let Some(hash) = &bucket_hash {
             state
                 .route_buckets
@@ -114,6 +135,15 @@ impl RateLimiter {
         if status == StatusCode::TOO_MANY_REQUESTS {
             let retry_after = retry_after.unwrap_or(Duration::from_secs(1));
             let deadline = now + retry_after;
+
+            #[cfg(feature = "tracing")]
+            tracing::debug!(
+                target: "gloamwire::http",
+                route = %route_identity,
+                retry_after_ms = %retry_after.as_millis(),
+                global,
+                "Discord REST rate limit applied"
+            );
 
             if global || header_str(headers, "x-ratelimit-global").is_some() {
                 state.global_until = Some(deadline);
