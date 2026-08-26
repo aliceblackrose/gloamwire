@@ -701,13 +701,29 @@ fn gateway_url(
     encoding: GatewayEncoding,
     compression: GatewayCompression,
 ) -> String {
-    let mut url = base_url.trim_end_matches('/').to_owned();
+    let mut url = ensure_gateway_path(base_url);
     let version = GATEWAY_VERSION.to_string();
 
     set_query_param(&mut url, "v", Some(&version));
     set_query_param(&mut url, "encoding", Some(encoding.query_value()));
     set_query_param(&mut url, "compress", compression.query_value());
     url
+}
+
+fn ensure_gateway_path(url: &str) -> String {
+    let (base, query) = url
+        .split_once('?')
+        .map_or((url, None), |(base, query)| (base, Some(query)));
+    let authority_start = base.find("://").map_or(0, |index| index + 3);
+
+    if base[authority_start..].contains('/') {
+        return url.to_owned();
+    }
+
+    query.map_or_else(
+        || format!("{base}/"),
+        |query| format!("{base}/?{query}"),
+    )
 }
 
 fn set_query_param(url: &mut String, key: &str, value: Option<&str>) {
@@ -766,7 +782,7 @@ mod tests {
                 GatewayEncoding::Json,
                 GatewayCompression::None
             ),
-            "wss://gateway.discord.gg?v=10&encoding=json"
+            "wss://gateway.discord.gg/?v=10&encoding=json"
         );
     }
 
@@ -778,7 +794,7 @@ mod tests {
                 GatewayEncoding::Etf,
                 GatewayCompression::ZstdStream
             ),
-            "wss://gateway.discord.gg?v=10&encoding=etf&compress=zstd-stream"
+            "wss://gateway.discord.gg/?v=10&encoding=etf&compress=zstd-stream"
         );
     }
 
@@ -790,7 +806,7 @@ mod tests {
                 GatewayEncoding::Etf,
                 GatewayCompression::ZstdStream
             ),
-            "wss://gateway.discord.gg?v=10&encoding=etf&compress=zstd-stream"
+            "wss://gateway.discord.gg/?v=10&encoding=etf&compress=zstd-stream"
         );
     }
 
@@ -802,7 +818,19 @@ mod tests {
                 GatewayEncoding::Etf,
                 GatewayCompression::None
             ),
-            "wss://gateway.discord.gg?v=10&encoding=etf"
+            "wss://gateway.discord.gg/?v=10&encoding=etf"
+        );
+    }
+
+    #[test]
+    fn gateway_url_preserves_custom_path() {
+        assert_eq!(
+            gateway_url(
+                "wss://gateway.example.test/socket?encoding=json&v=9",
+                GatewayEncoding::Json,
+                GatewayCompression::None
+            ),
+            "wss://gateway.example.test/socket?v=10&encoding=json"
         );
     }
 
