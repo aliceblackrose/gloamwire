@@ -148,9 +148,8 @@ where
             Ok(commands) => commands,
             Err(error) => {
                 if let Some(transition_id) = recovery_transition_id(&dave_event) {
-                    let mut commands = vec![DaveGatewayCommand::InvalidCommitWelcome {
-                        transition_id,
-                    }];
+                    let mut commands =
+                        vec![DaveGatewayCommand::InvalidCommitWelcome { transition_id }];
                     let version = self.provider.active_protocol_version();
                     commands.extend(
                         self.provider
