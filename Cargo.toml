@@ -40,10 +40,17 @@ tls-rustls-native-roots = [
     "tokio-tungstenite/rustls-tls-native-roots",
 ]
 tracing = ["transport", "dep:tracing"]
-voice = ["transport", "tls-rustls-native-roots"]
+voice = [
+    "transport",
+    "tls-rustls-native-roots",
+    "dep:aes-gcm",
+    "dep:chacha20poly1305",
+]
 
 [dependencies]
+aes-gcm = { version = "0.10", optional = true }
 bitflags = { version = "2", features = ["serde"], optional = true }
+chacha20poly1305 = { version = "0.10", optional = true }
 erltf = { version = "0.16", optional = true }
 erltf_serde = { version = "0.16", features = ["elixir-interop"], optional = true }
 fastrand = { version = "2", optional = true }
