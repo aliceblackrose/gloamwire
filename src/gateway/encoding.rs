@@ -256,9 +256,8 @@ mod tests {
         leaf.prop_recursive(3, 64, 8, |inner| {
             prop_oneof![
                 prop::collection::vec(inner.clone(), 0..8).prop_map(Value::Array),
-                prop::collection::btree_map("[A-Za-z0-9_]{1,16}", inner, 0..8).prop_map(
-                    |entries| Value::Object(entries.into_iter().collect()),
-                ),
+                prop::collection::btree_map("[A-Za-z0-9_]{1,16}", inner, 0..8)
+                    .prop_map(|entries| Value::Object(entries.into_iter().collect()),),
             ]
         })
     }
