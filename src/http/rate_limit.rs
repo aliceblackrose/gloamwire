@@ -21,7 +21,13 @@ struct RateLimitState {
     global_requests: VecDeque<Instant>,
     global_until: Option<Instant>,
     route_buckets: HashMap<String, String>,
-    buckets: HashMap<String, BucketState>,
+    buckets: HashMap<RateLimitBucketKey, BucketState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum RateLimitBucketKey {
+    Discord { hash: String, major: String },
+    Provisional { route_identity: String, major: String },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -182,12 +188,18 @@ fn later(current: Option<Instant>, candidate: Instant) -> Option<Instant> {
     Some(current.map_or(candidate, |current| current.max(candidate)))
 }
 
-fn bucket_key(hash: &str, major: &str) -> String {
-    format!("{hash}:{major}")
+fn bucket_key(hash: &str, major: &str) -> RateLimitBucketKey {
+    RateLimitBucketKey::Discord {
+        hash: hash.to_owned(),
+        major: major.to_owned(),
+    }
 }
 
-fn provisional_bucket_key(route_identity: &str, major: &str) -> String {
-    format!("route:{route_identity}:{major}")
+fn provisional_bucket_key(route_identity: &str, major: &str) -> RateLimitBucketKey {
+    RateLimitBucketKey::Provisional {
+        route_identity: route_identity.to_owned(),
+        major: major.to_owned(),
+    }
 }
 
 fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -198,9 +210,10 @@ fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 mod tests {
     use std::time::Duration;
 
+    use proptest::prelude::*;
     use reqwest::{StatusCode, header::HeaderMap};
 
-    use super::RateLimiter;
+    use super::{RateLimiter, bucket_key, provisional_bucket_key};
     use crate::http::route::Route;
 
     #[tokio::test]
@@ -221,5 +234,33 @@ mod tests {
         let started = tokio::time::Instant::now();
         limiter.acquire(&route).await;
         assert!(started.elapsed() >= Duration::from_millis(15));
+    }
+
+    proptest! {
+        #[test]
+        fn discord_bucket_keys_preserve_component_boundaries(
+            hash_a in any::<String>(),
+            major_a in any::<String>(),
+            hash_b in any::<String>(),
+            major_b in any::<String>(),
+        ) {
+            let same_components = hash_a == hash_b && major_a == major_b;
+            prop_assert_eq!(
+                bucket_key(&hash_a, &major_a) == bucket_key(&hash_b, &major_b),
+                same_components
+            );
+        }
+
+        #[test]
+        fn provisional_keys_never_alias_discord_bucket_keys(
+            route_identity in any::<String>(),
+            major in any::<String>(),
+            hash in any::<String>(),
+        ) {
+            prop_assert_ne!(
+                provisional_bucket_key(&route_identity, &major),
+                bucket_key(&hash, &major)
+            );
+        }
     }
 }
