@@ -80,8 +80,8 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] UDP IP discovery and Select Protocol negotiation
 - [x] RTP audio header and sequence/timestamp primitives
 - [x] AES-256-GCM and XChaCha20-Poly1305 RTP-size transport encryption
-- [ ] Voice Gateway/UDP integration fixtures and reconnect orchestration
-- [ ] Opus integration boundaries and frame pacing
+- [x] Voice Gateway/UDP integration fixtures and reconnect orchestration
+- [x] Opus integration boundaries and frame pacing
 - [ ] Discord DAVE/E2EE MLS session lifecycle and media frame encryption
 
 ### Scale and framework layers
