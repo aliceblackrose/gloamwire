@@ -142,9 +142,7 @@ impl VoiceUdpSocket {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DISCOVERY_PACKET_BYTES, DISCOVERY_PAYLOAD_BYTES, DISCOVERY_RESPONSE_TYPE,
-    };
+    use super::{DISCOVERY_PACKET_BYTES, DISCOVERY_PAYLOAD_BYTES, DISCOVERY_RESPONSE_TYPE};
 
     #[test]
     fn discovery_wire_constants_match_discord() {
