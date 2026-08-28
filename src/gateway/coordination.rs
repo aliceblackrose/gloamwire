@@ -1,17 +1,10 @@
-use std::{
-    error::Error,
-    fmt,
-    future::Future,
-    pin::Pin,
-    time::Duration,
-};
+use std::{error::Error, fmt, future::Future, pin::Pin, time::Duration};
 
 use super::ShardId;
 
 /// Boxed asynchronous operation returned by Gateway coordination backends.
-pub type GatewayCoordinationFuture<'a, T> = Pin<
-    Box<dyn Future<Output = GatewayCoordinationResult<T>> + Send + 'a>,
->;
+pub type GatewayCoordinationFuture<'a, T> =
+    Pin<Box<dyn Future<Output = GatewayCoordinationResult<T>> + Send + 'a>>;
 
 /// Result returned by Gateway coordination backends.
 pub type GatewayCoordinationResult<T> = Result<T, GatewayCoordinationError>;
@@ -69,10 +62,7 @@ impl Error for GatewayCoordinationError {
 /// initial Identify and every later re-identification.
 pub trait GatewayIdentifyCoordinator: Send + Sync {
     /// Reserves capacity for one Gateway Identify on `shard_id`.
-    fn acquire_identify(
-        &self,
-        shard_id: ShardId,
-    ) -> GatewayCoordinationFuture<'_, ()>;
+    fn acquire_identify(&self, shard_id: ShardId) -> GatewayCoordinationFuture<'_, ()>;
 }
 
 /// Cross-process shard ownership and Identify coordinator.
