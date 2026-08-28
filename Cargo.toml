@@ -40,6 +40,7 @@ tls-rustls-native-roots = [
     "tokio-tungstenite/rustls-tls-native-roots",
 ]
 tracing = ["transport", "dep:tracing"]
+voice = ["transport", "tls-rustls-native-roots"]
 
 [dependencies]
 bitflags = { version = "2", features = ["serde"], optional = true }

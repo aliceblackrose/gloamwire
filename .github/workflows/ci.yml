@@ -28,6 +28,8 @@ jobs:
           cargo check --no-default-features --features transport,compression-zlib
           cargo check --no-default-features --features transport,compression-zstd
           cargo check --no-default-features --features transport,tls-rustls-native-roots
+          cargo check --no-default-features --features voice
+          cargo test --lib --no-default-features --features voice
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test
