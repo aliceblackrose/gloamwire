@@ -6,7 +6,10 @@ use tokio::{
     time::{Instant, MissedTickBehavior},
 };
 
-use crate::{RestClient, error::{Error, Result}};
+use crate::{
+    RestClient,
+    error::{Error, Result},
+};
 
 use super::{
     DistributedShardCoordinator, GatewayConfig, GatewayConnection, GatewayCoordinationError,
@@ -142,13 +145,7 @@ where
         let identify: Arc<dyn GatewayIdentifyCoordinator> = coordinator.clone();
         let base_config = GatewayConfig::from_gateway_bot(token, intents, &gateway)
             .with_identify_coordinator(identify);
-        Self::spawn(
-            base_config,
-            shard_count,
-            owner_id,
-            coordinator,
-            distributed,
-        )
+        Self::spawn(base_config, shard_count, owner_id, coordinator, distributed)
     }
 
     /// Starts distributed shard supervisors from explicit Gateway configuration.
@@ -261,13 +258,8 @@ async fn run_shard_supervisor<C>(
         {
             Ok(owns_shard) => owns_shard,
             Err(error) => {
-                if !send_coordination_error(
-                    &event_tx,
-                    shard_id,
-                    "acquiring shard lease",
-                    error,
-                )
-                .await
+                if !send_coordination_error(&event_tx, shard_id, "acquiring shard lease", error)
+                    .await
                 {
                     return;
                 }
@@ -398,10 +390,7 @@ fn shutdown_requested(shutdown: &watch::Receiver<bool>) -> bool {
     *shutdown.borrow()
 }
 
-async fn wait_or_shutdown(
-    shutdown: &mut watch::Receiver<bool>,
-    delay: Duration,
-) -> bool {
+async fn wait_or_shutdown(shutdown: &mut watch::Receiver<bool>, delay: Duration) -> bool {
     if shutdown_requested(shutdown) {
         return true;
     }
@@ -421,13 +410,7 @@ async fn release_lease<C>(
     C: DistributedShardCoordinator + ?Sized,
 {
     if let Err(error) = coordinator.release_shard(owner_id, shard_id).await {
-        let _ = send_coordination_error(
-            event_tx,
-            shard_id,
-            "releasing shard lease",
-            error,
-        )
-        .await;
+        let _ = send_coordination_error(event_tx, shard_id, "releasing shard lease", error).await;
     }
 }
 
@@ -454,8 +437,7 @@ mod tests {
 
     use super::DistributedShardConfig;
     use crate::gateway::{
-        DistributedShardCoordinator, GatewayCoordinationFuture, GatewayIdentifyCoordinator,
-        ShardId,
+        DistributedShardCoordinator, GatewayCoordinationFuture, GatewayIdentifyCoordinator, ShardId,
     };
 
     #[derive(Default)]
@@ -597,6 +579,9 @@ mod tests {
             .acquire_identify(ShardId::new(3))
             .await
             .expect("Identify reservation");
-        assert_eq!(*coordinator.identifies.lock().await, vec![ShardId::new(3)]);
+        assert_eq!(
+            *coordinator.identifies.lock().await,
+            vec![ShardId::new(3)]
+        );
     }
 }
