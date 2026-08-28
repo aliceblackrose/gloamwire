@@ -102,6 +102,8 @@ impl<'de> Deserialize<'de> for Snowflake {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::*;
 
     #[test]
@@ -116,5 +118,29 @@ mod tests {
         let integer: Snowflake = serde_json::from_str("123").expect("integer snowflake");
         assert_eq!(string, Snowflake::new(123));
         assert_eq!(integer, Snowflake::new(123));
+    }
+
+    proptest! {
+        #[test]
+        fn arbitrary_snowflakes_round_trip(value in any::<u64>()) {
+            let snowflake = Snowflake::new(value);
+            let json = serde_json::to_string(&snowflake).expect("serialize snowflake");
+            let from_json: Snowflake = serde_json::from_str(&json).expect("deserialize snowflake");
+            let from_display = snowflake.to_string().parse::<Snowflake>().expect("parse snowflake");
+
+            prop_assert_eq!(json, format!("\"{value}\""));
+            prop_assert_eq!(from_json, snowflake);
+            prop_assert_eq!(from_display, snowflake);
+            prop_assert_eq!(snowflake.get(), value);
+        }
+
+        #[test]
+        fn timestamp_uses_discord_snowflake_layout(value in any::<u64>()) {
+            let snowflake = Snowflake::new(value);
+            prop_assert_eq!(
+                snowflake.timestamp_millis(),
+                (value >> 22) + DISCORD_EPOCH_MILLIS
+            );
+        }
     }
 }

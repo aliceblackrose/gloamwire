@@ -79,6 +79,8 @@ impl Route {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use crate::model::ChannelId;
 
     use super::Route;
@@ -92,5 +94,22 @@ mod tests {
     #[test]
     fn create_message_is_not_implicitly_retried() {
         assert!(!Route::create_message(ChannelId::new(1)).is_retry_safe());
+    }
+
+    proptest! {
+        #[test]
+        fn message_route_identity_ignores_major_parameter(
+            channel_a in any::<u64>(),
+            channel_b in any::<u64>(),
+        ) {
+            let route_a = Route::create_message(ChannelId::new(channel_a));
+            let route_b = Route::create_message(ChannelId::new(channel_b));
+
+            prop_assert_eq!(route_a.identity(), route_b.identity());
+            prop_assert_eq!(route_a.major(), channel_a.to_string());
+            prop_assert_eq!(route_b.major(), channel_b.to_string());
+            prop_assert_eq!(route_a.major() == route_b.major(), channel_a == channel_b);
+            prop_assert_eq!(route_a.path == route_b.path, channel_a == channel_b);
+        }
     }
 }
