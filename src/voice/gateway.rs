@@ -85,9 +85,10 @@ impl VoiceGatewayConfig {
 
     /// Advertises the highest DAVE protocol version implemented by the caller.
     ///
-    /// Gloamwire exposes DAVE Voice Gateway messages but does not yet implement
-    /// MLS/media cryptography itself. Leave this at zero unless an external DAVE
-    /// implementation is attached to the connection.
+    /// Low-level Voice Gateway connections default to zero so provider choice
+    /// remains explicit. Managed `DaveVoiceSession` connections derive and
+    /// advertise the attached provider's supported version automatically; direct
+    /// low-level users may set this when attaching their own DAVE provider.
     #[must_use]
     pub const fn with_max_dave_protocol_version(mut self, version: u16) -> Self {
         self.max_dave_protocol_version = version;
