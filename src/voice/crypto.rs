@@ -50,7 +50,7 @@ impl std::fmt::Debug for VoiceTransportCrypto {
 }
 
 enum VoiceTransportCipher {
-    Aes256Gcm(Aes256Gcm),
+    Aes256Gcm(Box<Aes256Gcm>),
     XChaCha20Poly1305(XChaCha20Poly1305),
 }
 
@@ -64,9 +64,9 @@ impl VoiceTransportCrypto {
     pub fn new(mode: VoiceEncryptionMode, secret_key: [u8; 32]) -> VoiceResult<Self> {
         let cipher = match mode.as_ref() {
             VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE => VoiceTransportCipher::Aes256Gcm(
-                Aes256Gcm::new_from_slice(&secret_key).map_err(|_| {
+                Box::new(Aes256Gcm::new_from_slice(&secret_key).map_err(|_| {
                     VoiceError::Crypto("AES-256-GCM rejected the 32-byte session key".to_owned())
-                })?,
+                })?),
             ),
             VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE => {
                 VoiceTransportCipher::XChaCha20Poly1305(
