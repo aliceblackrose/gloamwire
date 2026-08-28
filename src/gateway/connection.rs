@@ -401,7 +401,7 @@ impl GatewayConnection {
     }
 
     fn update_sequence(&mut self, sequence: u64) {
-        self.sequence = Some(sequence;
+        self.sequence = Some(sequence);
         if let Some(session) = &mut self.session {
             session.update_sequence(sequence);
         }
