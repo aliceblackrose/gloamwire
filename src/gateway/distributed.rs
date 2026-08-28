@@ -579,9 +579,6 @@ mod tests {
             .acquire_identify(ShardId::new(3))
             .await
             .expect("Identify reservation");
-        assert_eq!(
-            *coordinator.identifies.lock().await,
-            vec![ShardId::new(3)]
-        );
+        assert_eq!(*coordinator.identifies.lock().await, vec![ShardId::new(3)]);
     }
 }
