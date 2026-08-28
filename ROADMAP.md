@@ -73,9 +73,19 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 
 ## Phase 6 — Advanced subsystems
 
-- [ ] Voice Gateway and UDP/RTP transport
-- [ ] Opus integration boundaries
-- [ ] Discord DAVE/E2EE support for voice where required
+### Voice transport
+
+- [x] Main-Gateway voice rendezvous (`VOICE_STATE_UPDATE` + `VOICE_SERVER_UPDATE`)
+- [x] Voice Gateway v8 Identify, heartbeat, sequence acknowledgement, and Resume
+- [x] UDP IP discovery and Select Protocol negotiation
+- [x] RTP audio header and sequence/timestamp primitives
+- [x] AES-256-GCM and XChaCha20-Poly1305 RTP-size transport encryption
+- [ ] Voice Gateway/UDP integration fixtures and reconnect orchestration
+- [ ] Opus integration boundaries and frame pacing
+- [ ] Discord DAVE/E2EE MLS session lifecycle and media frame encryption
+
+### Scale and framework layers
+
 - [ ] Distributed shard ownership/coordination
 - [ ] Optional high-level command framework kept separate from the low-level protocol core
 
