@@ -2,7 +2,7 @@
 
 Gloamwire is developed protocol-first: transport correctness and Discord lifecycle rules take priority over endpoint count.
 
-The parity phases below use Discord API v10 and the current Discord Developer Platform documentation as the reference surface. "Parity" means Gloamwire should expose documented bot/application REST resources and Gateway/Webhook Events without sacrificing forward compatibility when Discord adds new fields, values, events, or endpoints.
+The parity phases below use Discord API v10 and the current Discord Developer Platform documentation as the reference surface. "Parity" means Gloamwire should expose documented bot/application REST resources, interactions, Gateway events, Voice Gateway/media transport, OAuth2, and Webhook Events without sacrificing forward compatibility when Discord adds new fields, values, events, or endpoints.
 
 ## Phase 1 — Gateway lifecycle correctness
 
@@ -95,25 +95,45 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 
 ## Phase 7 — Gateway API parity
 
-**Goal:** every documented bot-relevant Gateway dispatch should have a typed representation while retaining `Unknown` fallback behavior for future Discord additions.
+**Goal:** every documented bot-relevant Gateway send/receive behavior should have a typed representation while retaining raw fallback behavior for future Discord additions.
 
 ### Identify and connection configuration
 
+- [ ] Configurable Identify `compress` field, clearly distinguished from Gateway URL transport-compression modes
 - [ ] Configurable Identify `large_threshold`
 - [ ] Configurable initial Identify presence
 - [ ] Forward-compatible Gateway Identify `capabilities` bitfield
 - [ ] Typed capability constants for documented Discord capability bits
+- [ ] `CHANNEL_OBFUSCATION` opt-in support while Discord exposes it as a testing capability
 - [ ] Tests proving omitted optional Identify fields preserve the current wire payload
 - [ ] Tests for JSON and ETF serialization of all Identify options
+
+### Gateway rate-limit receive behavior
+
+- [ ] Typed `RATE_LIMITED` receive event
+- [ ] Typed `opcode`, `retry_after`, and opcode-specific `meta` payloads
+- [ ] Request Guild Members opcode-8 rate-limit metadata (`guild_id`, optional `nonce`)
+- [ ] Prevent/reject retry of an affected opcode until Discord's `retry_after` has elapsed
+- [ ] Fixtures for Request Guild Members throttling and recovery
+- [ ] Keep the existing general outbound 120-events/60-seconds limiter separate from opcode-specific rate limits
 
 ### Message and channel dispatches
 
 - [ ] `MESSAGE_UPDATE`
 - [ ] `CHANNEL_PINS_UPDATE`
 - [ ] `TYPING_START`
-- [ ] Channel-info response dispatches for `REQUEST_CHANNEL_INFO`
-- [ ] Voice-channel status/start-time update dispatches
-- [ ] Voice-channel effect dispatches
+- [ ] Typed `CHANNEL_INFO` response for `REQUEST_CHANNEL_INFO`
+- [ ] `VOICE_CHANNEL_STATUS_UPDATE`
+- [ ] `VOICE_CHANNEL_START_TIME_UPDATE`
+- [ ] `VOICE_CHANNEL_EFFECT_SEND`
+
+### Channel obfuscation readiness
+
+- [ ] Model obfuscated Gateway channel payloads without pretending they are complete normal channel objects
+- [ ] Ensure guild/channel caches can safely hold or ignore obfuscated channel metadata
+- [ ] Ensure permission calculations do not accidentally grant access because an obfuscated channel was observed
+- [ ] Tests for capability-opted-in obfuscation before Discord's planned November 16, 2026 rollout to all bots
+- [ ] Document the difference between Gateway-obfuscated channels and `GET /guilds/{guild_id}/channels`, which omits invisible channels
 
 ### Thread dispatches
 
@@ -139,8 +159,11 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 - [ ] `STAGE_INSTANCE_CREATE`
 - [ ] `STAGE_INSTANCE_UPDATE`
 - [ ] `STAGE_INSTANCE_DELETE`
-- [ ] Typed soundboard-sound create/update/delete dispatches
-- [ ] Typed soundboard-sounds response dispatches
+- [ ] `GUILD_SOUNDBOARD_SOUND_CREATE`
+- [ ] `GUILD_SOUNDBOARD_SOUND_UPDATE`
+- [ ] `GUILD_SOUNDBOARD_SOUND_DELETE`
+- [ ] `GUILD_SOUNDBOARD_SOUNDS_UPDATE`
+- [ ] `SOUNDBOARD_SOUNDS`
 - [ ] Cache synchronization for stage-instance and soundboard state where caching is useful
 
 ### Voice rendezvous completeness
@@ -152,7 +175,8 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 ### Gateway parity verification
 
 - [ ] Maintain a machine-readable inventory of documented Gateway dispatch names
-- [ ] Test that every inventory entry either maps to a typed event or is explicitly documented as intentionally raw
+- [ ] Maintain a machine-readable inventory of documented Gateway send events/opcodes
+- [ ] Test that every inventory entry either maps to a typed API or is explicitly documented as intentionally raw
 - [ ] Preserve unknown dispatch payloads losslessly
 - [ ] Preserve unknown opcode payloads losslessly
 
@@ -177,25 +201,26 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 
 ### Sticker resource (`src/http/sticker.rs`)
 
-- [ ] Sticker, sticker item, sticker pack, and sticker-format models
-- [ ] Get sticker
-- [ ] List Nitro sticker packs where exposed by Discord
-- [ ] List guild stickers
-- [ ] Get guild sticker
-- [ ] Create guild sticker with multipart upload
-- [ ] Modify guild sticker
-- [ ] Delete guild sticker
+- [ ] Sticker, Sticker Item, Sticker Pack, and sticker-format models
+- [ ] Get Sticker
+- [ ] List Sticker Packs
+- [ ] Get Sticker Pack
+- [ ] List Guild Stickers
+- [ ] Get Guild Sticker
+- [ ] Create Guild Sticker with multipart upload
+- [ ] Modify Guild Sticker
+- [ ] Delete Guild Sticker
 - [ ] Audit-log reason support
 
 ### Soundboard resource (`src/http/soundboard.rs`)
 
-- [ ] Soundboard sound model
-- [ ] List default soundboard sounds
-- [ ] List guild soundboard sounds
-- [ ] Get guild soundboard sound
-- [ ] Create guild soundboard sound
-- [ ] Modify guild soundboard sound
-- [ ] Delete guild soundboard sound
+- [ ] Soundboard Sound model
+- [ ] List Default Soundboard Sounds
+- [ ] List Guild Soundboard Sounds
+- [ ] Get Guild Soundboard Sound
+- [ ] Create Guild Soundboard Sound
+- [ ] Modify Guild Soundboard Sound
+- [ ] Delete Guild Soundboard Sound
 - [ ] Send/play a soundboard sound where exposed by Discord
 - [ ] Audio payload validation helpers without embedding an audio codec
 - [ ] Audit-log reason support
@@ -212,14 +237,13 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 
 ### Guild Template resource (`src/http/template.rs`)
 
-- [ ] Guild Template model
-- [ ] Get guild template by code
-- [ ] Create guild from template
-- [ ] List guild templates
-- [ ] Create guild template
-- [ ] Sync guild template
-- [ ] Modify guild template
-- [ ] Delete guild template
+- [ ] Guild Template model, including serialized partial-guild snapshot behavior
+- [ ] Get Guild Template
+- [ ] Get Guild Templates
+- [ ] Create Guild Template
+- [ ] Sync Guild Template
+- [ ] Modify Guild Template
+- [ ] Delete Guild Template
 
 ### Poll REST completion (`src/http/poll.rs` or message integration)
 
@@ -253,12 +277,13 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 ### Application resource (`src/http/application.rs`)
 
 - [ ] Full Application model separate from partial READY/OAuth representations
-- [ ] Get current application
-- [ ] Edit current application where supported
-- [ ] Application integration-type configuration models
-- [ ] Installation parameter/configuration models
+- [ ] Install Params and installation-context/configuration models
 - [ ] Application flags with forward-compatible unknown-bit retention
-- [ ] Application asset/metadata endpoints that are part of the public REST API
+- [ ] Get Current Application
+- [ ] Edit Current Application
+- [ ] Activity Instance model and Activity Location model
+- [ ] Get Application Activity Instance
+- [ ] Application webhook-event configuration fields exposed through Edit Current Application
 
 ### Application Role Connection Metadata (`src/http/role_connection.rs`)
 
@@ -266,53 +291,97 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 - [ ] Get application role connection metadata records
 - [ ] Update application role connection metadata records
 - [ ] User application role connection model
-- [ ] Get/update current user's application role connection for OAuth2 Bearer clients
+- [ ] Get Current User Application Role Connection
+- [ ] Update Current User Application Role Connection
+- [ ] Delete Current User Application Role Connection
+- [ ] Explicit OAuth2 Bearer authentication/scopes on user-side role-connection calls
 
 ### Application Identity Profile (`src/http/identity_profile.rs`)
 
-- [ ] Application Identity Profile models
-- [ ] Profile/game-stat update endpoints documented by Discord
-- [ ] Authentication mode required by the resource
-- [ ] Forward-compatible profile field/value handling
+- [ ] Application Identity model
+- [ ] Application Identity Profile model
+- [ ] Profile Data, Primary Profile Data, Dynamic Field, and Media models
+- [ ] Forward-compatible provider and dynamic-field value handling
+- [ ] Update Application Identity Profile
+- [ ] Get Application Identity Profile
+- [ ] Get Application Identities by User ID
+- [ ] Get Application Identities by External ID
+- [ ] Delete Application Identity
+- [ ] Model full-replacement semantics for the profile `data` field
+- [ ] Enforce/document current Discord profile size/count/string limits without preventing forward-compatible reads
+- [ ] Explicit bot-token plus target-user OAuth authorization requirements
 
 ### User REST completion (`src/http/user.rs`)
 
-- [ ] Get user by ID
-- [ ] Modify current user
-- [ ] Current-user guild endpoints supported by bot/OAuth contexts
-- [ ] Current-user guild-member endpoints supported by OAuth contexts
-- [ ] User connection models/endpoints for OAuth2 Bearer clients
-- [ ] Explicit authentication requirements per endpoint
+- [ ] Complete User model audit
+- [ ] Avatar Decoration Data model
+- [ ] Collectibles and Nameplate models
+- [ ] Connection model
+- [ ] Get User by ID
+- [ ] Modify Current User
+- [ ] Get Current User Guilds
+- [ ] Get Current User Guild Member
+- [ ] Leave Guild
+- [ ] Create DM
+- [ ] Create Group DM
+- [ ] Get Current User Connections
+- [ ] Explicit Bot/Bearer authentication and OAuth2 scope requirements per endpoint
 
 ### Voice REST completion (`src/http/voice.rs`)
 
-- [ ] List/get current voice regions where still exposed by Discord
-- [ ] Guild voice-region endpoints where documented
-- [ ] Voice-channel status REST helpers not already covered by channel APIs
+- [ ] Voice Region model parity
+- [ ] List Voice Regions
+- [ ] Get Guild Voice Regions through the guild resource
+- [ ] Get Current User Voice State
+- [ ] Get User Voice State
+- [ ] Modify Current User Voice State
+- [ ] Modify User Voice State
 - [ ] Keep REST voice resources separate from the Voice Gateway/media transport subsystem
 
 ### Lobby resource (`src/http/lobby.rs`)
 
-- [ ] Determine bot-token/public-REST applicability versus Social SDK-only applicability
-- [ ] Model Lobby and Lobby Member objects if usable through Discord's public REST API
-- [ ] Implement documented lobby CRUD/member/linking endpoints that fit Gloamwire's authentication model
-- [ ] Feature-gate lobby support if it requires non-bot application credentials or substantially different lifecycle rules
+- [ ] Lobby model
+- [ ] Lobby Member model, including current `additional_name`, metadata, and flags fields
+- [ ] Lobby Message model and moderation metadata
+- [ ] Correct optional-vs-nullable update semantics for Lobby and Lobby Member fields
+- [ ] Create Lobby
+- [ ] Create or Join Lobby
+- [ ] Get Lobby
+- [ ] Modify Lobby
+- [ ] Delete Lobby
+- [ ] Add a Member to a Lobby
+- [ ] Bulk Update Lobby Members
+- [ ] Remove a Member from a Lobby
+- [ ] Leave Lobby
+- [ ] Link Channel to Lobby
+- [ ] Unlink Channel from Lobby
+- [ ] Send Lobby Message
+- [ ] Get Lobby Messages
+- [ ] Update Lobby Message Moderation Metadata
+- [ ] Create Lobby Channel Invite for Self
+- [ ] Create Lobby Channel Invite for User
+- [ ] Model/document Lobby development rate limits
+- [ ] Support the Bot/Bearer authentication modes documented per Lobby endpoint
 
 ## Phase 9 — Core REST exhaustiveness and model parity
 
-**Goal:** move from "practical REST coverage" to documented endpoint and object completeness for the resources Gloamwire already supports.
+**Goal:** move from "practical REST coverage" to documented endpoint, object, authentication, and request-semantics completeness for resources Gloamwire already supports.
 
 ### Guild completeness
 
 - [ ] Audit the Guild model against every current documented field
 - [ ] Replace raw guild emoji/sticker values with typed models
-- [ ] Guild preview model parity
-- [ ] Guild widget/settings endpoints
+- [ ] Guild Preview model parity
+- [ ] Integration, Integration Account, and Integration Application models
+- [ ] Membership Screening and Incidents Data models
+- [ ] Get Guild Role Member Counts
+- [ ] Guild widget/settings endpoints, including widget image binary responses
 - [ ] Vanity URL endpoints
-- [ ] Welcome screen endpoints
-- [ ] Onboarding endpoints/models where publicly supported
-- [ ] MFA/security-level configuration endpoints where publicly supported
+- [ ] Welcome Screen endpoints
+- [ ] Onboarding endpoints/models
+- [ ] Get Guild Voice Regions
 - [ ] Integration endpoints not covered by Phase 7 dispatch work
+- [ ] Modify Guild Incident Actions, including explicit `null` disable semantics
 - [ ] Current-user guild management endpoints where authentication permits them
 
 ### Channel and thread completeness
@@ -322,8 +391,9 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 - [ ] Thread-member endpoint parity
 - [ ] Forum/media-channel field and tag parity
 - [ ] Voice/video channel specialized fields
-- [ ] Channel permission overwrite edge cases
+- [ ] Channel permission-overwrite edge cases
 - [ ] Pin APIs and pin metadata parity
+- [ ] Partial/obfuscated channel representations where Discord intentionally omits fields
 
 ### Message completeness
 
@@ -335,8 +405,19 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 - [ ] Components V2 field parity as Discord evolves
 - [ ] Attachment metadata parity
 - [ ] Reaction endpoint parity including burst/super-reaction behavior
+- [ ] Editing-message attachment retention/removal semantics
+- [ ] File type filtering behavior and helpers where useful
 
-### Member, role, and moderation completeness
+### User, presence, activity, and integration models
+
+- [ ] Replace raw Presence `activities` JSON with a forward-compatible typed Activity model
+- [ ] Activity timestamps, emoji, party, assets, secrets, buttons, and flags models
+- [ ] Preserve unknown Activity types/fields without parse failure
+- [ ] Complete Client Status model audit as Discord adds platforms
+- [ ] Model full User fields, flags, avatar decoration, collectibles/nameplate, and other stable documented subobjects
+- [ ] Use explicit partial-user/partial-member/partial-channel types where Discord's wire payload is intentionally partial
+
+### Member, role, permissions, and moderation completeness
 
 - [ ] Audit Guild Member fields and flags
 - [ ] Audit Role fields, tags, colors, icons, and flags
@@ -344,6 +425,11 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 - [ ] Ban/prune/bulk-ban endpoint parity
 - [ ] Timeout and moderation edge-case validation
 - [ ] Auto Moderation action/trigger parity
+- [ ] Role-hierarchy comparison helpers where Discord permissions depend on position
+- [ ] Effective-permission helpers for implicit permission behavior (`VIEW_CHANNEL`, `SEND_MESSAGES`, `CONNECT`)
+- [ ] Thread permission inheritance semantics, including `SEND_MESSAGES_IN_THREADS`
+- [ ] Timed-out-member effective permissions (`VIEW_CHANNEL` + `READ_MESSAGE_HISTORY`, except owner/admin)
+- [ ] Permission syncing semantics documented separately from permission inheritance
 
 ### Invite completeness
 
@@ -359,37 +445,80 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 - [ ] Slack/GitHub-compatible webhook endpoints if still publicly documented
 - [ ] Thread/forum parameters and attachment behavior
 
-### Application commands and interactions
+### Application commands and interaction payloads
 
 - [ ] Audit all command option/choice/localization fields
 - [ ] Entry-point/application command handler parity
 - [ ] Command permission endpoint parity
-- [ ] Interaction callback type parity
+- [ ] Interaction callback type parity, including deprecated/limited callback values without losing unknown values
 - [ ] Interaction callback resource/activity-instance parity
 - [ ] Components/modal payload parity
 - [ ] Attachment support in all applicable interaction callbacks/followups
+- [ ] `with_response` query behavior on Create Interaction Response
+- [ ] User-install-only followup limit behavior/documentation
+
+### HTTP interaction ingress
+
+**Goal:** support framework-neutral verification and parsing for apps that receive interactions over HTTP instead of `INTERACTION_CREATE`.
+
+- [ ] Ed25519 verification helper for `X-Signature-Ed25519` + `X-Signature-Timestamp` over the raw request body
+- [ ] Reject invalid signatures before deserializing/dispatching trusted interaction data
+- [ ] PING (`type: 1`) verification and PONG (`type: 1`) response helper
+- [ ] Framework-neutral request/response primitives rather than embedding an HTTP server framework
+- [ ] Document that Gateway and HTTP interaction delivery modes are mutually exclusive
+- [ ] Inline `200` Interaction Response helpers for HTTP ingress
+- [ ] Separate-callback `202 No Content` behavior for HTTP-received interactions answered through the callback endpoint
+- [ ] Enforce/document the 3-second initial-response deadline and 15-minute interaction-token lifetime
+- [ ] Fixtures for valid signatures, invalid signatures, PING/PONG, inline responses, deferred responses, and malformed payloads
+- [ ] Share signature-verification primitives with Phase 10 Webhook Events where the verification algorithm is identical
 
 ### OAuth2 completeness
 
-- [ ] Enumerated/forward-compatible Discord OAuth2 scopes
-- [ ] Authorization Code + PKCE support
-- [ ] Client Credentials grant where Discord supports it
-- [ ] Refresh/revoke parity
+- [ ] Enumerated/forward-compatible Discord OAuth2 scopes, including approved-partner/unavailable scopes without pretending they are generally usable
+- [ ] Authorization Code Grant parity
+- [ ] Implicit Grant parity
+- [ ] Client Credentials Grant parity
+- [ ] Bot authorization flow parity
+- [ ] `webhook.incoming` authorization flow parity
+- [ ] Refresh-token parity
+- [ ] Token revocation parity
+- [ ] Get Current Bot Application Information
+- [ ] Get Current Authorization Information
 - [ ] OAuth2 current-user endpoints that require Bearer authentication
-- [ ] Webhook/incoming-webhook authorization flow parity
 - [ ] Authentication abstraction that can support Bot and Bearer clients without leaking tokens
+- [ ] Correct `application/x-www-form-urlencoded` handling for token and revocation requests
 
 ## Phase 10 — HTTP Webhook Events
 
-**Goal:** support Discord's event-delivery-over-HTTP surface separately from ordinary outgoing webhooks.
+**Goal:** support Discord's event-delivery-over-HTTP surface separately from ordinary outgoing webhooks and interaction webhooks.
 
-- [ ] Webhook Event envelope model
-- [ ] Typed Webhook Event payloads for every documented event type
+### Endpoint verification and delivery lifecycle
+
+- [ ] Webhook Event envelope/version model
+- [ ] PING webhook type (`type: 0`) handling
+- [ ] PING acknowledgement helper returning `204 No Content` with an empty body
+- [ ] Ed25519 verification of `X-Signature-Ed25519` + `X-Signature-Timestamp`
+- [ ] Invalid-signature helper behavior returning/recommending HTTP 401
+- [ ] Acknowledge normal events with `204 No Content` within Discord's 3-second deadline
+- [ ] Model/document Discord's exponential retries for up to 10 minutes when events are not acknowledged
+- [ ] Optional replay-window policy as a defense-in-depth helper, clearly distinguished from Discord's required signature verification
+- [ ] Event subscription/configuration fields through Edit Current Application
+
+### Webhook event models
+
 - [ ] Forward-compatible unknown Webhook Event fallback
-- [ ] Ed25519 request signature verification helpers
-- [ ] Timestamp/replay-window validation helpers
-- [ ] Event subscription/configuration REST endpoints if exposed publicly
-- [ ] Distinguish outgoing Discord webhooks from incoming Webhook Events in module naming/API design
+- [ ] `APPLICATION_AUTHORIZED`
+- [ ] `APPLICATION_DEAUTHORIZED`
+- [ ] `ENTITLEMENT_CREATE`
+- [ ] `ENTITLEMENT_UPDATE`
+- [ ] `ENTITLEMENT_DELETE`
+- [ ] Known `QUEST_USER_ENROLLMENT` type represented while Discord documents it as currently unavailable
+- [ ] `LOBBY_MESSAGE_CREATE`
+- [ ] `LOBBY_MESSAGE_UPDATE`
+- [ ] `LOBBY_MESSAGE_DELETE`
+- [ ] `GAME_DIRECT_MESSAGE_CREATE`
+- [ ] `GAME_DIRECT_MESSAGE_UPDATE`
+- [ ] `GAME_DIRECT_MESSAGE_DELETE`
 - [ ] Shared event models with Gateway where wire schemas are identical
 - [ ] Separate event models where Gateway and Webhook Event schemas differ
 - [ ] Fixtures using captured/synthetic signed HTTP event requests
@@ -404,9 +533,12 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 - [ ] Stage Instance state
 - [ ] Soundboard state
 - [ ] Entitlement/subscription state policy
+- [ ] Obfuscated-channel cache policy and transition to/from full channel objects
 - [ ] Explicit rules for partial Gateway objects versus complete REST objects
 - [ ] Cache invalidation semantics for guild unavailability, reconnect, and resharding
-- [ ] Tests proving out-of-order or partial events cannot silently corrupt normalized state
+- [ ] Idempotent handling of duplicate/replayed Gateway and Webhook events
+- [ ] Tests proving out-of-order, duplicate, missing, or partial events cannot silently corrupt normalized state
+- [ ] Document that Discord events are eventually consistent and may be delivered zero, one, or multiple times
 
 ## Phase 12 — API parity infrastructure
 
@@ -416,6 +548,12 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 - [ ] Maintain a checked-in Gateway dispatch inventory
 - [ ] Maintain a checked-in Gateway send-event/opcode inventory
 - [ ] Maintain a checked-in Webhook Event inventory
+- [ ] Maintain a checked-in HTTP interaction-ingress requirements inventory
+- [ ] Maintain an authentication matrix for unauthenticated, Bot, Bearer, webhook-token, and application-credential endpoints
+- [ ] Track OAuth2 scope requirements per Bearer endpoint
+- [ ] Track request content type (`application/json`, form-urlencoded, multipart) per endpoint
+- [ ] Track optional versus nullable request/resource fields in the parity manifest
+- [ ] Track array-query and boolean-query serialization requirements
 - [ ] Map each inventory entry to implementation status and source module
 - [ ] Add CI checks that fail when the inventory and parity manifest disagree
 - [ ] Add schema fixtures for every typed resource/event family
@@ -426,8 +564,11 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 - [ ] Add multipart tests for every upload endpoint
 - [ ] Add compatibility tests for unknown enum values, flags, fields, events, and opcodes
 - [ ] Document the Discord documentation/change-log date used for each parity audit
+- [ ] Treat Discord's API reference index as the core parity boundary and separately track partner/early-access APIs
 
-## Phase 13 — API quality and ergonomics before 1.0
+## Phase 13 — API quality, protocol semantics, and ergonomics before 1.0
+
+### Public API consistency
 
 - [ ] Standard naming conventions across REST methods (`get_*`, `list_*`, `create_*`, `modify_*`, `delete_*`)
 - [ ] Consistent typed query/request structs instead of ad-hoc argument lists
@@ -438,35 +579,70 @@ The parity phases below use Discord API v10 and the current Discord Developer Pl
 - [ ] Preserve `Value`/extra-field escape hatches where Discord schemas are intentionally open-ended
 - [ ] Public API review for unnecessary allocation/cloning in hot Gateway/voice paths
 - [ ] Public API review for `#[non_exhaustive]` and forward-compatible numeric/string newtypes
-- [ ] Fix package/user-agent repository metadata to point at `aliceblackrose/gloamwire`
+
+### Permission representation and semantics
+
+- [ ] Replace or redesign the current `u64`-bounded permission representation so unknown future Discord permission bits above bit 63 can be retained
+- [ ] Preserve ergonomic constants and bitwise operations for known permissions while using an arbitrary-precision/string-backed or multiword representation internally
+- [ ] Serialization/deserialization tests for permission values larger than `u64::MAX`
+- [ ] Migration strategy for public APIs that currently expose `Permissions: u64` semantics
+
+### HTTP/reference correctness
+
+- [ ] Emit Discord's required User-Agent shape: `DiscordBot ($url, $versionNumber)`
+- [ ] Point User-Agent/package repository metadata at `aliceblackrose/gloamwire`
+- [ ] Correct repeated-key array-query encoding (for example `?id=123&id=456`) wherever Discord documents array query parameters
+- [ ] Correct accepted boolean-query serialization
+- [ ] Request-field abstraction for three-state values where Discord distinguishes omitted, explicit `null`, and concrete values
+- [ ] Audit ISO8601 timestamp parsing/serialization strategy across models and request bodies
+- [ ] Image-data URI helpers for endpoints that accept image data
+- [ ] Signed attachment CDN URL preservation/expiry documentation
+- [ ] Editing-attachment semantics and file-type filtering tests
+- [ ] Invalid-request/rate-limit observability so callers can detect repeated authorization/validation failures before Discord-level enforcement
+
+### Documentation and examples
+
 - [ ] Complete rustdoc examples for every major resource family
-- [ ] Add examples for REST, Gateway, cache, sharding, OAuth2, interactions, voice, DAVE, and specialized resources
+- [ ] Add examples for REST, Gateway, cache, sharding, OAuth2, HTTP interactions, Webhook Events, voice, DAVE, and specialized resources
+- [ ] Document which features are core parity, partner-only, early-access, or deliberately out of scope
 
 ## Scope boundaries
 
-Gloamwire's core target is Discord's public bot/application HTTP API, Gateway, Voice Gateway/media transport, OAuth2, and HTTP Webhook Events.
+Gloamwire's core target is Discord's **public documented application/bot HTTP API**, Gateway, interaction HTTP transport, Voice Gateway/media transport, OAuth2, and HTTP Webhook Events.
 
-The following Discord platform surfaces are **not required for core API parity** because they are SDK/client-integration products rather than the bot/application transport API Gloamwire is designed around:
+The following client-integration surfaces are **not required for core API parity** because they are SDK/client products rather than the bot/application transport API Gloamwire is designed around:
 
-- Discord Social SDK
+- Discord Social SDK client library
 - Embedded App SDK / Activities client SDK
 - Local Discord RPC
 - Certified Device SDK/integration surface
 
-If Rust support for those surfaces is added later, it should live behind clearly separated feature flags or companion crates so the core `model`/`transport` dependency graph remains suitable for bots and services.
+Public server-side HTTP resources that also support Social SDK use cases—such as Lobby, Application Identity Profile, and Webhook Event payloads—remain in core parity when they appear in Discord's normal public API reference.
+
+Partner-only, approved-access, experimental, or early-access server APIs that live outside the normal public API reference should be tracked separately. They should not silently become a `1.0` blocker unless Discord promotes them into the stable public reference or Gloamwire explicitly chooses a partner-API feature tier.
+
+Voice/video/Go Live behavior should only be claimed as parity where Discord publishes a stable application/bot protocol. Undocumented client-only media behavior is not part of the core parity promise.
+
+If Rust support for excluded client/partner surfaces is added later, it should live behind clearly separated feature flags or companion crates so the core `model`/`transport` dependency graph remains suitable for bots and services.
 
 ## 1.0 parity gate
 
 A `1.0` release should require all of the following:
 
 - [ ] Stable Gateway lifecycle and reconnection behavior
-- [ ] Correct REST and Gateway rate limiting
-- [ ] Typed coverage for all documented bot-relevant Gateway dispatches
-- [ ] Complete documented REST coverage for core and specialized bot/application resources
+- [ ] Correct REST and Gateway rate limiting, including opcode-specific Gateway rate-limit responses
+- [ ] Typed coverage for all documented bot-relevant Gateway dispatches and send events
+- [ ] Channel-obfuscation-safe Gateway models/cache behavior
+- [ ] Complete documented REST coverage for core and specialized public bot/application resources
+- [ ] HTTP interaction ingress verification/parsing support
 - [ ] HTTP Webhook Events support
 - [ ] Voice Gateway/media transport and DAVE behavior covered by integration fixtures
+- [ ] Permission values remain forward-compatible beyond 64 bits
+- [ ] Correct optional-vs-nullable request semantics where omission and explicit `null` differ
+- [ ] Correct Discord HTTP User-Agent and request-encoding semantics
 - [ ] Forward-compatible unknown event/opcode/value/flag handling
-- [ ] Strong integration, property, and protocol-fixture test coverage
+- [ ] Idempotent state/event handling under Discord's eventual-consistency model
+- [ ] Strong integration, property, serialization-golden, and protocol-fixture test coverage
 - [ ] A reproducible Discord API parity audit with no undocumented omissions
 
-The `0.x` line may continue evolving APIs while these parity phases are completed. Endpoint count alone is not a release criterion: protocol correctness, rate-limit correctness, forward compatibility, and reliable lifecycle behavior remain higher priority.
+The `0.x` line may continue evolving APIs while these parity phases are completed. Endpoint count alone is not a release criterion: protocol correctness, rate-limit correctness, forward compatibility, authentication correctness, and reliable lifecycle behavior remain higher priority.
