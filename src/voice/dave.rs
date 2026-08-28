@@ -5,7 +5,9 @@ use serde_json::{Value, json};
 
 use crate::model::UserId;
 
-use super::{DaveGatewayEvent, VoiceError, VoiceGatewayEvent, VoiceResult};
+use super::{
+    DaveGatewayEvent, VoiceError, VoiceGatewayConnection, VoiceGatewayEvent, VoiceResult,
+};
 
 pub const DAVE_PREPARE_TRANSITION_OPCODE: u8 = 21;
 pub const DAVE_EXECUTE_TRANSITION_OPCODE: u8 = 22;
@@ -221,6 +223,20 @@ impl DaveGatewayCommand {
             Self::CommitWelcome(_) => DAVE_COMMIT_WELCOME_OPCODE,
             Self::InvalidCommitWelcome { .. } => DAVE_INVALID_COMMIT_WELCOME_OPCODE,
         }
+    }
+
+    /// Sends this typed DAVE command using the correct JSON or binary Voice
+    /// Gateway framing.
+    pub async fn send(&self, gateway: &mut VoiceGatewayConnection) -> VoiceResult<()> {
+        if let Some(data) = self.json_data() {
+            return gateway.send_dave_json(self.opcode(), &data).await;
+        }
+        if let Some(payload) = self.binary_payload() {
+            return gateway.send_dave_binary(self.opcode(), payload).await;
+        }
+        Err(VoiceError::Protocol(
+            "DAVE command had no serializable payload".to_owned(),
+        ))
     }
 
     pub(crate) fn json_data(&self) -> Option<Value> {
