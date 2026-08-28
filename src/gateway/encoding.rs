@@ -168,8 +168,9 @@ fn bigint_to_json(positive: bool, digits: &[u8]) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
     use serde::{Deserialize, Serialize};
-    use serde_json::{Value, json};
+    use serde_json::{Number, Value, json};
 
     use super::{EncodedGatewayPayload, GatewayEncoding};
 
@@ -241,5 +242,64 @@ mod tests {
             .decode_bytes(&bytes)
             .expect("ETF round trip");
         assert_eq!(decoded, payload);
+    }
+
+    fn gateway_json_value() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            any::<i64>().prop_map(|value| Value::Number(Number::from(value))),
+            any::<u64>().prop_map(|value| Value::Number(Number::from(value))),
+            "[ -~]{0,48}".prop_map(Value::String),
+        ];
+
+        leaf.prop_recursive(3, 64, 8, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..8).prop_map(Value::Array),
+                prop::collection::btree_map("[A-Za-z0-9_]{1,16}", inner, 0..8).prop_map(
+                    |entries| Value::Object(entries.into_iter().collect()),
+                ),
+            ]
+        })
+    }
+
+    proptest! {
+        #[test]
+        fn json_round_trips_arbitrary_gateway_values(
+            op in any::<u8>(),
+            data in gateway_json_value(),
+        ) {
+            let payload = Envelope { op, d: data };
+            let EncodedGatewayPayload::Text(text) = GatewayEncoding::Json
+                .encode(&payload)
+                .expect("JSON payload")
+            else {
+                return Err(TestCaseError::fail("JSON encoding produced a binary payload"));
+            };
+
+            let decoded: Envelope = GatewayEncoding::Json
+                .decode_text(&text)
+                .expect("JSON round trip");
+            prop_assert_eq!(decoded, payload);
+        }
+
+        #[test]
+        fn etf_round_trips_arbitrary_gateway_values(
+            op in any::<u8>(),
+            data in gateway_json_value(),
+        ) {
+            let payload = Envelope { op, d: data };
+            let EncodedGatewayPayload::Binary(bytes) = GatewayEncoding::Etf
+                .encode(&payload)
+                .expect("ETF payload")
+            else {
+                return Err(TestCaseError::fail("ETF encoding produced a text payload"));
+            };
+
+            let decoded: Envelope = GatewayEncoding::Etf
+                .decode_bytes(&bytes)
+                .expect("ETF round trip");
+            prop_assert_eq!(decoded, payload);
+        }
     }
 }
