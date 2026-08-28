@@ -3,7 +3,9 @@
 mod close;
 mod compression;
 mod connection;
+mod coordination;
 mod dispatch;
+mod distributed;
 mod encoding;
 mod event;
 mod identify;
@@ -16,6 +18,10 @@ mod shard;
 pub use close::{GatewayCloseCode, GatewayReconnectStrategy};
 pub use compression::GatewayCompression;
 pub use connection::{GatewayConfig, GatewayConnection};
+pub use coordination::{
+    DistributedShardCoordinator, GatewayCoordinationError, GatewayCoordinationFuture,
+    GatewayCoordinationResult, GatewayIdentifyCoordinator,
+};
 pub use dispatch::{
     AutoModerationActionExecutionEvent, GuildAuditLogEntryCreateEvent, GuildMemberAddEvent,
     GuildMemberRemoveEvent, GuildMemberUpdateEvent, GuildMembersChunkEvent, GuildRoleDeleteEvent,
@@ -24,6 +30,7 @@ pub use dispatch::{
     MessageReactionRemoveAllEvent, MessageReactionRemoveEmojiEvent, MessageReactionRemoveEvent,
     ReadyApplication, ReadyEvent, TypedDispatchEvent, WebhooksUpdateEvent,
 };
+pub use distributed::{DistributedShardConfig, DistributedShardManager};
 pub use encoding::GatewayEncoding;
 pub use event::{DispatchEvent, GatewayEvent};
 pub use intents::GatewayIntents;

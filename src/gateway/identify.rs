@@ -4,6 +4,8 @@ use tokio::{sync::Mutex, time::Instant};
 
 use crate::http::SessionStartLimit;
 
+use super::{GatewayCoordinationFuture, GatewayIdentifyCoordinator, ShardId};
+
 const IDENTIFY_BUCKET_WINDOW: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
@@ -37,7 +39,7 @@ impl GatewayIdentifyLimiter {
         }
     }
 
-    pub(crate) async fn acquire(&self, shard_id: u32) {
+    async fn acquire(&self, shard_id: u32) {
         loop {
             let wait_until = {
                 let mut state = self.state.lock().await;
@@ -90,5 +92,14 @@ impl GatewayIdentifyLimiter {
                 None => return,
             }
         }
+    }
+}
+
+impl GatewayIdentifyCoordinator for GatewayIdentifyLimiter {
+    fn acquire_identify(&self, shard_id: ShardId) -> GatewayCoordinationFuture<'_, ()> {
+        Box::pin(async move {
+            self.acquire(shard_id.get()).await;
+            Ok(())
+        })
     }
 }

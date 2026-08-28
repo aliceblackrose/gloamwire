@@ -21,9 +21,9 @@ use crate::{
 };
 
 use super::{
-    DispatchEvent, GatewayCloseCode, GatewayEvent, GatewayIntents, GatewayReconnectStrategy,
-    GatewaySession, RequestChannelInfo, RequestGuildMembers, RequestSoundboardSounds,
-    UpdatePresence, UpdateVoiceState,
+    DispatchEvent, GatewayCloseCode, GatewayEvent, GatewayIdentifyCoordinator, GatewayIntents,
+    GatewayReconnectStrategy, GatewaySession, RequestChannelInfo, RequestGuildMembers,
+    RequestSoundboardSounds, ShardId, UpdatePresence, UpdateVoiceState,
     compression::{GatewayCompression, GatewayDecoder},
     encoding::{EncodedGatewayPayload, GatewayEncoding},
     identify::GatewayIdentifyLimiter,
@@ -50,7 +50,7 @@ pub struct GatewayConfig {
     intents: GatewayIntents,
     url: String,
     shard: Option<[u32; 2]>,
-    identify_limiter: Option<GatewayIdentifyLimiter>,
+    identify_coordinator: Option<Arc<dyn GatewayIdentifyCoordinator>>,
     encoding: GatewayEncoding,
     compression: GatewayCompression,
 }
@@ -63,7 +63,7 @@ impl std::fmt::Debug for GatewayConfig {
             .field("intents", &self.intents)
             .field("url", &self.url)
             .field("shard", &self.shard)
-            .field("identify_limited", &self.identify_limiter.is_some())
+            .field("identify_coordinated", &self.identify_coordinator.is_some())
             .field("encoding", &self.encoding)
             .field("compression", &self.compression)
             .finish()
@@ -79,7 +79,7 @@ impl GatewayConfig {
             intents,
             url: DEFAULT_GATEWAY_URL.to_owned(),
             shard: None,
-            identify_limiter: None,
+            identify_coordinator: None,
             encoding: GatewayEncoding::Json,
             compression: GatewayCompression::None,
         }
@@ -88,7 +88,9 @@ impl GatewayConfig {
     /// Creates configuration from Discord's Get Gateway Bot response.
     ///
     /// This uses Discord's discovered Gateway URL and shares the returned
-    /// session-start limits across clones of the configuration.
+    /// session-start limits across clones of the configuration in this process.
+    /// Distributed applications can replace the local coordinator with
+    /// [`Self::with_identify_coordinator`].
     #[must_use]
     pub fn from_gateway_bot(
         token: impl Into<String>,
@@ -100,7 +102,9 @@ impl GatewayConfig {
             intents,
             url: gateway.url.clone(),
             shard: None,
-            identify_limiter: Some(GatewayIdentifyLimiter::new(&gateway.session_start_limit)),
+            identify_coordinator: Some(Arc::new(GatewayIdentifyLimiter::new(
+                &gateway.session_start_limit,
+            ))),
             encoding: GatewayEncoding::Json,
             compression: GatewayCompression::None,
         }
@@ -146,6 +150,19 @@ impl GatewayConfig {
     #[must_use]
     pub fn with_shard(mut self, shard_id: u32, shard_count: u32) -> Self {
         self.shard = Some([shard_id, shard_count]);
+        self
+    }
+
+    /// Replaces the local Discord Identify limiter with a shared coordinator.
+    ///
+    /// The coordinator is consulted for the initial Identify and for every
+    /// subsequent re-identification performed by this connection.
+    #[must_use]
+    pub fn with_identify_coordinator(
+        mut self,
+        coordinator: Arc<dyn GatewayIdentifyCoordinator>,
+    ) -> Self {
+        self.identify_coordinator = Some(coordinator);
         self
     }
 
@@ -578,8 +595,13 @@ async fn open_and_handshake(
         )
         .await?;
     } else {
-        if let Some(identify_limiter) = &config.identify_limiter {
-            identify_limiter.acquire(config.shard_id()).await;
+        if let Some(coordinator) = &config.identify_coordinator {
+            coordinator
+                .acquire_identify(ShardId::new(config.shard_id()))
+                .await
+                .map_err(|error| {
+                    Error::GatewayProtocol(format!("Gateway Identify coordination failed: {error}"))
+                })?;
         }
 
         send_encoded(
