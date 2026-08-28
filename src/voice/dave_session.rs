@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::model::{ChannelId, UserId};
+#[cfg(feature = "dave-davey")]
+use crate::model::ChannelId;
+use crate::model::UserId;
 
 use super::{
     DaveGatewayCommand, DaveParticipantSet, DaveProtocolEvent, DaveProviderError,
