@@ -177,9 +177,6 @@ mod tests {
         timeout(Duration::from_millis(10), pacer.wait_for_next_frame())
             .await
             .expect("first pacer tick should be immediately ready");
-        assert_eq!(
-            pacer.frame_duration(),
-            VoiceOpusFrameDuration::SixtyMs
-        );
+        assert_eq!(pacer.frame_duration(), VoiceOpusFrameDuration::SixtyMs);
     }
 }
