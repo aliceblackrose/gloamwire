@@ -506,33 +506,27 @@ async fn open_socket(endpoint: &str) -> VoiceResult<(VoiceSocket, Interval)> {
     let url = voice_gateway_url(endpoint);
     let (mut socket, _) = connect_async(url).await?;
 
-    loop {
-        match next_inbound(&mut socket).await? {
-            Inbound::Json(envelope) if envelope.opcode == HELLO_OPCODE => {
-                let hello = serde_json::from_value::<Hello>(envelope.data)?;
-                if hello.heartbeat_interval == 0 {
-                    return Err(VoiceError::Protocol(
-                        "Voice Hello contained a zero heartbeat interval".to_owned(),
-                    ));
-                }
-                let interval = Duration::from_millis(hello.heartbeat_interval);
-                let mut heartbeat = tokio::time::interval_at(Instant::now() + interval, interval);
-                heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
-                return Ok((socket, heartbeat));
+    match next_inbound(&mut socket).await? {
+        Inbound::Json(envelope) if envelope.opcode == HELLO_OPCODE => {
+            let hello = serde_json::from_value::<Hello>(envelope.data)?;
+            if hello.heartbeat_interval == 0 {
+                return Err(VoiceError::Protocol(
+                    "Voice Hello contained a zero heartbeat interval".to_owned(),
+                ));
             }
-            Inbound::Json(envelope) => {
-                return Err(VoiceError::Protocol(format!(
-                    "expected Voice Hello opcode 8, received {}",
-                    envelope.opcode
-                )));
-            }
-            Inbound::DaveBinary(event) => {
-                return Err(VoiceError::Protocol(format!(
-                    "received binary Voice opcode {} before Hello",
-                    event.opcode
-                )));
-            }
+            let interval = Duration::from_millis(hello.heartbeat_interval);
+            let mut heartbeat = tokio::time::interval_at(Instant::now() + interval, interval);
+            heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+            Ok((socket, heartbeat))
         }
+        Inbound::Json(envelope) => Err(VoiceError::Protocol(format!(
+            "expected Voice Hello opcode 8, received {}",
+            envelope.opcode
+        ))),
+        Inbound::DaveBinary(event) => Err(VoiceError::Protocol(format!(
+            "received binary Voice opcode {} before Hello",
+            event.opcode
+        ))),
     }
 }
 
