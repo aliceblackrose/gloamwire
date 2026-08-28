@@ -73,6 +73,8 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 
 ## Phase 6 — Advanced subsystems
 
+**Status: Complete**
+
 ### Voice transport
 
 - [x] Main-Gateway voice rendezvous (`VOICE_STATE_UPDATE` + `VOICE_SERVER_UPDATE`)
@@ -82,12 +84,12 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] AES-256-GCM and XChaCha20-Poly1305 RTP-size transport encryption
 - [x] Voice Gateway/UDP integration fixtures and reconnect orchestration
 - [x] Opus integration boundaries and frame pacing
-- [ ] Discord DAVE/E2EE MLS session lifecycle and media frame encryption
+- [x] Discord DAVE/E2EE MLS session lifecycle and media frame encryption
 
 ### Scale and framework layers
 
-- [ ] Distributed shard ownership/coordination
-- [ ] Optional high-level command framework kept separate from the low-level protocol core
+- [x] Distributed shard ownership/coordination
+- [x] Optional high-level command framework kept separate from the low-level protocol core ([gloam-macro-commands](https://github.com/aliceblackrose/gloam-macro-commands))
 
 ## Release direction
 
