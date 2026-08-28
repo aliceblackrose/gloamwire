@@ -271,7 +271,8 @@ mod tests {
             response[..2].copy_from_slice(&2_u16.to_be_bytes());
             response[2..4].copy_from_slice(&70_u16.to_be_bytes());
             response[4..8].copy_from_slice(&SSRC.to_be_bytes());
-            response[8..21].copy_from_slice(b"203.0.113.42");
+            let address = b"203.0.113.42";
+            response[8..8 + address.len()].copy_from_slice(address);
             response[72..74].copy_from_slice(&50_000_u16.to_be_bytes());
             within(
                 "UDP discovery response",
