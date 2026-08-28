@@ -4,9 +4,7 @@ use tokio::{sync::Mutex, time::Instant};
 
 use crate::http::SessionStartLimit;
 
-use super::{
-    GatewayCoordinationFuture, GatewayIdentifyCoordinator, ShardId,
-};
+use super::{GatewayCoordinationFuture, GatewayIdentifyCoordinator, ShardId};
 
 const IDENTIFY_BUCKET_WINDOW: Duration = Duration::from_secs(5);
 
