@@ -22,11 +22,12 @@ The `0.1` foundation includes:
 - OAuth2 helpers and typed Discord CDN URL construction.
 - Optional credential-safe `tracing` instrumentation for REST rate limits and Gateway shard/throttling lifecycle.
 - Optional normalized Gateway state cache with direct typed-event synchronization and bounded message retention.
-- Capability feature flags for model-only builds, transport, Gateway compression codecs, TLS, cache, and tracing.
+- Capability feature flags for model-only builds, transport, Gateway compression codecs, TLS, cache, tracing, and experimental voice transport.
+- Experimental Discord Voice Gateway v8 rendezvous/session primitives, UDP discovery, RTP sequencing, and RTP-size AES-256-GCM/XChaCha20-Poly1305 transport encryption behind the `voice` feature.
 - Local HTTP/Gateway protocol integration fixtures covering rate-limit, empty-response, reconnect, and Resume behavior.
 - Graceful client and shard-manager shutdown.
 
-Gloamwire does **not** provide a command framework or voice media transport. See [ROADMAP.md](ROADMAP.md) for the phased implementation plan.
+Gloamwire does **not** provide a command framework. Voice support is experimental: the low-level Voice Gateway/UDP/RTP transport exists, but Discord DAVE/E2EE media encryption and Opus integration are still being implemented. The `voice` feature is therefore not yet a turnkey implementation for normal non-stage Discord calls. See [ROADMAP.md](ROADMAP.md) for the phased implementation plan.
 
 ## Requirements
 
@@ -35,7 +36,7 @@ Gloamwire does **not** provide a command framework or voice media transport. See
 
 ## Cargo features
 
-Gloamwire's default feature set preserves the complete `0.1` transport surface: REST and Gateway transport, both Gateway compression codecs, and Rustls TLS using native certificate roots.
+Gloamwire's default feature set preserves the complete `0.1` non-voice transport surface: REST and Gateway transport, both Gateway compression codecs, and Rustls TLS using native certificate roots. Experimental voice support is opt-in.
 
 | Feature | Purpose |
 | --- | --- |
@@ -46,6 +47,7 @@ Gloamwire's default feature set preserves the complete `0.1` transport surface: 
 | `tls-rustls-native-roots` | HTTPS/WSS through Rustls with native certificate roots. Implies `transport`. |
 | `cache` | Optional normalized Gateway state cache. Implies `transport`. |
 | `tracing` | Credential-safe structured transport instrumentation. Implies `transport`. |
+| `voice` | Experimental Voice Gateway v8, UDP discovery, RTP primitives, and current RTP-size transport AEAD. Implies `transport` and Rustls TLS. DAVE/E2EE is not complete yet. |
 
 For a model-only dependency with no HTTP, WebSocket, TLS, or compression stack:
 
@@ -59,6 +61,13 @@ For transport without Gateway compression, explicitly select transport and TLS:
 ```toml
 [dependencies]
 gloamwire = { version = "0.1", default-features = false, features = ["transport", "tls-rustls-native-roots"] }
+```
+
+For the experimental voice transport surface:
+
+```toml
+[dependencies]
+gloamwire = { version = "0.1", features = ["voice"] }
 ```
 
 `GatewayCompression::ZlibStream` and `GatewayCompression::ZstdStream` remain available in the public API across transport builds. Attempting to construct a Gateway connection with a disabled codec returns a `GatewayCompression` error that names the required Cargo feature.
@@ -105,6 +114,37 @@ loop {
 ```
 
 `GatewayConnection::next_event` must be continuously polled because it drives heartbeats and recoverable reconnects.
+
+## Experimental voice transport
+
+Enable the `voice` feature to access Voice Gateway v8, UDP discovery, RTP sequencing, and transport encryption primitives:
+
+```rust,no_run
+use gloamwire::voice::{
+    VoiceEncryptionMode, VoiceGatewayConfig, VoiceGatewayConnection, VoiceTransportCrypto,
+    VoiceUdpSocket,
+};
+
+# async fn example(info: gloamwire::voice::VoiceConnectionInfo) -> Result<(), Box<dyn std::error::Error>> {
+let mut gateway = VoiceGatewayConnection::connect(VoiceGatewayConfig::new(info)).await?;
+let udp = VoiceUdpSocket::connect(gateway.ready()).await?;
+let discovery = udp.discover().await?;
+let mode = gateway.ready().preferred_encryption_mode()?;
+gateway.select_protocol(&discovery, &mode).await?;
+
+// After receiving VoiceGatewayEvent::SessionDescription:
+# let description = gloamwire::voice::VoiceSessionDescription {
+#     mode: VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE),
+#     secret_key: [0; 32],
+#     dave_protocol_version: 0,
+# };
+let transport_crypto = VoiceTransportCrypto::from_session_description(&description)?;
+# let _ = transport_crypto;
+# Ok(())
+# }
+```
+
+The transport AEAD layer is distinct from DAVE. DAVE encrypts encoded media frames end-to-end between call participants; Discord's RTP-size AEAD remains the authenticated transport layer between the client and Discord's voice SFU. Until Gloamwire's DAVE layer is complete, do not advertise a non-zero DAVE protocol version unless an external DAVE implementation is attached.
 
 ## Optional state cache
 
