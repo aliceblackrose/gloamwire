@@ -20,6 +20,8 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
       - name: Feature matrix
+        env:
+          RUSTFLAGS: -Dunused-imports -Ddead-code
         run: |
           cargo check --no-default-features --features model
           cargo test --lib --no-default-features --features model
