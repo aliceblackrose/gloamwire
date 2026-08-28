@@ -13,6 +13,7 @@ mod gateway;
 mod protocol;
 mod rendezvous;
 mod rtp;
+mod session;
 mod udp;
 
 pub use close::{VoiceCloseCode, VoiceReconnectStrategy};
@@ -30,4 +31,5 @@ pub use rtp::{
     DISCORD_OPUS_PAYLOAD_TYPE, OPUS_20MS_TIMESTAMP_STEP, OPUS_SILENCE_FRAME, RTP_HEADER_BYTES,
     VoiceRtpHeader, VoiceRtpSequencer,
 };
+pub use session::{VoiceRecoveryOutcome, VoiceSession};
 pub use udp::{VoiceUdpDiscovery, VoiceUdpSocket};
