@@ -63,22 +63,30 @@ impl VoiceRtpSequencer {
         }
     }
 
-    /// Overrides the RTP timestamp increment for a different Opus frame duration.
+    /// Overrides the default RTP timestamp increment.
     #[must_use]
     pub const fn with_timestamp_step(mut self, timestamp_step: u32) -> Self {
         self.timestamp_step = timestamp_step;
         self
     }
 
-    /// Returns the next RTP header and advances sequence/timestamp with wrapping.
+    /// Returns the next RTP header using the configured timestamp step.
     pub fn next_header(&mut self) -> VoiceRtpHeader {
+        self.next_header_with_timestamp_step(self.timestamp_step)
+    }
+
+    /// Returns the next RTP header and advances by the supplied frame step.
+    ///
+    /// This supports streams that intentionally mix valid Opus frame durations
+    /// while keeping a single monotonically wrapping RTP sequence/timestamp state.
+    pub fn next_header_with_timestamp_step(&mut self, timestamp_step: u32) -> VoiceRtpHeader {
         let header = VoiceRtpHeader {
             sequence: self.sequence,
             timestamp: self.timestamp,
             ssrc: self.ssrc,
         };
         self.sequence = self.sequence.wrapping_add(1);
-        self.timestamp = self.timestamp.wrapping_add(self.timestamp_step);
+        self.timestamp = self.timestamp.wrapping_add(timestamp_step);
         header
     }
 }
@@ -104,5 +112,16 @@ mod tests {
         let second = sequencer.next_header();
         assert_eq!(second.sequence, first.sequence + 1);
         assert_eq!(second.timestamp, first.timestamp + OPUS_20MS_TIMESTAMP_STEP);
+    }
+
+    #[test]
+    fn sequencer_accepts_per_frame_timestamp_steps() {
+        let mut sequencer = VoiceRtpSequencer::new(42);
+        let first = sequencer.next_header_with_timestamp_step(480);
+        let second = sequencer.next_header_with_timestamp_step(1_920);
+        let third = sequencer.next_header_with_timestamp_step(960);
+        assert_eq!(first.timestamp, 0);
+        assert_eq!(second.timestamp, 480);
+        assert_eq!(third.timestamp, 2_400);
     }
 }
