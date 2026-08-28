@@ -41,7 +41,10 @@ impl std::fmt::Debug for VoiceSession {
             .field("udp", &self.udp)
             .field("discovery", &self.discovery)
             .field("mode", &self.mode)
-            .field("dave_protocol_version", &self.description.dave_protocol_version)
+            .field(
+                "dave_protocol_version",
+                &self.description.dave_protocol_version,
+            )
             .field("pending_events", &self.pending.len())
             .finish_non_exhaustive()
     }
@@ -152,7 +155,10 @@ impl VoiceSession {
         &mut self,
         code: Option<VoiceCloseCode>,
     ) -> VoiceResult<VoiceRecoveryOutcome> {
-        let strategy = code.map_or(VoiceReconnectStrategy::Resume, VoiceCloseCode::reconnect_strategy);
+        let strategy = code.map_or(
+            VoiceReconnectStrategy::Resume,
+            VoiceCloseCode::reconnect_strategy,
+        );
         match strategy {
             VoiceReconnectStrategy::Resume => {
                 self.gateway.resume().await?;
@@ -232,7 +238,9 @@ mod tests {
 
     #[tokio::test]
     async fn negotiates_udp_transport_heartbeats_and_resume() {
-        let udp_server = UdpSocket::bind("127.0.0.1:0").await.expect("bind UDP fixture");
+        let udp_server = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("bind UDP fixture");
         let udp_addr = udp_server.local_addr().expect("UDP fixture address");
         let udp_task = tokio::spawn(async move {
             let mut request = [0_u8; 74];
@@ -263,8 +271,10 @@ mod tests {
         let websocket_addr = listener.local_addr().expect("websocket fixture address");
         let websocket_task = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.expect("initial voice connection");
-            let mut socket = accept_async(stream).await.expect("accept initial websocket");
-            send_json(&mut socket, 8, json!({"heartbeat_interval": 20}), None).await;
+            let mut socket = accept_async(stream)
+                .await
+                .expect("accept initial websocket");
+            send_json(&mut socket, 8, json!({"heartbeat_interval": 100}), None).await;
 
             let identify = recv_json(&mut socket).await;
             assert_eq!(identify["op"], 0);
@@ -312,7 +322,7 @@ mod tests {
                 4,
                 json!({
                     "mode": VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE,
-                    "secret_key": [7; 32],
+                    "secret_key": vec![7_u8; 32],
                     "dave_protocol_version": 0
                 }),
                 Some(12),
@@ -333,8 +343,10 @@ mod tests {
             drop(socket);
 
             let (stream, _) = listener.accept().await.expect("resume voice connection");
-            let mut resumed = accept_async(stream).await.expect("accept resumed websocket");
-            send_json(&mut resumed, 8, json!({"heartbeat_interval": 20}), None).await;
+            let mut resumed = accept_async(stream)
+                .await
+                .expect("accept resumed websocket");
+            send_json(&mut resumed, 8, json!({"heartbeat_interval": 100}), None).await;
             let resume = recv_json(&mut resumed).await;
             assert_eq!(resume["op"], 7);
             assert_eq!(resume["d"]["server_id"], "10");
@@ -368,7 +380,9 @@ mod tests {
         );
         assert_eq!(session.gateway().sequence(), Some(12));
 
-        let VoiceGatewayEvent::Speaking(speaking) = session.next_event().await.expect("buffered speaking") else {
+        let VoiceGatewayEvent::Speaking(speaking) =
+            session.next_event().await.expect("buffered speaking")
+        else {
             panic!("expected buffered Speaking event");
         };
         assert_eq!(speaking.ssrc, 77);
@@ -383,11 +397,16 @@ mod tests {
         };
         assert_eq!(code, Some(VoiceCloseCode::SERVER_CRASHED));
         assert_eq!(
-            session.recover_after_close(code).await.expect("resume recovery"),
+            session
+                .recover_after_close(code)
+                .await
+                .expect("resume recovery"),
             VoiceRecoveryOutcome::Resumed
         );
 
-        let VoiceGatewayEvent::Speaking(speaking) = session.next_event().await.expect("resumed speaking") else {
+        let VoiceGatewayEvent::Speaking(speaking) =
+            session.next_event().await.expect("resumed speaking")
+        else {
             panic!("expected buffered resumed Speaking event");
         };
         assert_eq!(speaking.ssrc, 88);
