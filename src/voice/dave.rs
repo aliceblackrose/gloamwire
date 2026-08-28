@@ -5,9 +5,7 @@ use serde_json::{Value, json};
 
 use crate::model::UserId;
 
-use super::{
-    DaveGatewayEvent, VoiceError, VoiceGatewayConnection, VoiceGatewayEvent, VoiceResult,
-};
+use super::{DaveGatewayEvent, VoiceError, VoiceGatewayConnection, VoiceGatewayEvent, VoiceResult};
 
 pub const DAVE_PREPARE_TRANSITION_OPCODE: u8 = 21;
 pub const DAVE_EXECUTE_TRANSITION_OPCODE: u8 = 22;
