@@ -19,6 +19,15 @@ jobs:
           rustup default 1.98.0
       - name: Format
         run: cargo fmt --all -- --check
+      - name: Feature matrix
+        run: |
+          cargo check --no-default-features --features model
+          cargo test --lib --no-default-features --features model
+          cargo check --no-default-features --features transport
+          cargo test --lib --no-default-features --features transport
+          cargo check --no-default-features --features transport,compression-zlib
+          cargo check --no-default-features --features transport,compression-zstd
+          cargo check --no-default-features --features transport,tls-rustls-native-roots
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test
