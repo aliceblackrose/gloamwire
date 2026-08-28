@@ -1,9 +1,13 @@
+#[cfg(feature = "compression-zlib")]
 use flate2::{Decompress, FlushDecompress};
+#[cfg(feature = "compression-zstd")]
 use zstd::stream::raw::{Decoder as ZstdDecoder, Operation};
 
 use crate::error::{Error, Result};
 
+#[cfg(feature = "compression-zlib")]
 const ZLIB_SUFFIX: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
+#[cfg(any(feature = "compression-zlib", feature = "compression-zstd"))]
 const DECODE_CHUNK_BYTES: usize = 16 * 1024;
 
 /// Transport compression requested from Discord's Gateway.
@@ -13,8 +17,14 @@ pub enum GatewayCompression {
     #[default]
     None,
     /// Use Discord's shared-context `zlib-stream` transport compression.
+    ///
+    /// Constructing a Gateway connection with this variant requires the
+    /// `compression-zlib` Cargo feature.
     ZlibStream,
     /// Use Discord's shared-context `zstd-stream` transport compression.
+    ///
+    /// Constructing a Gateway connection with this variant requires the
+    /// `compression-zstd` Cargo feature.
     ZstdStream,
 }
 
@@ -30,7 +40,9 @@ impl GatewayCompression {
 
 pub(crate) enum GatewayDecoder {
     Plain,
+    #[cfg(feature = "compression-zlib")]
     Zlib(ZlibStreamDecoder),
+    #[cfg(feature = "compression-zstd")]
     Zstd(ZstdStreamDecoder),
 }
 
@@ -38,8 +50,32 @@ impl GatewayDecoder {
     pub(crate) fn new(compression: GatewayCompression) -> Result<Self> {
         match compression {
             GatewayCompression::None => Ok(Self::Plain),
-            GatewayCompression::ZlibStream => Ok(Self::Zlib(ZlibStreamDecoder::new())),
-            GatewayCompression::ZstdStream => Ok(Self::Zstd(ZstdStreamDecoder::new()?)),
+            GatewayCompression::ZlibStream => {
+                #[cfg(feature = "compression-zlib")]
+                {
+                    Ok(Self::Zlib(ZlibStreamDecoder::new()))
+                }
+                #[cfg(not(feature = "compression-zlib"))]
+                {
+                    Err(Error::GatewayCompression(
+                        "zlib-stream support is disabled; enable the `compression-zlib` Cargo feature"
+                            .to_owned(),
+                    ))
+                }
+            }
+            GatewayCompression::ZstdStream => {
+                #[cfg(feature = "compression-zstd")]
+                {
+                    Ok(Self::Zstd(ZstdStreamDecoder::new()?))
+                }
+                #[cfg(not(feature = "compression-zstd"))]
+                {
+                    Err(Error::GatewayCompression(
+                        "zstd-stream support is disabled; enable the `compression-zstd` Cargo feature"
+                            .to_owned(),
+                    ))
+                }
+            }
         }
     }
 
@@ -51,17 +87,21 @@ impl GatewayDecoder {
     pub(crate) fn decode(&mut self, bytes: &[u8]) -> Result<Option<Vec<u8>>> {
         match self {
             Self::Plain => Ok(Some(bytes.to_vec())),
+            #[cfg(feature = "compression-zlib")]
             Self::Zlib(decoder) => decoder.decode(bytes),
+            #[cfg(feature = "compression-zstd")]
             Self::Zstd(decoder) => decoder.decode(bytes).map(Some),
         }
     }
 }
 
+#[cfg(feature = "compression-zlib")]
 pub(crate) struct ZlibStreamDecoder {
     inflater: Decompress,
     compressed: Vec<u8>,
 }
 
+#[cfg(feature = "compression-zlib")]
 impl ZlibStreamDecoder {
     fn new() -> Self {
         Self {
@@ -109,10 +149,12 @@ impl ZlibStreamDecoder {
     }
 }
 
+#[cfg(feature = "compression-zstd")]
 pub(crate) struct ZstdStreamDecoder {
     decoder: ZstdDecoder<'static>,
 }
 
+#[cfg(feature = "compression-zstd")]
 impl ZstdStreamDecoder {
     fn new() -> Result<Self> {
         let decoder =
@@ -148,11 +190,13 @@ impl ZstdStreamDecoder {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "compression-zstd")]
     use std::io::Cursor;
 
+    #[cfg(feature = "compression-zlib")]
     use flate2::{Compress, Compression, FlushCompress};
 
-    use super::{GatewayCompression, GatewayDecoder, ZLIB_SUFFIX};
+    use super::{GatewayCompression, GatewayDecoder};
 
     #[test]
     fn compression_query_values_match_discord() {
@@ -167,13 +211,14 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "compression-zlib")]
     #[test]
     fn zlib_stream_buffers_fragments_and_reuses_context() {
         let mut compressor = Compress::new(Compression::fast(), true);
         let first = compress_zlib_message(&mut compressor, br#"{"op":10,"d":{}}"#);
         let second = compress_zlib_message(&mut compressor, br#"{"op":11,"d":null}"#);
-        assert!(first.ends_with(&ZLIB_SUFFIX));
-        assert!(second.ends_with(&ZLIB_SUFFIX));
+        assert!(first.ends_with(&super::ZLIB_SUFFIX));
+        assert!(second.ends_with(&super::ZLIB_SUFFIX));
 
         let mut decoder = GatewayDecoder::new(GatewayCompression::ZlibStream).expect("decoder");
         let split = first.len() / 2;
@@ -191,6 +236,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "compression-zstd")]
     #[test]
     fn zstd_decoder_accepts_gateway_message_bytes() {
         let payload = br#"{"op":10,"d":{"heartbeat_interval":45000}}"#;
@@ -202,6 +248,25 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "compression-zlib"))]
+    #[test]
+    fn zlib_stream_reports_disabled_feature() {
+        let error = GatewayDecoder::new(GatewayCompression::ZlibStream)
+            .err()
+            .expect("zlib should be disabled");
+        assert!(error.to_string().contains("compression-zlib"));
+    }
+
+    #[cfg(not(feature = "compression-zstd"))]
+    #[test]
+    fn zstd_stream_reports_disabled_feature() {
+        let error = GatewayDecoder::new(GatewayCompression::ZstdStream)
+            .err()
+            .expect("zstd should be disabled");
+        assert!(error.to_string().contains("compression-zstd"));
+    }
+
+    #[cfg(feature = "compression-zlib")]
     fn compress_zlib_message(compressor: &mut Compress, payload: &[u8]) -> Vec<u8> {
         let mut output = Vec::with_capacity(payload.len() * 2 + 128);
         compressor
