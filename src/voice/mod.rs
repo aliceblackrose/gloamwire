@@ -4,11 +4,12 @@
 //! join first collects `VOICE_STATE_UPDATE` and `VOICE_SERVER_UPDATE`, then
 //! identifies to the Voice Gateway and establishes a UDP path. Gloamwire
 //! implements Discord's current RTP-size transport AEAD modes and accepts
-//! already-encoded Opus frames at a codec-agnostic boundary; DAVE/E2EE media
-//! cryptography remains a separate protocol layer.
+//! already-encoded Opus frames at a codec-agnostic boundary. DAVE/E2EE exposes
+//! a typed, backend-neutral MLS/media provider boundary.
 
 mod close;
 mod crypto;
+mod dave;
 mod error;
 mod gateway;
 mod opus;
@@ -20,6 +21,13 @@ mod udp;
 
 pub use close::{VoiceCloseCode, VoiceReconnectStrategy};
 pub use crypto::{VoiceDecryptedRtp, VoiceTransportCrypto};
+pub use dave::{
+    DAVE_ANNOUNCE_COMMIT_OPCODE, DAVE_COMMIT_WELCOME_OPCODE, DAVE_EXECUTE_TRANSITION_OPCODE,
+    DAVE_EXTERNAL_SENDER_OPCODE, DAVE_INVALID_COMMIT_WELCOME_OPCODE, DAVE_KEY_PACKAGE_OPCODE,
+    DAVE_PREPARE_EPOCH_OPCODE, DAVE_PREPARE_TRANSITION_OPCODE, DAVE_PROPOSALS_OPCODE,
+    DAVE_READY_FOR_TRANSITION_OPCODE, DAVE_WELCOME_OPCODE, DaveGatewayCommand, DaveParticipantSet,
+    DaveProposalOperation, DaveProtocolEvent, DaveProvider, DaveProviderError,
+};
 pub use error::{VoiceError, VoiceResult};
 pub use gateway::{VoiceGatewayConfig, VoiceGatewayConnection};
 pub use opus::{
