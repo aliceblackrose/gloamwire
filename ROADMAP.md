@@ -69,7 +69,7 @@ Gloamwire is developed protocol-first: transport correctness and Discord lifecyc
 - [x] Optional cache layer
 - [x] Event-to-cache synchronization
 - [x] Feature flags for transport/model/cache/compression/TLS capabilities
-- [ ] Fuzz/property tests for protocol parsing and route/rate-limit behavior
+- [x] Fuzz/property tests for protocol parsing and route/rate-limit behavior
 
 ## Phase 6 — Advanced subsystems
 
