@@ -634,6 +634,13 @@ fn voice_gateway_url(endpoint: &str) -> String {
     } else {
         format!("wss://{endpoint}")
     };
+
+    let authority_start = url.find("://").map_or(0, |index| index + 3);
+    let query_start = url.find('?').unwrap_or(url.len());
+    if !url[authority_start..query_start].contains('/') {
+        url.insert(query_start, '/');
+    }
+
     let separator = if url.contains('?') { '&' } else { '?' };
     url.push(separator);
     url.push_str("v=");
@@ -646,15 +653,23 @@ mod tests {
     use super::voice_gateway_url;
 
     #[test]
-    fn voice_gateway_url_adds_secure_scheme_and_v8() {
+    fn voice_gateway_url_adds_secure_scheme_path_and_v8() {
         assert_eq!(
             voice_gateway_url("voice.example.test:443"),
-            "wss://voice.example.test:443?v=8"
+            "wss://voice.example.test:443/?v=8"
         );
     }
 
     #[test]
-    fn voice_gateway_url_preserves_existing_scheme_and_query() {
+    fn voice_gateway_url_adds_path_before_existing_query() {
+        assert_eq!(
+            voice_gateway_url("ws://127.0.0.1:8080?fixture=1"),
+            "ws://127.0.0.1:8080/?fixture=1&v=8"
+        );
+    }
+
+    #[test]
+    fn voice_gateway_url_preserves_existing_scheme_path_and_query() {
         assert_eq!(
             voice_gateway_url("ws://127.0.0.1:8080/socket?fixture=1"),
             "ws://127.0.0.1:8080/socket?fixture=1&v=8"
