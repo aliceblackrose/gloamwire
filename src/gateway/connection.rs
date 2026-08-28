@@ -599,7 +599,9 @@ async fn open_and_handshake(
             coordinator
                 .acquire_identify(ShardId::new(config.shard_id()))
                 .await
-                .map_err(|error| Error::GatewayProtocol(format!("Gateway Identify coordination failed: {error}")))?;
+                .map_err(|error| {
+                    Error::GatewayProtocol(format!("Gateway Identify coordination failed: {error}"))
+                })?;
         }
 
         send_encoded(
