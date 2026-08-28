@@ -22,9 +22,9 @@ use tokio_tungstenite::{
 use crate::model::{GuildId, UserId};
 
 use super::{
-    DaveGatewayEvent, VoiceCloseCode, VoiceConnectionInfo, VoiceEncryptionMode, VoiceError,
-    VoiceGatewayEvent, VoiceReady, VoiceResult, VoiceSessionDescription, VoiceSpeakingEvent,
-    VoiceSpeakingFlags, VoiceUdpDiscovery, VOICE_GATEWAY_VERSION,
+    DaveGatewayEvent, VOICE_GATEWAY_VERSION, VoiceCloseCode, VoiceConnectionInfo,
+    VoiceEncryptionMode, VoiceError, VoiceGatewayEvent, VoiceReady, VoiceResult,
+    VoiceSessionDescription, VoiceSpeakingEvent, VoiceSpeakingFlags, VoiceUdpDiscovery,
 };
 
 type VoiceSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -595,9 +595,9 @@ fn event_from_envelope(envelope: NormalizedEnvelope) -> VoiceResult<Option<Voice
         SESSION_DESCRIPTION_OPCODE => VoiceGatewayEvent::SessionDescription(
             serde_json::from_value::<VoiceSessionDescription>(envelope.data)?,
         ),
-        SPEAKING_OPCODE => VoiceGatewayEvent::Speaking(serde_json::from_value::<
-            VoiceSpeakingEvent,
-        >(envelope.data)?),
+        SPEAKING_OPCODE => VoiceGatewayEvent::Speaking(
+            serde_json::from_value::<VoiceSpeakingEvent>(envelope.data)?,
+        ),
         HEARTBEAT_ACK_OPCODE => VoiceGatewayEvent::HeartbeatAck,
         RESUMED_OPCODE => VoiceGatewayEvent::Resumed,
         CLIENTS_CONNECT_OPCODE => VoiceGatewayEvent::ClientsConnect(envelope.data),
@@ -620,7 +620,10 @@ async fn send_json<T>(socket: &mut VoiceSocket, opcode: u8, data: &T) -> VoiceRe
 where
     T: Serialize,
 {
-    let text = serde_json::to_string(&OutboundEnvelope { op: opcode, d: data })?;
+    let text = serde_json::to_string(&OutboundEnvelope {
+        op: opcode,
+        d: data,
+    })?;
     socket.send(Message::Text(text.into())).await?;
     Ok(())
 }
