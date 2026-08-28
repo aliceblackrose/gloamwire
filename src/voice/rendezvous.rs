@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use crate::{
     gateway::DispatchEvent,
-    model::{GuildId, UserId, VoiceState},
+    model::{ChannelId, GuildId, UserId, VoiceState},
 };
 
 /// Main-Gateway `VOICE_SERVER_UPDATE` data required to establish voice.
@@ -18,6 +18,8 @@ pub struct VoiceServerUpdate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoiceConnectionInfo {
     pub guild_id: GuildId,
+    /// Voice channel ID. DAVE uses this snowflake as its MLS group ID.
+    pub channel_id: ChannelId,
     pub user_id: UserId,
     pub session_id: String,
     pub token: String,
@@ -102,9 +104,9 @@ impl VoiceRendezvous {
         let Some(voice_state) = &self.voice_state else {
             return VoiceRendezvousStatus::Pending;
         };
-        if voice_state.channel_id.is_none() {
+        let Some(channel_id) = voice_state.channel_id else {
             return VoiceRendezvousStatus::Pending;
-        }
+        };
 
         let Some(server) = &self.server_update else {
             return VoiceRendezvousStatus::Pending;
@@ -115,6 +117,7 @@ impl VoiceRendezvous {
 
         VoiceRendezvousStatus::Ready(VoiceConnectionInfo {
             guild_id: self.guild_id,
+            channel_id,
             user_id: self.user_id,
             session_id: voice_state.session_id.clone(),
             token: server.token.clone(),
@@ -129,7 +132,7 @@ mod tests {
 
     use crate::{
         gateway::DispatchEvent,
-        model::{GuildId, UserId},
+        model::{ChannelId, GuildId, UserId},
     };
 
     use super::{VoiceRendezvous, VoiceRendezvousStatus};
@@ -172,6 +175,7 @@ mod tests {
         else {
             panic!("expected completed rendezvous");
         };
+        assert_eq!(info.channel_id, ChannelId::new(20));
         assert_eq!(info.session_id, "session");
         assert_eq!(info.token, "voice-token");
     }
