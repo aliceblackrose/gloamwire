@@ -3,13 +3,15 @@
 //! Voice connections are separate from the main Discord Gateway. A guild voice
 //! join first collects `VOICE_STATE_UPDATE` and `VOICE_SERVER_UPDATE`, then
 //! identifies to the Voice Gateway and establishes a UDP path. Gloamwire
-//! implements Discord's current RTP-size transport AEAD modes; DAVE/E2EE media
-//! cryptography remains a separate protocol boundary.
+//! implements Discord's current RTP-size transport AEAD modes and accepts
+//! already-encoded Opus frames at a codec-agnostic boundary; DAVE/E2EE media
+//! cryptography remains a separate protocol layer.
 
 mod close;
 mod crypto;
 mod error;
 mod gateway;
+mod opus;
 mod protocol;
 mod rendezvous;
 mod rtp;
@@ -20,6 +22,10 @@ pub use close::{VoiceCloseCode, VoiceReconnectStrategy};
 pub use crypto::{VoiceDecryptedRtp, VoiceTransportCrypto};
 pub use error::{VoiceError, VoiceResult};
 pub use gateway::{VoiceGatewayConfig, VoiceGatewayConnection};
+pub use opus::{
+    DISCORD_OPUS_CHANNELS, DISCORD_OPUS_SAMPLE_RATE, OPUS_SILENCE_FLUSH_FRAMES, VoiceFramePacer,
+    VoiceOpusFrame, VoiceOpusFrameDuration,
+};
 pub use protocol::{
     DaveGatewayEvent, VOICE_GATEWAY_VERSION, VoiceEncryptionMode, VoiceGatewayEvent, VoiceReady,
     VoiceSessionDescription, VoiceSpeakingEvent, VoiceSpeakingFlags,
