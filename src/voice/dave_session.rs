@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::model::UserId;
+use crate::model::{ChannelId, UserId};
 
 use super::{
     DaveGatewayCommand, DaveParticipantSet, DaveProtocolEvent, DaveProviderError,
@@ -136,17 +136,8 @@ where
             return Ok(());
         };
 
-        if let DaveProtocolEvent::ClientDisconnect { user_id } = dave_event {
-            self.ssrc_users.retain(|_, mapped| *mapped != user_id);
-            self.participants.apply(&DaveProtocolEvent::ClientDisconnect { user_id });
-            let commands = self
-                .provider
-                .handle_gateway_event(
-                    &DaveProtocolEvent::ClientDisconnect { user_id },
-                    &self.participants,
-                )
-                .map_err(provider_error)?;
-            return send_commands(&mut self.session, commands).await;
+        if let DaveProtocolEvent::ClientDisconnect { user_id } = &dave_event {
+            self.ssrc_users.retain(|_, mapped| mapped != user_id);
         }
 
         self.participants.apply(&dave_event);
@@ -251,9 +242,13 @@ where
 #[cfg(feature = "dave-davey")]
 impl DaveVoiceSession<super::DaveyProvider> {
     /// Connects a managed voice session using Gloamwire's optional pure-Rust
-    /// `davey` backend.
-    pub async fn connect_davey(info: super::VoiceConnectionInfo) -> VoiceResult<Self> {
-        let provider = super::DaveyProvider::new(info.user_id, info.channel_id);
+    /// `davey` backend. `channel_id` is the voice channel snowflake and becomes
+    /// the MLS group ID.
+    pub async fn connect_davey(
+        info: super::VoiceConnectionInfo,
+        channel_id: ChannelId,
+    ) -> VoiceResult<Self> {
+        let provider = super::DaveyProvider::new(info.user_id, channel_id);
         Self::connect(VoiceGatewayConfig::new(info), provider).await
     }
 }
