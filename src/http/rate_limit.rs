@@ -26,8 +26,14 @@ struct RateLimitState {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum RateLimitBucketKey {
-    Discord { hash: String, major: String },
-    Provisional { route_identity: String, major: String },
+    Discord {
+        hash: String,
+        major: String,
+    },
+    Provisional {
+        route_identity: String,
+        major: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
