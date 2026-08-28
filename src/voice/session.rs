@@ -239,9 +239,11 @@ mod tests {
                 Message::Text(text) => {
                     return serde_json::from_str(text.as_str()).expect("client JSON payload");
                 }
-                Message::Ping(payload) => within("fixture pong", socket.send(Message::Pong(payload)))
-                    .await
-                    .expect("fixture pong"),
+                Message::Ping(payload) => {
+                    within("fixture pong", socket.send(Message::Pong(payload)))
+                        .await
+                        .expect("fixture pong")
+                }
                 Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
                 Message::Close(frame) => panic!("client closed fixture websocket: {frame:?}"),
             }
@@ -256,12 +258,10 @@ mod tests {
         let udp_addr = udp_server.local_addr().expect("UDP fixture address");
         let udp_task = tokio::spawn(async move {
             let mut request = [0_u8; 74];
-            let (received, peer) = within(
-                "UDP discovery request",
-                udp_server.recv_from(&mut request),
-            )
-            .await
-            .expect("receive discovery request");
+            let (received, peer) =
+                within("UDP discovery request", udp_server.recv_from(&mut request))
+                    .await
+                    .expect("receive discovery request");
             assert_eq!(received, 74);
             assert_eq!(&request[..2], &1_u16.to_be_bytes());
             assert_eq!(&request[2..4], &70_u16.to_be_bytes());
@@ -404,12 +404,10 @@ mod tests {
         );
         assert_eq!(session.gateway().sequence(), Some(12));
 
-        let VoiceGatewayEvent::Speaking(speaking) = within(
-            "buffered pre-session Speaking event",
-            session.next_event(),
-        )
-        .await
-        .expect("buffered speaking")
+        let VoiceGatewayEvent::Speaking(speaking) =
+            within("buffered pre-session Speaking event", session.next_event())
+                .await
+                .expect("buffered speaking")
         else {
             panic!("expected buffered Speaking event");
         };
@@ -435,12 +433,10 @@ mod tests {
             VoiceRecoveryOutcome::Resumed
         );
 
-        let VoiceGatewayEvent::Speaking(speaking) = within(
-            "buffered resumed Speaking event",
-            session.next_event(),
-        )
-        .await
-        .expect("resumed speaking")
+        let VoiceGatewayEvent::Speaking(speaking) =
+            within("buffered resumed Speaking event", session.next_event())
+                .await
+                .expect("resumed speaking")
         else {
             panic!("expected buffered resumed Speaking event");
         };
