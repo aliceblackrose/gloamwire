@@ -2,11 +2,12 @@
 //!
 //! Voice connections are separate from the main Discord Gateway. A guild voice
 //! join first collects `VOICE_STATE_UPDATE` and `VOICE_SERVER_UPDATE`, then
-//! identifies to the Voice Gateway and establishes a UDP path. DAVE/E2EE
-//! cryptography is intentionally exposed as a protocol boundary in this phase;
-//! callers must not advertise a DAVE version unless they provide that layer.
+//! identifies to the Voice Gateway and establishes a UDP path. Gloamwire
+//! implements Discord's current RTP-size transport AEAD modes; DAVE/E2EE media
+//! cryptography remains a separate protocol boundary.
 
 mod close;
+mod crypto;
 mod error;
 mod gateway;
 mod protocol;
@@ -15,6 +16,7 @@ mod rtp;
 mod udp;
 
 pub use close::{VoiceCloseCode, VoiceReconnectStrategy};
+pub use crypto::{VoiceDecryptedRtp, VoiceTransportCrypto};
 pub use error::{VoiceError, VoiceResult};
 pub use gateway::{VoiceGatewayConfig, VoiceGatewayConnection};
 pub use protocol::{
