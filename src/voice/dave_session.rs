@@ -4,9 +4,10 @@ use crate::model::{ChannelId, UserId};
 
 use super::{
     DaveGatewayCommand, DaveParticipantSet, DaveProtocolEvent, DaveProviderError,
-    DaveProviderLifecycle, OPUS_SILENCE_FRAME, RTP_HEADER_BYTES, VoiceError, VoiceGatewayConfig,
-    VoiceGatewayEvent, VoiceOpusFrame, VoiceRecoveryOutcome, VoiceResult, VoiceRtpHeader,
-    VoiceRtpSequencer, VoiceSession, VoiceSpeakingFlags,
+    DaveProviderLifecycle, OPUS_SILENCE_FLUSH_FRAMES, OPUS_SILENCE_FRAME, RTP_HEADER_BYTES,
+    VoiceError, VoiceFramePacer, VoiceGatewayConfig, VoiceGatewayEvent, VoiceOpusFrame,
+    VoiceRecoveryOutcome, VoiceResult, VoiceRtpHeader, VoiceRtpSequencer, VoiceSession,
+    VoiceSpeakingFlags,
 };
 
 /// One decoded Opus frame received through Discord's transport and optional
@@ -112,6 +113,20 @@ where
     /// Sends Voice Gateway Speaking state.
     pub async fn set_speaking(&mut self, flags: VoiceSpeakingFlags) -> VoiceResult<()> {
         self.session.gateway_mut().set_speaking(flags).await
+    }
+
+    /// Flushes Discord's canonical five 20 ms Opus silence frames and then
+    /// clears the Voice Gateway Speaking state.
+    ///
+    /// Silence frames intentionally bypass DAVE frame encryption because Discord
+    /// permits the canonical `0xF8FFFE` frame to pass through during E2EE calls.
+    pub async fn finish_speaking(&mut self) -> VoiceResult<()> {
+        let mut pacer = VoiceFramePacer::default();
+        for _ in 0..OPUS_SILENCE_FLUSH_FRAMES {
+            pacer.wait_for_next_frame().await;
+            self.send_opus_frame(VoiceOpusFrame::silence()).await?;
+        }
+        self.set_speaking(VoiceSpeakingFlags(0)).await
     }
 
     /// Returns and applies the next Voice Gateway event.

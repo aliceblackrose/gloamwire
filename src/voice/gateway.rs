@@ -233,15 +233,11 @@ impl VoiceGatewayConnection {
         .await
     }
 
-    /// Sends Voice Gateway opcode 5. Discord requires at least one Speaking
-    /// payload before audio is transmitted.
+    /// Sends Voice Gateway opcode 5 Speaking state.
+    ///
+    /// Discord requires a non-zero Speaking payload before audio transmission.
+    /// A zero bitmask is valid after transmission and clears the speaking state.
     pub async fn set_speaking(&mut self, flags: VoiceSpeakingFlags) -> VoiceResult<()> {
-        if flags.bits() == 0 {
-            return Err(VoiceError::Protocol(
-                "Voice Speaking flags must be non-zero before audio transmission".to_owned(),
-            ));
-        }
-
         send_json(
             &mut self.socket,
             SPEAKING_OPCODE,
