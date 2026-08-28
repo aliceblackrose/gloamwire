@@ -178,9 +178,14 @@ impl VoiceSession {
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+
     use futures_util::{SinkExt, StreamExt};
     use serde_json::{Value, json};
-    use tokio::net::{TcpListener, TcpStream, UdpSocket};
+    use tokio::{
+        net::{TcpListener, TcpStream, UdpSocket},
+        time::{Duration, timeout},
+    };
     use tokio_tungstenite::{
         WebSocketStream, accept_async,
         tungstenite::{
@@ -198,6 +203,13 @@ mod tests {
     };
 
     const SSRC: u32 = 0x1020_3040;
+    const FIXTURE_TIMEOUT: Duration = Duration::from_secs(3);
+
+    async fn within<T>(label: &str, future: impl Future<Output = T>) -> T {
+        timeout(FIXTURE_TIMEOUT, future)
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for {label}"))
+    }
 
     async fn send_json(
         socket: &mut WebSocketStream<TcpStream>,
@@ -209,16 +221,17 @@ mod tests {
         if let Some(sequence) = sequence {
             envelope["seq"] = json!(sequence);
         }
-        socket
-            .send(Message::Text(envelope.to_string().into()))
-            .await
-            .expect("send fixture payload");
+        within(
+            "fixture WebSocket send",
+            socket.send(Message::Text(envelope.to_string().into())),
+        )
+        .await
+        .expect("send fixture payload");
     }
 
-    async fn recv_json(socket: &mut WebSocketStream<TcpStream>) -> Value {
+    async fn recv_json(socket: &mut WebSocketStream<TcpStream>, label: &str) -> Value {
         loop {
-            match socket
-                .next()
+            match within(label, socket.next())
                 .await
                 .expect("fixture websocket message")
                 .expect("fixture websocket frame")
@@ -226,8 +239,7 @@ mod tests {
                 Message::Text(text) => {
                     return serde_json::from_str(text.as_str()).expect("client JSON payload");
                 }
-                Message::Ping(payload) => socket
-                    .send(Message::Pong(payload))
+                Message::Ping(payload) => within("fixture pong", socket.send(Message::Pong(payload)))
                     .await
                     .expect("fixture pong"),
                 Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
@@ -244,10 +256,12 @@ mod tests {
         let udp_addr = udp_server.local_addr().expect("UDP fixture address");
         let udp_task = tokio::spawn(async move {
             let mut request = [0_u8; 74];
-            let (received, peer) = udp_server
-                .recv_from(&mut request)
-                .await
-                .expect("receive discovery request");
+            let (received, peer) = within(
+                "UDP discovery request",
+                udp_server.recv_from(&mut request),
+            )
+            .await
+            .expect("receive discovery request");
             assert_eq!(received, 74);
             assert_eq!(&request[..2], &1_u16.to_be_bytes());
             assert_eq!(&request[2..4], &70_u16.to_be_bytes());
@@ -259,10 +273,12 @@ mod tests {
             response[4..8].copy_from_slice(&SSRC.to_be_bytes());
             response[8..21].copy_from_slice(b"203.0.113.42");
             response[72..74].copy_from_slice(&50_000_u16.to_be_bytes());
-            udp_server
-                .send_to(&response, peer)
-                .await
-                .expect("send discovery response");
+            within(
+                "UDP discovery response",
+                udp_server.send_to(&response, peer),
+            )
+            .await
+            .expect("send discovery response");
         });
 
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -270,13 +286,15 @@ mod tests {
             .expect("bind websocket fixture");
         let websocket_addr = listener.local_addr().expect("websocket fixture address");
         let websocket_task = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.expect("initial voice connection");
-            let mut socket = accept_async(stream)
+            let (stream, _) = within("initial voice WebSocket connection", listener.accept())
+                .await
+                .expect("initial voice connection");
+            let mut socket = within("initial WebSocket handshake", accept_async(stream))
                 .await
                 .expect("accept initial websocket");
             send_json(&mut socket, 8, json!({"heartbeat_interval": 100}), None).await;
 
-            let identify = recv_json(&mut socket).await;
+            let identify = recv_json(&mut socket, "Voice Identify").await;
             assert_eq!(identify["op"], 0);
             assert_eq!(identify["d"]["server_id"], "10");
             assert_eq!(identify["d"]["user_id"], "20");
@@ -300,7 +318,7 @@ mod tests {
             )
             .await;
 
-            let select_protocol = recv_json(&mut socket).await;
+            let select_protocol = recv_json(&mut socket, "Voice Select Protocol").await;
             assert_eq!(select_protocol["op"], 1);
             assert_eq!(select_protocol["d"]["protocol"], "udp");
             assert_eq!(select_protocol["d"]["data"]["address"], "203.0.113.42");
@@ -329,25 +347,29 @@ mod tests {
             )
             .await;
 
-            let heartbeat = recv_json(&mut socket).await;
+            let heartbeat = recv_json(&mut socket, "Voice heartbeat").await;
             assert_eq!(heartbeat["op"], 3);
             assert_eq!(heartbeat["d"]["seq_ack"], 12);
             send_json(&mut socket, 6, json!({}), Some(13)).await;
-            socket
-                .send(Message::Close(Some(CloseFrame {
+            within(
+                "fixture crash close",
+                socket.send(Message::Close(Some(CloseFrame {
                     code: CloseCode::Library(4015),
                     reason: "fixture crash".into(),
-                })))
-                .await
-                .expect("send fixture close");
+                }))),
+            )
+            .await
+            .expect("send fixture close");
             drop(socket);
 
-            let (stream, _) = listener.accept().await.expect("resume voice connection");
-            let mut resumed = accept_async(stream)
+            let (stream, _) = within("resumed voice WebSocket connection", listener.accept())
+                .await
+                .expect("resume voice connection");
+            let mut resumed = within("resumed WebSocket handshake", accept_async(stream))
                 .await
                 .expect("accept resumed websocket");
             send_json(&mut resumed, 8, json!({"heartbeat_interval": 100}), None).await;
-            let resume = recv_json(&mut resumed).await;
+            let resume = recv_json(&mut resumed, "Voice Resume").await;
             assert_eq!(resume["op"], 7);
             assert_eq!(resume["d"]["server_id"], "10");
             assert_eq!(resume["d"]["session_id"], "fixture-session");
@@ -371,7 +393,9 @@ mod tests {
             token: "fixture-token".to_owned(),
             endpoint: format!("ws://{websocket_addr}"),
         });
-        let mut session = VoiceSession::connect(config).await.expect("voice session");
+        let mut session = within("VoiceSession::connect", VoiceSession::connect(config))
+            .await
+            .expect("voice session");
         assert_eq!(session.discovery().address, "203.0.113.42");
         assert_eq!(session.discovery().port, 50_000);
         assert_eq!(
@@ -380,58 +404,79 @@ mod tests {
         );
         assert_eq!(session.gateway().sequence(), Some(12));
 
-        let VoiceGatewayEvent::Speaking(speaking) =
-            session.next_event().await.expect("buffered speaking")
+        let VoiceGatewayEvent::Speaking(speaking) = within(
+            "buffered pre-session Speaking event",
+            session.next_event(),
+        )
+        .await
+        .expect("buffered speaking")
         else {
             panic!("expected buffered Speaking event");
         };
         assert_eq!(speaking.ssrc, 77);
 
         assert_eq!(
-            session.next_event().await.expect("heartbeat ACK"),
+            within("heartbeat ACK", session.next_event())
+                .await
+                .expect("heartbeat ACK"),
             VoiceGatewayEvent::HeartbeatAck
         );
-        let close = session.next_event().await.expect_err("fixture close");
+        let close = within("Voice Gateway close", session.next_event())
+            .await
+            .expect_err("fixture close");
         let VoiceError::Closed { code, .. } = close else {
             panic!("expected Voice Gateway close error");
         };
         assert_eq!(code, Some(VoiceCloseCode::SERVER_CRASHED));
         assert_eq!(
-            session
-                .recover_after_close(code)
+            within("Voice Resume recovery", session.recover_after_close(code))
                 .await
                 .expect("resume recovery"),
             VoiceRecoveryOutcome::Resumed
         );
 
-        let VoiceGatewayEvent::Speaking(speaking) =
-            session.next_event().await.expect("resumed speaking")
+        let VoiceGatewayEvent::Speaking(speaking) = within(
+            "buffered resumed Speaking event",
+            session.next_event(),
+        )
+        .await
+        .expect("resumed speaking")
         else {
             panic!("expected buffered resumed Speaking event");
         };
         assert_eq!(speaking.ssrc, 88);
         assert_eq!(
-            session.next_event().await.expect("resumed event"),
+            within("Resumed event", session.next_event())
+                .await
+                .expect("resumed event"),
             VoiceGatewayEvent::Resumed
         );
         assert_eq!(session.gateway().sequence(), Some(15));
 
         assert_eq!(
-            session
-                .recover_after_close(Some(VoiceCloseCode::SESSION_INVALID))
-                .await
-                .expect("restart classification"),
+            within(
+                "restart classification",
+                session.recover_after_close(Some(VoiceCloseCode::SESSION_INVALID)),
+            )
+            .await
+            .expect("restart classification"),
             VoiceRecoveryOutcome::RestartRequired
         );
         assert_eq!(
-            session
-                .recover_after_close(Some(VoiceCloseCode::DAVE_REQUIRED))
-                .await
-                .expect("stop classification"),
+            within(
+                "stop classification",
+                session.recover_after_close(Some(VoiceCloseCode::DAVE_REQUIRED)),
+            )
+            .await
+            .expect("stop classification"),
             VoiceRecoveryOutcome::Stopped
         );
 
-        udp_task.await.expect("UDP fixture task");
-        websocket_task.await.expect("websocket fixture task");
+        within("UDP fixture task", udp_task)
+            .await
+            .expect("UDP fixture task");
+        within("WebSocket fixture task", websocket_task)
+            .await
+            .expect("websocket fixture task");
     }
 }
