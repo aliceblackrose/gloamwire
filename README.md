@@ -22,6 +22,7 @@ The `0.1` foundation includes:
 - OAuth2 helpers and typed Discord CDN URL construction.
 - Optional credential-safe `tracing` instrumentation for REST rate limits and Gateway shard/throttling lifecycle.
 - Optional normalized Gateway state cache with direct typed-event synchronization and bounded message retention.
+- Capability feature flags for model-only builds, transport, Gateway compression codecs, TLS, cache, and tracing.
 - Local HTTP/Gateway protocol integration fixtures covering rate-limit, empty-response, reconnect, and Resume behavior.
 - Graceful client and shard-manager shutdown.
 
@@ -31,6 +32,36 @@ Gloamwire does **not** provide a command framework or voice media transport. See
 
 - Rust 1.98 or newer.
 - A Discord application bot token for authenticated API and Gateway examples.
+
+## Cargo features
+
+Gloamwire's default feature set preserves the complete `0.1` transport surface: REST and Gateway transport, both Gateway compression codecs, and Rustls TLS using native certificate roots.
+
+| Feature | Purpose |
+| --- | --- |
+| `model` | Core Discord models, strong IDs, permissions, snowflakes, and CDN helpers without network transport. |
+| `transport` | REST, OAuth2, and Gateway transport. Implies `model`. |
+| `compression-zlib` | Discord Gateway `zlib-stream` decompression. Implies `transport`. |
+| `compression-zstd` | Discord Gateway `zstd-stream` decompression. Implies `transport`. |
+| `tls-rustls-native-roots` | HTTPS/WSS through Rustls with native certificate roots. Implies `transport`. |
+| `cache` | Optional normalized Gateway state cache. Implies `transport`. |
+| `tracing` | Credential-safe structured transport instrumentation. Implies `transport`. |
+
+For a model-only dependency with no HTTP, WebSocket, TLS, or compression stack:
+
+```toml
+[dependencies]
+gloamwire = { version = "0.1", default-features = false, features = ["model"] }
+```
+
+For transport without Gateway compression, explicitly select transport and TLS:
+
+```toml
+[dependencies]
+gloamwire = { version = "0.1", default-features = false, features = ["transport", "tls-rustls-native-roots"] }
+```
+
+`GatewayCompression::ZlibStream` and `GatewayCompression::ZstdStream` remain available in the public API across transport builds. Attempting to construct a Gateway connection with a disabled codec returns a `GatewayCompression` error that names the required Cargo feature.
 
 ## REST example
 
