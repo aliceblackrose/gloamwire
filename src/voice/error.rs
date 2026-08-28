@@ -43,6 +43,18 @@ pub enum VoiceError {
     #[error("Voice Gateway did not advertise a supported transport-encryption mode")]
     UnsupportedEncryptionMode,
 
+    /// A Discord RTP packet was too short or internally inconsistent.
+    #[error("invalid Discord voice RTP packet: {0}")]
+    InvalidRtpPacket(String),
+
+    /// RTP transport encryption or authentication failed.
+    #[error("Discord voice transport cryptography failed: {0}")]
+    Crypto(String),
+
+    /// The 32-bit transport nonce space for the current session key was exhausted.
+    #[error("Discord voice transport nonce exhausted; renegotiate the voice session key")]
+    NonceExhausted,
+
     /// Discord's UDP IP-discovery response was malformed.
     #[error("invalid Discord voice UDP discovery response: {0}")]
     InvalidDiscoveryResponse(String),
