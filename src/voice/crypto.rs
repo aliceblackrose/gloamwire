@@ -104,11 +104,7 @@ impl VoiceTransportCrypto {
     }
 
     /// Encrypts a normal Discord audio packet from a fixed 12-byte RTP header.
-    pub fn encrypt_audio(
-        &mut self,
-        header: VoiceRtpHeader,
-        media: &[u8],
-    ) -> VoiceResult<Vec<u8>> {
+    pub fn encrypt_audio(&mut self, header: VoiceRtpHeader, media: &[u8]) -> VoiceResult<Vec<u8>> {
         self.encrypt_rtp(&header.encode(), media)
     }
 
@@ -118,11 +114,7 @@ impl VoiceTransportCrypto {
     /// header, all CSRC entries, and, when X is set, the four-byte extension
     /// preamble. The extension payload itself belongs at the beginning of
     /// `protected_payload` because RTP-size modes encrypt it.
-    pub fn encrypt_rtp(
-        &mut self,
-        header: &[u8],
-        protected_payload: &[u8],
-    ) -> VoiceResult<Vec<u8>> {
+    pub fn encrypt_rtp(&mut self, header: &[u8], protected_payload: &[u8]) -> VoiceResult<Vec<u8>> {
         let layout = rtp_layout(header)?;
         if header.len() != layout.header_len {
             return Err(VoiceError::InvalidRtpPacket(format!(
@@ -144,9 +136,7 @@ impl VoiceTransportCrypto {
         let ciphertext = self.encrypt_with_nonce(&nonce_suffix, header, protected_payload)?;
         self.next_send_nonce += 1;
 
-        let mut packet = Vec::with_capacity(
-            header.len() + ciphertext.len() + NONCE_SUFFIX_BYTES,
-        );
+        let mut packet = Vec::with_capacity(header.len() + ciphertext.len() + NONCE_SUFFIX_BYTES);
         packet.extend_from_slice(header);
         packet.extend_from_slice(&ciphertext);
         packet.extend_from_slice(&nonce_suffix);
@@ -165,9 +155,8 @@ impl VoiceTransportCrypto {
         }
 
         let suffix_start = packet.len() - NONCE_SUFFIX_BYTES;
-        let nonce_suffix: [u8; NONCE_SUFFIX_BYTES] = packet[suffix_start..]
-            .try_into()
-            .expect("four-byte slice");
+        let nonce_suffix: [u8; NONCE_SUFFIX_BYTES] =
+            packet[suffix_start..].try_into().expect("four-byte slice");
         let ciphertext = &packet[layout.header_len..suffix_start];
         let header = &packet[..layout.header_len];
         let plaintext = self.decrypt_with_nonce(&nonce_suffix, header, ciphertext)?;
@@ -385,9 +374,7 @@ mod tests {
     #[test]
     fn xchacha_round_trips_audio() {
         let mut crypto = VoiceTransportCrypto::new(
-            VoiceEncryptionMode::from(
-                VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE,
-            ),
+            VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE),
             KEY,
         )
         .expect("crypto");
@@ -397,7 +384,9 @@ mod tests {
             ssrc: 123,
         };
 
-        let packet = crypto.encrypt_audio(header, b"dave-or-opus").expect("encrypt");
+        let packet = crypto
+            .encrypt_audio(header, b"dave-or-opus")
+            .expect("encrypt");
         let decrypted = crypto.decrypt_rtp(&packet).expect("decrypt");
         assert_eq!(decrypted.header, header.encode());
         assert_eq!(decrypted.media, b"dave-or-opus");
@@ -406,9 +395,7 @@ mod tests {
     #[test]
     fn rtpsize_keeps_extension_preamble_as_aad_and_encrypts_extension_payload() {
         let mut crypto = VoiceTransportCrypto::new(
-            VoiceEncryptionMode::from(
-                VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE,
-            ),
+            VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE),
             KEY,
         )
         .expect("crypto");
