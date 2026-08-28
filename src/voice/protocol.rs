@@ -15,8 +15,7 @@ pub struct VoiceEncryptionMode(pub String);
 
 impl VoiceEncryptionMode {
     pub const AEAD_AES256_GCM_RTPSIZE: &'static str = "aead_aes256_gcm_rtpsize";
-    pub const AEAD_XCHACHA20_POLY1305_RTPSIZE: &'static str =
-        "aead_xchacha20_poly1305_rtpsize";
+    pub const AEAD_XCHACHA20_POLY1305_RTPSIZE: &'static str = "aead_xchacha20_poly1305_rtpsize";
 
     /// Selects Discord's preferred supported transport-encryption mode.
     ///
@@ -162,7 +161,9 @@ mod tests {
         ];
 
         assert_eq!(
-            VoiceEncryptionMode::preferred(&modes).expect("mode").as_ref(),
+            VoiceEncryptionMode::preferred(&modes)
+                .expect("mode")
+                .as_ref(),
             VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE
         );
     }
