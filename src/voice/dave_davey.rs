@@ -58,8 +58,7 @@ impl DaveyProvider {
     /// Returns the voice privacy code for the established MLS group, when ready.
     #[must_use]
     pub fn voice_privacy_code(&self) -> Option<&str> {
-        self
-            .session
+        self.session
             .as_ref()
             .and_then(DaveSession::voice_privacy_code)
     }
@@ -68,8 +67,7 @@ impl DaveyProvider {
     /// transport-only frame from `sender` during a transition grace period.
     #[must_use]
     pub fn can_passthrough(&self, sender: UserId) -> bool {
-        self
-            .session
+        self.session
             .as_ref()
             .is_some_and(|session| session.can_passthrough(sender.get()))
     }
@@ -84,9 +82,8 @@ impl DaveyProvider {
     }
 
     fn nonzero_version(protocol_version: u16) -> Result<NonZeroU16, DaveProviderError> {
-        NonZeroU16::new(protocol_version).ok_or_else(|| {
-            DaveProviderError::new("DAVE protocol version zero has no MLS session")
-        })
+        NonZeroU16::new(protocol_version)
+            .ok_or_else(|| DaveProviderError::new("DAVE protocol version zero has no MLS session"))
     }
 
     fn initialize_mls(&mut self, protocol_version: u16) -> Result<Vec<u8>, DaveProviderError> {
@@ -166,24 +163,19 @@ impl DaveyProvider {
                 if transition_id == 0 {
                     return Ok(Vec::new());
                 }
-                self
-                    .pending_transitions
+                self.pending_transitions
                     .insert(transition_id, self.active_protocol_version);
                 Ok(vec![DaveGatewayCommand::ReadyForTransition {
                     transition_id,
                 }])
             }
-            Err(error) => {
-                let mut commands = vec![DaveGatewayCommand::InvalidCommitWelcome {
-                    transition_id,
-                }];
+            Err(_error) => {
+                let mut commands = vec![DaveGatewayCommand::InvalidCommitWelcome { transition_id }];
                 if self.active_protocol_version > 0 {
                     let key_package = self.initialize_mls(self.active_protocol_version)?;
                     commands.push(DaveGatewayCommand::KeyPackage(key_package));
                 }
-                Err(DaveProviderError::new(format!(
-                    "failed to process DAVE MLS commit/welcome for transition {transition_id}: {error}; recovery commands prepared"
-                )))
+                Ok(commands)
             }
         }
     }
@@ -220,10 +212,7 @@ impl DaveProviderLifecycle for DaveyProvider {
     }
 
     fn is_ready(&self) -> bool {
-        self
-            .session
-            .as_ref()
-            .is_some_and(DaveSession::is_ready)
+        self.session.as_ref().is_some_and(DaveSession::is_ready)
     }
 }
 
@@ -246,8 +235,7 @@ impl DaveProvider for DaveyProvider {
                 transition_id,
             } => {
                 Self::validate_protocol_version(*protocol_version)?;
-                self
-                    .pending_transitions
+                self.pending_transitions
                     .insert(*transition_id, *protocol_version);
 
                 if *transition_id == 0 {
@@ -329,7 +317,9 @@ impl DaveProvider for DaveyProvider {
                 transition_id,
                 commit,
             } => self.process_commit_or_welcome(*transition_id, |session| {
-                session.process_commit(commit).map_err(|error| error.to_string())
+                session
+                    .process_commit(commit)
+                    .map_err(|error| error.to_string())
             }),
             DaveProtocolEvent::Welcome {
                 transition_id,
@@ -393,7 +383,7 @@ mod tests {
     use crate::model::{ChannelId, UserId};
 
     use super::DaveyProvider;
-    use crate::voice::{DaveProvider, DaveProviderLifecycle, DAVE_KEY_PACKAGE_OPCODE};
+    use crate::voice::{DAVE_KEY_PACKAGE_OPCODE, DaveProvider, DaveProviderLifecycle};
 
     #[test]
     fn configures_protocol_one_and_generates_key_package() {
