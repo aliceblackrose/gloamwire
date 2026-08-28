@@ -44,15 +44,26 @@ impl From<u8> for DaveProposalOperation {
 /// than the low-level Voice Gateway protocol layer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DaveProtocolEvent {
-    ClientsConnect { user_ids: Vec<UserId> },
-    ClientDisconnect { user_id: UserId },
+    ClientsConnect {
+        user_ids: Vec<UserId>,
+    },
+    ClientDisconnect {
+        user_id: UserId,
+    },
     PrepareTransition {
         protocol_version: u16,
         transition_id: u16,
     },
-    ExecuteTransition { transition_id: u16 },
-    PrepareEpoch { protocol_version: u16, epoch: u64 },
-    ExternalSender { package: Vec<u8> },
+    ExecuteTransition {
+        transition_id: u16,
+    },
+    PrepareEpoch {
+        protocol_version: u16,
+        epoch: u64,
+    },
+    ExternalSender {
+        package: Vec<u8>,
+    },
     Proposals {
         operation: DaveProposalOperation,
         payload: Vec<u8>,
@@ -336,11 +347,7 @@ pub trait DaveProvider: Send {
     fn encrypt_opus(&mut self, frame: &[u8]) -> Result<Vec<u8>, DaveProviderError>;
 
     /// Decrypts one complete DAVE-protected Opus frame after RTP transport AEAD.
-    fn decrypt_opus(
-        &mut self,
-        sender: UserId,
-        frame: &[u8],
-    ) -> Result<Vec<u8>, DaveProviderError>;
+    fn decrypt_opus(&mut self, sender: UserId, frame: &[u8]) -> Result<Vec<u8>, DaveProviderError>;
 }
 
 #[cfg(test)]
@@ -350,8 +357,8 @@ mod tests {
     use crate::model::UserId;
 
     use super::{
-        DAVE_ANNOUNCE_COMMIT_OPCODE, DAVE_PROPOSALS_OPCODE, DaveGatewayCommand,
-        DaveParticipantSet, DaveProposalOperation, DaveProtocolEvent,
+        DAVE_ANNOUNCE_COMMIT_OPCODE, DAVE_PROPOSALS_OPCODE, DaveGatewayCommand, DaveParticipantSet,
+        DaveProposalOperation, DaveProtocolEvent,
     };
     use crate::voice::{DaveGatewayEvent, VoiceGatewayEvent};
 
@@ -454,10 +461,7 @@ mod tests {
     fn commands_keep_json_and_binary_wire_kinds_separate() {
         let ready = DaveGatewayCommand::ReadyForTransition { transition_id: 77 };
         assert_eq!(ready.opcode(), 23);
-        assert_eq!(
-            ready.json_data(),
-            Some(json!({"transition_id": 77}))
-        );
+        assert_eq!(ready.json_data(), Some(json!({"transition_id": 77})));
         assert!(ready.binary_payload().is_none());
 
         let key_package = DaveGatewayCommand::KeyPackage(vec![4, 5, 6]);
