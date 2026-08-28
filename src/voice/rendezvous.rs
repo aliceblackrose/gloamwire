@@ -74,7 +74,9 @@ impl VoiceRendezvous {
         match dispatch.name.as_str() {
             "VOICE_STATE_UPDATE" => {
                 let voice_state = serde_json::from_value::<VoiceState>(dispatch.data.clone())?;
-                if voice_state.guild_id == Some(self.guild_id) && voice_state.user_id == self.user_id {
+                if voice_state.guild_id == Some(self.guild_id)
+                    && voice_state.user_id == self.user_id
+                {
                     self.voice_state = Some(voice_state);
                 }
             }
