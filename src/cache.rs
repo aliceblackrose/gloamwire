@@ -157,6 +157,7 @@ pub struct Cache {
     messages: HashMap<MessageId, Message>,
     message_order: VecDeque<MessageId>,
     shard_sequences: HashMap<ShardId, u64>,
+    stream_sequence: Option<u64>,
 }
 
 impl Default for Cache {
@@ -189,6 +190,7 @@ impl Cache {
             messages: HashMap::new(),
             message_order: VecDeque::new(),
             shard_sequences: HashMap::new(),
+            stream_sequence: None,
         }
     }
 
@@ -205,11 +207,18 @@ impl Cache {
         *self = Self::new(self.config);
     }
 
-    /// True after a security limit was exceeded. All lookups are empty and
+    /// True after a security limit or stream continuity failure. All lookups are empty and
     /// dispatches are ignored until the caller explicitly clears the cache.
     #[must_use]
     pub const fn is_invalidated(&self) -> bool {
         self.invalidated
+    }
+
+    /// Call when the consumer detects a dropped event, driver failure, or other
+    /// interruption not delivered as a Gateway event. Clear and rebuild from
+    /// fresh authoritative snapshots before relying on cache data again.
+    pub fn mark_stream_lost(&mut self) {
+        self.invalidate();
     }
 
     fn invalidate(&mut self) {
@@ -465,10 +474,20 @@ impl Cache {
     }
 
     /// Parses a raw dispatch, applies it to the cache, and returns the typed event.
+    /// This low-level method is for manually supplied snapshots/events; use
+    /// update_gateway_event or update_shard_event to check stream continuity.
     pub fn update_dispatch(&mut self, dispatch: &DispatchEvent) -> Result<TypedDispatchEvent> {
-        let event = dispatch.typed()?;
-        self.apply_checked(&event)?;
+        let event = self.parse_dispatch(dispatch)?;
+        self.apply_or_invalidate(&event)?;
         Ok(event)
+    }
+
+    fn parse_dispatch(&mut self, dispatch: &DispatchEvent) -> Result<TypedDispatchEvent> {
+        Ok(dispatch.typed().inspect_err(|_| self.invalidate())?)
+    }
+
+    fn apply_or_invalidate(&mut self, event: &TypedDispatchEvent) -> Result<()> {
+        self.apply_checked(event).inspect_err(|_| self.invalidate())
     }
 
     fn apply_checked(&mut self, event: &TypedDispatchEvent) -> Result<()> {
@@ -509,9 +528,15 @@ impl Cache {
         shard_count: ShardCount,
     ) -> Result<Option<TypedDispatchEvent>> {
         let GatewayEvent::Dispatch(dispatch) = &event.event else {
+            if matches!(
+                &event.event,
+                GatewayEvent::Reconnect | GatewayEvent::InvalidSession { .. }
+            ) {
+                self.invalidate();
+            }
             return Ok(None);
         };
-        let typed = dispatch.typed()?;
+        let typed = self.parse_dispatch(dispatch)?;
         if self.invalidated {
             return Ok(Some(typed));
         }
@@ -584,7 +609,15 @@ impl Cache {
             {
                 return Ok(None);
             }
-            self.apply_checked(&typed)?;
+            if self
+                .shard_sequences
+                .get(&event.shard_id)
+                .is_some_and(|previous| previous.checked_add(1) != Some(dispatch.sequence))
+            {
+                self.invalidate();
+                return Ok(None);
+            }
+            self.apply_or_invalidate(&typed)?;
         }
         if !self.invalidated {
             self.shard_sequences
@@ -596,14 +629,35 @@ impl Cache {
 
     /// Applies a Gateway event when it is a dispatch and returns its typed form.
     ///
-    /// Heartbeat/reconnect lifecycle events do not mutate cache state and return
-    /// `Ok(None)`.
+    /// Use only with a complete single-shard stream. A discontinuity or reconnect
+    /// invalidates the cache conservatively; heartbeat events do not mutate it.
     pub fn update_gateway_event(
         &mut self,
         event: &GatewayEvent,
     ) -> Result<Option<TypedDispatchEvent>> {
         match event {
-            GatewayEvent::Dispatch(dispatch) => self.update_dispatch(dispatch).map(Some),
+            GatewayEvent::Dispatch(dispatch) => {
+                if dispatch.name != "READY"
+                    && let Some(previous) = self.stream_sequence
+                {
+                    if dispatch.sequence <= previous {
+                        return Ok(None);
+                    }
+                    if previous.checked_add(1) != Some(dispatch.sequence) {
+                        self.invalidate();
+                        return Ok(None);
+                    }
+                }
+                let typed = self.update_dispatch(dispatch)?;
+                if !self.invalidated {
+                    self.stream_sequence = Some(dispatch.sequence);
+                }
+                Ok(Some(typed))
+            }
+            GatewayEvent::Reconnect | GatewayEvent::InvalidSession { .. } => {
+                self.invalidate();
+                Ok(None)
+            }
             _ => Ok(None),
         }
     }
@@ -1481,5 +1535,40 @@ mod tests {
                 .content,
             "cached"
         );
+    }
+}
+
+#[cfg(test)]
+mod continuity_security_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn missing_dispatch_invalidates_cache() {
+        let mut cache = Cache::default();
+        let event = |sequence| {
+            GatewayEvent::Dispatch(DispatchEvent {
+                name: "USER_UPDATE".into(),
+                sequence,
+                data: json!({"id":"1","username":"bot"}),
+            })
+        };
+        cache.update_gateway_event(&event(1)).unwrap();
+        assert!(cache.current_user().is_some());
+        cache.update_gateway_event(&event(3)).unwrap();
+        assert!(cache.is_invalidated());
+        assert!(cache.current_user().is_none());
+    }
+
+    #[test]
+    fn malformed_dispatch_invalidates_cache() {
+        let mut cache = Cache::default();
+        let bad = DispatchEvent {
+            name: "GUILD_CREATE".into(),
+            sequence: 1,
+            data: json!({}),
+        };
+        assert!(cache.update_dispatch(&bad).is_err());
+        assert!(cache.is_invalidated());
     }
 }

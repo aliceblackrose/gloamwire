@@ -43,6 +43,14 @@ impl std::fmt::Debug for VoiceDecryptedRtp {
 ///
 /// This layer implements the SFU transport encryption that remains present in
 /// DAVE/E2EE calls. It does not implement DAVE media encryption itself.
+///
+/// Outbound constructors are internal; use a negotiated VoiceSession.
+///
+/// ```compile_fail
+/// use gloamwire::voice::{VoiceEncryptionMode, VoiceTransportCrypto};
+/// let mode = VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE);
+/// let _ = VoiceTransportCrypto::new_with_fresh_key(mode, [0; 32]);
+/// ```
 pub struct VoiceTransportCrypto {
     cipher: VoiceTransportCipher,
     mode: VoiceEncryptionMode,
@@ -91,19 +99,15 @@ impl VoiceTransportCrypto {
     /// Creates transport crypto from a fresh Voice Gateway Session Description.
     /// Never construct a second outbound encryptor for an already used key.
     /// Prefer the session-owned encryptor for managed connections.
-    pub fn from_fresh_session_description(
+    pub(super) fn from_fresh_session_description(
         description: &VoiceSessionDescription,
     ) -> VoiceResult<Self> {
         Self::new_with_fresh_key(description.mode.clone(), description.secret_key)
     }
 
-    /// Creates transport crypto from a negotiated mode and fresh 32-byte session key.
-    /// The caller must guarantee the key has never been used by another outbound
-    /// encryptor. Reusing a key resets the nonce and breaks AEAD security.
-    pub fn new_with_fresh_key(
-        mode: VoiceEncryptionMode,
-        secret_key: [u8; 32],
-    ) -> VoiceResult<Self> {
+    /// Internal constructor; outbound instances are owned exclusively by VoiceSession.
+    /// Receive-only wrappers may initialize a cipher without ever consuming a nonce.
+    fn new_with_fresh_key(mode: VoiceEncryptionMode, secret_key: [u8; 32]) -> VoiceResult<Self> {
         let secret_key = zeroize::Zeroizing::new(secret_key);
         let cipher = match mode.as_ref() {
             VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE => VoiceTransportCipher::Aes256Gcm(

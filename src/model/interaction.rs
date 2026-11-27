@@ -238,6 +238,7 @@ pub struct Interaction {
     pub member: Option<GuildMember>,
     #[serde(default)]
     pub user: Option<User>,
+    #[serde(skip_serializing)]
     pub token: crate::SecretString,
     pub version: u8,
     #[serde(default)]
@@ -669,5 +670,18 @@ mod tests {
                 .content,
             "hello"
         );
+    }
+}
+
+#[cfg(test)]
+mod secret_serialization_tests {
+    #[test]
+    fn interaction_serialization_omits_token() {
+        let interaction: super::Interaction = serde_json::from_value(serde_json::json!({
+            "id":"1", "application_id":"2", "type":1, "token":"secret-token", "version":1
+        }))
+        .unwrap();
+        let value = serde_json::to_value(interaction).unwrap();
+        assert!(value.get("token").is_none());
     }
 }

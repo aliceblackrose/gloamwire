@@ -109,12 +109,12 @@ impl DistributedShardConfig {
     }
 }
 
-/// Identity attached to each distributed event. Monotonic generation is
-/// available only when the coordinator implements fenced acquisition.
+/// Identity attached to each distributed event. The generation must increase
+/// on every successful acquisition of the same shard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeaseIdentity {
     pub owner_id: String,
-    pub generation: Option<u64>,
+    pub generation: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -269,10 +269,8 @@ where
     }
 
     /// Receives the next event from a shard currently owned by this worker.
-    pub async fn next_event(&mut self) -> Option<Result<ShardEvent>> {
-        self.next_fenced_event()
-            .await
-            .map(|event| event.map(|event| event.shard))
+    pub async fn next_event(&mut self) -> Option<Result<DistributedShardEvent>> {
+        self.next_fenced_event().await
     }
 
     /// Receives an event together with its lease identity for downstream
@@ -596,12 +594,14 @@ mod tests {
 
     use super::DistributedShardConfig;
     use crate::gateway::{
-        DistributedShardCoordinator, GatewayCoordinationFuture, GatewayIdentifyCoordinator, ShardId,
+        DistributedShardCoordinator, GatewayCoordinationFuture, GatewayIdentifyCoordinator,
+        ShardId, ShardLease,
     };
 
     #[derive(Default)]
     struct MemoryCoordinator {
         leases: Mutex<HashMap<ShardId, (String, Instant)>>,
+        generations: Mutex<HashMap<ShardId, u64>>,
         identifies: Mutex<Vec<ShardId>>,
     }
 
@@ -615,12 +615,12 @@ mod tests {
     }
 
     impl DistributedShardCoordinator for MemoryCoordinator {
-        fn acquire_shard<'a>(
+        fn acquire_fenced_shard<'a>(
             &'a self,
             owner_id: &'a str,
             shard_id: ShardId,
             lease_ttl: Duration,
-        ) -> GatewayCoordinationFuture<'a, bool> {
+        ) -> GatewayCoordinationFuture<'a, Option<ShardLease>> {
             Box::pin(async move {
                 let mut leases = self.leases.lock().await;
                 let now = Instant::now();
@@ -628,10 +628,15 @@ mod tests {
                     && owner != owner_id
                     && *expires_at > now
                 {
-                    return Ok(false);
+                    return Ok(None);
                 }
+                let mut generations = self.generations.lock().await;
+                let generation = generations.entry(shard_id).or_default();
+                *generation = generation.checked_add(1).expect("test generation overflow");
                 leases.insert(shard_id, (owner_id.to_owned(), now + lease_ttl));
-                Ok(true)
+                Ok(Some(ShardLease {
+                    generation: *generation,
+                }))
             })
         }
 
@@ -729,6 +734,25 @@ mod tests {
                 .await
                 .expect("worker B acquire after release")
         );
+    }
+
+    #[tokio::test]
+    async fn fencing_generation_increases_after_release() {
+        let coordinator = MemoryCoordinator::default();
+        let shard = ShardId::new(7);
+        let ttl = Duration::from_secs(5);
+        let first = coordinator
+            .acquire_fenced_shard("worker-a", shard, ttl)
+            .await
+            .unwrap()
+            .unwrap();
+        coordinator.release_shard("worker-a", shard).await.unwrap();
+        let second = coordinator
+            .acquire_fenced_shard("worker-b", shard, ttl)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(second.generation > first.generation);
     }
 
     #[tokio::test]
