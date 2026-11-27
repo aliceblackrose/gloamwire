@@ -8,10 +8,10 @@ use tokio::{
     time::{Instant, Interval, MissedTickBehavior},
 };
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async,
+    MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{
         Message,
-        protocol::{CloseFrame, frame::coding::CloseCode},
+        protocol::{CloseFrame, WebSocketConfig, frame::coding::CloseCode},
     },
 };
 
@@ -647,7 +647,13 @@ async fn open_and_handshake(
     let base_url = session.map_or(config.url.as_str(), GatewaySession::resume_gateway_url);
     let url = gateway_url(base_url, config.encoding, config.compression);
     let timeout = Duration::from_secs(15);
-    let (mut socket, _) = tokio::time::timeout(timeout, connect_async(url))
+    let (mut socket, _) = tokio::time::timeout(timeout, connect_async_with_config(
+        url,
+        Some(WebSocketConfig::default()
+            .max_message_size(Some(32 * 1024 * 1024))
+            .max_frame_size(Some(32 * 1024 * 1024))),
+        false,
+    ))
         .await
         .map_err(|_| Error::GatewayClosed {
             code: None,

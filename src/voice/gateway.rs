@@ -12,10 +12,10 @@ use tokio::{
     time::{Instant, Interval, MissedTickBehavior},
 };
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async,
+    MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{
         Message,
-        protocol::{CloseFrame, frame::coding::CloseCode},
+        protocol::{CloseFrame, WebSocketConfig, frame::coding::CloseCode},
     },
 };
 
@@ -544,7 +544,13 @@ struct Speaking {
 
 async fn open_socket(endpoint: &str) -> VoiceResult<(VoiceSocket, Interval)> {
     let url = voice_gateway_url(endpoint);
-    let (mut socket, _) = tokio::time::timeout(NEGOTIATION_TIMEOUT, connect_async(url))
+    let (mut socket, _) = tokio::time::timeout(NEGOTIATION_TIMEOUT, connect_async_with_config(
+        url,
+        Some(WebSocketConfig::default()
+            .max_message_size(Some(MAX_INBOUND_BYTES))
+            .max_frame_size(Some(MAX_INBOUND_BYTES))),
+        false,
+    ))
         .await
         .map_err(|_| VoiceError::Timeout(NEGOTIATION_TIMEOUT))??;
 

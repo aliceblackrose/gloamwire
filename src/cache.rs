@@ -286,11 +286,7 @@ impl Cache {
             }
             TypedDispatchEvent::MessageCreate(message) => self.cache_message(message),
             TypedDispatchEvent::MessageUpdate(event) => {
-                if let Some(existing) = self.messages.get_mut(&event.id)
-                    && let Ok(updated) = event.apply(existing)
-                {
-                    *existing = updated;
-                }
+                let _ = self.apply_message_update(event);
             }
             TypedDispatchEvent::MessageDelete(event) => self.remove_message(event.id),
             TypedDispatchEvent::MessageDeleteBulk(event) => {
@@ -321,11 +317,21 @@ impl Cache {
 
     fn apply_checked(&mut self, event: &TypedDispatchEvent) -> Result<()> {
         if let TypedDispatchEvent::MessageUpdate(patch) = event {
-            if let Some(existing) = self.messages.get_mut(&patch.id) {
-                *existing = patch.apply(existing)?;
-            }
+            self.apply_message_update(patch)?;
         } else {
             self.update(event);
+        }
+        Ok(())
+    }
+
+    fn apply_message_update(&mut self, patch: &crate::gateway::MessageUpdateEvent) -> Result<()> {
+        if let Some(existing) = self.messages.get(&patch.id) {
+            let updated = patch.apply(existing)?;
+            self.remember_user(updated.author.clone());
+            for user in &updated.mentions {
+                self.remember_user(user.clone());
+            }
+            self.messages.insert(patch.id, updated);
         }
         Ok(())
     }
@@ -678,12 +684,15 @@ impl Cache {
     fn remove_guild(&mut self, guild_id: GuildId) {
         self.guilds.remove(&guild_id);
         self.unavailable_guilds.remove(&guild_id);
-        self.remove_guild_children(guild_id);
         let message_ids = self
             .messages
             .iter()
-            .filter_map(|(&id, message)| (message.guild_id == Some(guild_id)).then_some(id))
+            .filter_map(|(&id, message)| {
+                (message.guild_id == Some(guild_id)
+                    || self.channels.get(&message.channel_id).is_some_and(|channel| channel.guild_id == Some(guild_id))).then_some(id)
+            })
             .collect::<Vec<_>>();
+        self.remove_guild_children(guild_id);
         for message_id in message_ids {
             self.remove_message(message_id);
         }
