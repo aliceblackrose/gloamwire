@@ -750,8 +750,7 @@ fn event_from_envelope(envelope: NormalizedEnvelope) -> VoiceResult<Option<Voice
 
 fn heartbeat_ack_matches(data: &Value, nonce: u64) -> bool {
     // Voice v8 acknowledges with the sent timestamp in d.t.
-    data.get("t").and_then(Value::as_u64) == Some(nonce)
-        || data.as_u64() == Some(nonce)
+    data.get("t").and_then(Value::as_u64) == Some(nonce) || data.as_u64() == Some(nonce)
 }
 
 fn transport_unavailable() -> VoiceError {
@@ -809,8 +808,14 @@ mod tests {
 
     #[test]
     fn heartbeat_ack_requires_matching_nonce() {
-        assert!(super::heartbeat_ack_matches(&serde_json::json!({"t":123}), 123));
-        assert!(!super::heartbeat_ack_matches(&serde_json::json!({"t":122}), 123));
+        assert!(super::heartbeat_ack_matches(
+            &serde_json::json!({"t":123}),
+            123
+        ));
+        assert!(!super::heartbeat_ack_matches(
+            &serde_json::json!({"t":122}),
+            123
+        ));
         assert!(!super::heartbeat_ack_matches(&serde_json::json!({}), 123));
     }
 

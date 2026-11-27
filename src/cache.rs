@@ -387,8 +387,13 @@ impl Cache {
                 let messages: Vec<_> = self
                     .messages
                     .values()
-                    .filter(|message| message.guild_id.is_none()
-                        && self.channels.get(&message.channel_id).is_none_or(|channel| channel.guild_id.is_none()))
+                    .filter(|message| {
+                        message.guild_id.is_none()
+                            && self
+                                .channels
+                                .get(&message.channel_id)
+                                .is_none_or(|channel| channel.guild_id.is_none())
+                    })
                     .map(|message| message.id)
                     .collect();
                 for message in messages {
@@ -774,9 +779,12 @@ impl Cache {
         {
             guild.channels.retain(|channel| channel.id != channel_id);
             guild.threads.retain(|channel| channel.id != channel_id);
-            guild.voice_states.retain(|state| state.channel_id != Some(channel_id));
+            guild
+                .voice_states
+                .retain(|state| state.channel_id != Some(channel_id));
         }
-        self.voice_states.retain(|_, state| state.channel_id != Some(channel_id));
+        self.voice_states
+            .retain(|_, state| state.channel_id != Some(channel_id));
 
         let message_ids = self
             .messages

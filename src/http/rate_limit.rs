@@ -180,7 +180,9 @@ impl RateLimiter {
     pub(crate) fn has_live_cooldown(&self, now: Instant) -> bool {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.global_until.is_some_and(|until| until > now)
-            || state.buckets.values().any(|bucket| bucket.reset_at > now || bucket.cooldown_until.is_some_and(|until| until > now))
+            || state.buckets.values().any(|bucket| {
+                bucket.reset_at > now || bucket.cooldown_until.is_some_and(|until| until > now)
+            })
     }
 
     pub(crate) fn update(
@@ -205,14 +207,17 @@ impl RateLimiter {
             "updated Discord REST rate-limit state"
         );
 
-        let previous_key = state.route_buckets.get(&route_identity)
+        let previous_key = state
+            .route_buckets
+            .get(&route_identity)
             .map(|hash| bucket_key(hash, route.major()))
             .unwrap_or_else(|| provisional_bucket_key(&route_identity, route.major()));
         if let Some(hash) = &bucket_hash {
             let next_key = bucket_key(hash, route.major());
             if previous_key != next_key
                 && let Some(previous) = state.buckets.get(&previous_key).copied()
-                && (previous.reset_at > now || previous.cooldown_until.is_some_and(|until| until > now))
+                && (previous.reset_at > now
+                    || previous.cooldown_until.is_some_and(|until| until > now))
             {
                 let next = state.buckets.entry(next_key).or_insert(previous);
                 next.remaining = next.remaining.min(previous.remaining);
@@ -221,7 +226,9 @@ impl RateLimiter {
                     next.cooldown_until = later(next.cooldown_until, until);
                 }
             }
-            state.route_buckets.insert(route_identity.clone(), hash.clone());
+            state
+                .route_buckets
+                .insert(route_identity.clone(), hash.clone());
         }
 
         let bucket_key = bucket_hash
@@ -336,7 +343,13 @@ mod tests {
         assert!(limiter.try_acquire(&route).is_none());
         limiter.update(&route, StatusCode::OK, &headers, None, false);
         assert!(limiter.try_acquire(&route).is_none());
-        limiter.update(&route, StatusCode::TOO_MANY_REQUESTS, &headers, Some(Duration::from_secs(10)), false);
+        limiter.update(
+            &route,
+            StatusCode::TOO_MANY_REQUESTS,
+            &headers,
+            Some(Duration::from_secs(10)),
+            false,
+        );
         headers.insert("x-ratelimit-bucket", "new".parse().unwrap());
         limiter.update(&route, StatusCode::OK, &headers, None, false);
         assert!(limiter.try_acquire(&route).is_some());

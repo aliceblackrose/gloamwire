@@ -158,7 +158,9 @@ where
         {
             if !self.ssrc_users.contains_key(&speaking.ssrc) && self.ssrc_users.len() >= 4096 {
                 self.protocol_failed = true;
-                return Err(VoiceError::Protocol("voice SSRC mapping capacity exceeded; restart session".into()));
+                return Err(VoiceError::Protocol(
+                    "voice SSRC mapping capacity exceeded; restart session".into(),
+                ));
             }
             self.ssrc_users.insert(speaking.ssrc, user_id);
         }

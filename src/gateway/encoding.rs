@@ -89,7 +89,9 @@ const MAX_ETF_NODES: usize = 250_000;
 const MAX_ETF_BYTES: usize = 32 * 1024 * 1024;
 
 fn invalid_etf() -> Error {
-    Error::GatewayEncoding("invalid or unsupported ETF structure, or resource limit exceeded".into())
+    Error::GatewayEncoding(
+        "invalid or unsupported ETF structure, or resource limit exceeded".into(),
+    )
 }
 
 fn validate_etf(bytes: &[u8]) -> Result<()> {
@@ -114,7 +116,10 @@ fn take_etf<'a>(input: &mut &'a [u8], count: usize) -> Result<&'a [u8]> {
 fn etf_count(input: &mut &[u8], width: usize) -> Result<usize> {
     let mut count = 0_usize;
     for &byte in take_etf(input, width)? {
-        count = count.checked_mul(256).and_then(|n| n.checked_add(usize::from(byte))).ok_or_else(invalid_etf)?;
+        count = count
+            .checked_mul(256)
+            .and_then(|n| n.checked_add(usize::from(byte)))
+            .ok_or_else(invalid_etf)?;
     }
     Ok(count)
 }
@@ -126,11 +131,20 @@ fn validate_etf_term(input: &mut &[u8], nodes: &mut usize, depth: usize) -> Resu
     *nodes -= 1;
     let tag = take_etf(input, 1)?[0];
     match tag {
-        70 => { take_etf(input, 8)?; } // NEW_FLOAT_EXT
-        97 => { take_etf(input, 1)?; } // SMALL_INTEGER_EXT
-        98 => { take_etf(input, 4)?; } // INTEGER_EXT
-        99 => { take_etf(input, 31)?; } // FLOAT_EXT
-        100 | 118 | 107 => { // atoms and STRING_EXT
+        70 => {
+            take_etf(input, 8)?;
+        } // NEW_FLOAT_EXT
+        97 => {
+            take_etf(input, 1)?;
+        } // SMALL_INTEGER_EXT
+        98 => {
+            take_etf(input, 4)?;
+        } // INTEGER_EXT
+        99 => {
+            take_etf(input, 31)?;
+        } // FLOAT_EXT
+        100 | 118 | 107 => {
+            // atoms and STRING_EXT
             let count = etf_count(input, 2)?;
             take_etf(input, count)?;
         }
@@ -152,7 +166,11 @@ fn validate_etf_term(input: &mut &[u8], nodes: &mut usize, depth: usize) -> Resu
         106 => {} // NIL_EXT
         104 | 105 | 108 | 116 => {
             let count = etf_count(input, if tag == 104 { 1 } else { 4 })?;
-            let children = if tag == 116 { count.checked_mul(2).ok_or_else(invalid_etf)? } else { count };
+            let children = if tag == 116 {
+                count.checked_mul(2).ok_or_else(invalid_etf)?
+            } else {
+                count
+            };
             // Every child requires at least a tag byte.
             if children > *nodes || children > input.len() {
                 return Err(invalid_etf());
@@ -282,10 +300,26 @@ mod tests {
         }
         nested.push(106);
         assert!(GatewayEncoding::Etf.decode_bytes::<Value>(&nested).is_err());
-        assert!(GatewayEncoding::Etf.decode_bytes::<Value>(&[131, 108, 255, 255, 255, 255, 106]).is_err());
-        assert!(GatewayEncoding::Etf.decode_bytes::<Value>(&[131, 80, 0, 0, 0, 1]).is_err());
-        assert!(GatewayEncoding::Etf.decode_bytes::<Value>(&[131, 106, 106]).is_err());
-        assert!(GatewayEncoding::Etf.decode_bytes::<Value>(&[131, 104, 1, 80, 0, 0, 0, 1]).is_err());
+        assert!(
+            GatewayEncoding::Etf
+                .decode_bytes::<Value>(&[131, 108, 255, 255, 255, 255, 106])
+                .is_err()
+        );
+        assert!(
+            GatewayEncoding::Etf
+                .decode_bytes::<Value>(&[131, 80, 0, 0, 0, 1])
+                .is_err()
+        );
+        assert!(
+            GatewayEncoding::Etf
+                .decode_bytes::<Value>(&[131, 106, 106])
+                .is_err()
+        );
+        assert!(
+            GatewayEncoding::Etf
+                .decode_bytes::<Value>(&[131, 104, 1, 80, 0, 0, 0, 1])
+                .is_err()
+        );
     }
 
     #[test]
