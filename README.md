@@ -152,7 +152,7 @@ let transport_crypto = VoiceTransportCrypto::from_session_description(&descripti
 
 The transport AEAD layer is distinct from DAVE. DAVE transforms complete encoded Opus frames end-to-end between call participants; RTP-size AEAD remains the authenticated transport layer between the client and Discord's voice SFU.
 
-To establish a managed session, implement `DaveProvider` and `DaveProviderLifecycle` using a separately vetted DAVE backend and call `DaveVoiceSession::connect(config, provider)`. Configure `VoiceGatewayConfig::with_min_dave_protocol_version(1)` when end-to-end encryption is required. The provider must implement real DAVE/MLS cryptography; there is no bundled fallback to plaintext. The media pipeline remains encoded Opus → DAVE → RTP → transport AEAD → UDP. `DaveVoiceSession::next_event()` applies participant and MLS transition events, `send_opus_frame()` and `recv_opus()` apply both encryption layers, and `finish_speaking()` flushes Discord's five canonical silence frames before clearing the Voice Gateway speaking state.
+To establish a managed session, implement `DaveProvider` and `DaveProviderLifecycle` using a separately vetted DAVE backend and call `DaveVoiceSession::connect(config, provider)`. Managed DAVE sessions require version 1 or higher by default. Explicitly call `VoiceGatewayConfig::with_min_dave_protocol_version(0)` only when transport-only compatibility is acceptable. The provider must implement real DAVE/MLS cryptography; there is no bundled fallback to plaintext. The media pipeline remains encoded Opus → DAVE → RTP → transport AEAD → UDP. `DaveVoiceSession::next_event()` applies participant and MLS transition events, `send_opus_frame()` and `recv_opus()` apply both encryption layers, and `finish_speaking()` flushes Discord's five canonical silence frames before clearing the Voice Gateway speaking state.
 
 Applications should continuously drive the managed session's Voice Gateway events while connected so participant changes and DAVE epoch transitions are processed promptly. The backend-neutral `DaveProviderLifecycle` interface remains available when an application wants to supply a different DAVE implementation.
 
@@ -228,3 +228,18 @@ MIT
 For voice, transfer a negotiated `DaveVoiceSession` to `VoiceDriver::spawn(session)`. The driver independently processes Gateway heartbeats, DAVE transitions, UDP reception and outbound `VoiceCommand` operations. Control queue overflow stops the session; incoming audio uses a bounded best-effort queue, with drops available via `dropped_audio_packets()`. A terminal control error requires a fresh session. The low-level voice API remains available.
 
 When using a shared cache with a shard manager, feed each `ShardEvent` into `Cache::update_shard_event(&event, shard_count)` rather than calling the single-shard `update_gateway_event` API. This isolates READY invalidation and sequence deduplication per shard.
+
+## Security configuration
+
+REST and OAuth2 base URL overrides require HTTPS; local fixtures may explicitly
+enable numeric loopback HTTP with `with_insecure_loopback(true)`. Custom
+endpoints are trusted with credentials. Gateway discovery and resume accept
+Discord WSS origins by default; explicit custom Gateway URLs restrict resume
+to the configured origin. Non-Discord Voice Gateway origins require
+`with_custom_origin(true)`.
+
+Managed voice sessions own their outbound nonce state: use
+`VoiceSession::encrypt_audio` for low-level media instead of replacing the
+transport encryptor. Low-level `VoiceTransportCrypto` constructors require a
+fresh, never-before-used outbound key. A provider must be ready before managed
+DAVE media operations proceed. No external MLS provider is certified here.

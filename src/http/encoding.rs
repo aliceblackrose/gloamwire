@@ -20,6 +20,15 @@ pub(crate) fn percent_encode(value: &str) -> String {
     encoded
 }
 
+/// Reject path segments that URL parsers would normalize or collapse.
+pub(crate) fn valid_route_path(path: &str) -> bool {
+    let path = path.split('?').next().unwrap_or_default();
+    path.strip_prefix('/').is_some_and(|path| {
+        path.split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+    })
+}
+
 pub(crate) fn audit_reason_headers(reason: Option<&str>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     if let Some(reason) = reason {
@@ -76,5 +85,17 @@ mod tests {
         let headers = audit_reason_headers(Some("cleanup / spam"));
 
         assert_eq!(headers["x-audit-log-reason"], "cleanup%20%2F%20spam");
+    }
+}
+
+#[cfg(test)]
+mod path_security_tests {
+    #[test]
+    fn rejects_dot_and_empty_segments() {
+        use super::valid_route_path;
+        assert!(valid_route_path("/invites/code?with_counts=true"));
+        assert!(!valid_route_path("/invites/.."));
+        assert!(!valid_route_path("/webhooks/1/./messages/2"));
+        assert!(!valid_route_path("/webhooks/1//messages/2"));
     }
 }

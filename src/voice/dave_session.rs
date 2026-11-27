@@ -47,13 +47,13 @@ pub struct DaveVoiceSession<P> {
 
 impl<P> std::fmt::Debug for DaveVoiceSession<P>
 where
-    P: DaveProviderLifecycle + std::fmt::Debug,
+    P: DaveProviderLifecycle,
 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("DaveVoiceSession")
             .field("session", &self.session)
-            .field("provider", &self.provider)
+            .field("provider", &"[OMITTED]")
             .field("participants", &self.participants.len())
             .field("known_ssrcs", &self.ssrc_users.len())
             .finish_non_exhaustive()
@@ -108,7 +108,7 @@ where
 
     /// Returns mutable access to the low-level voice session.
     #[must_use]
-    pub const fn session_mut(&mut self) -> &mut VoiceSession {
+    pub(super) const fn session_mut(&mut self) -> &mut VoiceSession {
         &mut self.session
     }
 
@@ -116,12 +116,6 @@ where
     #[must_use]
     pub const fn provider(&self) -> &P {
         &self.provider
-    }
-
-    /// Returns mutable access to the active DAVE provider.
-    #[must_use]
-    pub const fn provider_mut(&mut self) -> &mut P {
-        &mut self.provider
     }
 
     /// Returns Discord users currently expected in the MLS group.
@@ -316,6 +310,7 @@ where
         if self.protocol_failed
             || !self.session.is_media_ready()
             || self.provider.active_protocol_version() < self.minimum_dave_version
+            || (self.provider.active_protocol_version() != 0 && !self.provider.is_ready())
         {
             return Err(VoiceError::Protocol(
                 "voice media unavailable; recover or restart session".into(),
