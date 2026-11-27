@@ -6,7 +6,7 @@ use std::{
 
 use reqwest::{StatusCode, header::HeaderMap};
 use tokio::{
-    sync::{Mutex, OwnedMutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    sync::{Mutex, OwnedMutexGuard},
     time::Instant,
 };
 
@@ -18,17 +18,43 @@ const GLOBAL_WINDOW: Duration = Duration::from_secs(1);
 #[derive(Debug, Default)]
 pub(crate) struct RateLimiter {
     state: Mutex<RateLimitState>,
-    discovery: RwLock<()>,
-    gates: Mutex<HashMap<RateLimitBucketKey, Weak<Mutex<()>>>>,
+    shared: Arc<SharedRateLimits>,
 }
 
-/// Holds a single-flight reservation until the HTTP attempt completes or is
-/// cancelled. Unknown routes are discovered exclusively, since they may share
-/// a bucket with a previously learned route.
-pub(crate) struct Reservation<'a> {
-    _read: Option<RwLockReadGuard<'a, ()>>,
-    _write: Option<RwLockWriteGuard<'a, ()>>,
-    _bucket: Option<OwnedMutexGuard<()>>,
+/// Shared across authentication contexts. Serialize attempts by major resource,
+/// not by mutable server bucket hash; release the gate before any cooldown sleep.
+/// This deliberately sacrifices concurrency within one major resource.
+#[derive(Debug, Default)]
+pub(crate) struct SharedRateLimits {
+    gates: Mutex<HashMap<String, Weak<Mutex<()>>>>,
+    cooldowns: std::sync::Mutex<HashMap<String, Instant>>,
+}
+
+impl SharedRateLimits {
+    fn cooldown(&self, major: &str, now: Instant) -> Option<Instant> {
+        let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
+        cooldowns.retain(|_, deadline| *deadline > now);
+        cooldowns.get(major).copied()
+    }
+
+    fn update(&self, major: &str, deadline: Instant) {
+        let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
+        cooldowns.retain(|_, until| *until > Instant::now());
+        let until = cooldowns.entry(major.to_owned()).or_insert(deadline);
+        *until = (*until).max(deadline);
+    }
+
+    async fn gate(&self, major: &str) -> Arc<Mutex<()>> {
+        let mut gates = self.gates.lock().await;
+        gates.retain(|_, gate| gate.strong_count() > 0);
+        if let Some(gate) = gates.get(major).and_then(Weak::upgrade) {
+            gate
+        } else {
+            let gate = Arc::new(Mutex::new(()));
+            gates.insert(major.to_owned(), Arc::downgrade(&gate));
+            gate
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -58,52 +84,29 @@ struct BucketState {
 }
 
 impl RateLimiter {
-    pub(crate) async fn reserve(&self, route: &Route) -> Reservation<'_> {
-        let read = self.discovery.read().await;
-        let key = {
-            let mut state = self.state.lock().await;
-            let now = Instant::now();
-            if state.buckets.len() > 4096 {
-                state.buckets.retain(|_, bucket| {
-                    now.saturating_duration_since(bucket.reset_at) < Duration::from_secs(60)
-                });
-            }
-            state
-                .route_buckets
-                .get(&route.identity())
-                .map(|hash| bucket_key(hash, route.major()))
-        };
-        let reservation = if let Some(key) = key {
-            let gate = {
-                let mut gates = self.gates.lock().await;
-                gates.retain(|_, gate| gate.strong_count() > 0);
-                if let Some(gate) = gates.get(&key).and_then(Weak::upgrade) {
-                    gate
-                } else {
-                    let gate = Arc::new(Mutex::new(()));
-                    gates.insert(key, Arc::downgrade(&gate));
-                    gate
-                }
-            };
-            Reservation {
-                _read: Some(read),
-                _write: None,
-                _bucket: Some(gate.lock_owned().await),
-            }
-        } else {
-            drop(read);
-            Reservation {
-                _read: None,
-                _write: Some(self.discovery.write().await),
-                _bucket: None,
-            }
-        };
-        self.acquire(route).await;
-        reservation
+    pub(crate) fn with_shared(shared: Arc<SharedRateLimits>) -> Self {
+        Self { shared, ..Self::default() }
     }
 
-    async fn acquire(&self, route: &Route) {
+    pub(crate) async fn reserve(&self, route: &Route) -> OwnedMutexGuard<()> {
         loop {
+            let guard = self.shared.gate(route.resource_major()).await.lock_owned().await;
+            match self.try_acquire(route).await {
+                None => return guard,
+                Some(deadline) => {
+                    drop(guard);
+                    tokio::time::sleep_until(deadline).await;
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    async fn acquire(&self, route: &Route) {
+        drop(self.reserve(route).await);
+    }
+
+    async fn try_acquire(&self, route: &Route) -> Option<Instant> {
             let wait_until = {
                 let mut state = self.state.lock().await;
                 let now = Instant::now();
@@ -116,7 +119,16 @@ impl RateLimiter {
                     state.global_requests.pop_front();
                 }
 
+                if state.buckets.len() > 4096 {
+                    state.buckets.retain(|_, bucket| {
+                        now.saturating_duration_since(bucket.reset_at) < Duration::from_secs(60)
+                    });
+                }
+
                 let mut wait_until = state.global_until.filter(|deadline| *deadline > now);
+                if let Some(deadline) = self.shared.cooldown(route.resource_major(), now) {
+                    wait_until = later(wait_until, deadline);
+                }
 
                 if !route.global_exempt()
                     && state.global_requests.len() >= GLOBAL_REQUEST_LIMIT
@@ -154,23 +166,7 @@ impl RateLimiter {
                 wait_until
             };
 
-            match wait_until {
-                Some(deadline) => {
-                    #[cfg(feature = "tracing")]
-                    {
-                        let wait = deadline.saturating_duration_since(Instant::now());
-                        tracing::debug!(
-                            target: "gloamwire::http",
-                            route = %route.identity(),
-                            wait_ms = %wait.as_millis(),
-                            "waiting for Discord REST rate-limit capacity"
-                        );
-                    }
-                    tokio::time::sleep_until(deadline).await;
-                }
-                None => return,
-            }
-        }
+        wait_until
     }
 
     pub(crate) async fn update(
@@ -220,6 +216,9 @@ impl RateLimiter {
                 "Discord REST rate limit applied"
             );
 
+            if header_str(headers, "x-ratelimit-scope") == Some("shared") {
+                self.shared.update(route.resource_major(), deadline);
+            }
             if global || header_str(headers, "x-ratelimit-global").is_some() {
                 state.global_until = later(state.global_until, deadline);
             } else {
@@ -340,6 +339,20 @@ mod tests {
             state.buckets[&bucket_key("bucket", route.major())].remaining,
             0
         );
+    }
+
+    #[tokio::test]
+    async fn cooled_resource_does_not_block_other_majors() {
+        let shared = std::sync::Arc::new(super::SharedRateLimits::default());
+        let first = RateLimiter::with_shared(shared.clone());
+        let second = RateLimiter::with_shared(shared);
+        let a = Route::create_message(crate::model::ChannelId::new(1));
+        let b = Route::create_message(crate::model::ChannelId::new(2));
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ratelimit-scope", "shared".parse().unwrap());
+        first.update(&a, StatusCode::TOO_MANY_REQUESTS, &headers, Some(Duration::from_secs(5)), false).await;
+        assert!(tokio::time::timeout(Duration::from_millis(20), second.reserve(&a)).await.is_err());
+        assert!(tokio::time::timeout(Duration::from_millis(100), second.reserve(&b)).await.is_ok());
     }
 
     #[tokio::test]

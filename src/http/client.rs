@@ -10,8 +10,8 @@ use crate::{
 
 use super::{
     GatewayBot, HttpResponse,
-    rate_limit::RateLimiter,
-    route::Route,
+    rate_limit::{RateLimiter, SharedRateLimits},
+    route::{Route, credential_fingerprint},
     upload::{UploadFile, multipart_form, named_file_form},
 };
 
@@ -115,15 +115,17 @@ impl RestClientBuilder {
             builder = builder.pool_idle_timeout(timeout);
         }
 
+        let shared = Arc::new(SharedRateLimits::default());
         Ok(RestClient {
             http: builder.build()?,
             authorization: self.authorization,
             base_url: API_BASE_URL.to_owned(),
-            rate_limiter: Arc::new(RateLimiter::default()),
-            token_rate_limiter: Arc::new(RateLimiter::default()),
-            interaction_rate_limiter: Arc::new(RateLimiter::default()),
+            rate_limiter: Arc::new(RateLimiter::with_shared(shared.clone())),
+            token_rate_limiter: Arc::new(RateLimiter::with_shared(shared.clone())),
+            interaction_rate_limiter: Arc::new(RateLimiter::with_shared(shared.clone())),
             bearer_rate_limiters: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-            bearer_overflow_limiter: Arc::new(RateLimiter::default()),
+            bearer_overflow_limiter: Arc::new(RateLimiter::with_shared(shared.clone())),
+            shared_rate_limits: shared,
             max_transient_retries: self.max_transient_retries,
             retry_base_delay: self.retry_base_delay,
         })
@@ -139,10 +141,16 @@ pub struct RestClient {
     rate_limiter: Arc<RateLimiter>,
     token_rate_limiter: Arc<RateLimiter>,
     interaction_rate_limiter: Arc<RateLimiter>,
-    bearer_rate_limiters: Arc<tokio::sync::Mutex<HashMap<HeaderValue, Arc<RateLimiter>>>>,
+    bearer_rate_limiters: Arc<tokio::sync::Mutex<HashMap<u64, BearerLimiter>>>,
+    shared_rate_limits: Arc<SharedRateLimits>,
     bearer_overflow_limiter: Arc<RateLimiter>,
     max_transient_retries: usize,
     retry_base_delay: Duration,
+}
+
+struct BearerLimiter {
+    limiter: Arc<RateLimiter>,
+    last_used: tokio::time::Instant,
 }
 
 impl std::fmt::Debug for RestClient {
@@ -383,11 +391,18 @@ impl RestClient {
         } else if let Some(authorization) = headers.get_mut(AUTHORIZATION) {
             authorization.set_sensitive(true);
             let mut limiters = self.bearer_rate_limiters.lock().await;
-            if let Some(limiter) = limiters.get(authorization) {
-                Arc::clone(limiter)
+            let now = tokio::time::Instant::now();
+            // Do not retain bearer credentials or evict a limiter during an attempt.
+            // 24h matches the maximum recorded cooldown.
+            limiters.retain(|_, entry| Arc::strong_count(&entry.limiter) > 1
+                || now.saturating_duration_since(entry.last_used) < Duration::from_secs(86_401));
+            let key = credential_fingerprint(authorization.as_bytes());
+            if let Some(entry) = limiters.get_mut(&key) {
+                entry.last_used = now;
+                Arc::clone(&entry.limiter)
             } else if limiters.len() < 128 {
-                let limiter = Arc::new(RateLimiter::default());
-                limiters.insert(authorization.clone(), Arc::clone(&limiter));
+                let limiter = Arc::new(RateLimiter::with_shared(self.shared_rate_limits.clone()));
+                limiters.insert(key, BearerLimiter { limiter: limiter.clone(), last_used: now });
                 limiter
             } else {
                 Arc::clone(&self.bearer_overflow_limiter)
@@ -401,7 +416,7 @@ impl RestClient {
         let mut transient_retries = 0;
 
         loop {
-            let _reservation = limiter.reserve(&route).await;
+            let reservation = limiter.reserve(&route).await;
 
             let mut request = self
                 .http
@@ -432,6 +447,7 @@ impl RestClient {
                 {
                     let delay = retry_delay(self.retry_base_delay, transient_retries);
                     transient_retries += 1;
+                    drop(reservation);
                     tokio::time::sleep(delay).await;
                     continue;
                 }
@@ -440,18 +456,14 @@ impl RestClient {
 
             let status = response.status();
             let response_headers = response.headers().clone();
+            // Commit header information before awaiting the body. For 429s
+            // retain a provisional cooldown until the JSON retry hint arrives.
+            limiter.update(&route, status, &response_headers,
+                retry_after_header(&response_headers), false).await;
             let bytes = match crate::error::read_limited_body(response).await {
                 Ok(bytes) => bytes,
                 Err(error) => {
-                    limiter
-                        .update(
-                            &route,
-                            status,
-                            &response_headers,
-                            retry_after_header(&response_headers),
-                            false,
-                        )
-                        .await;
+                    drop(reservation);
                     if route.is_retry_safe()
                         && transient_retries < self.max_transient_retries
                         && matches!(&error, Error::Http(error) if is_retryable_transport_error(error))
@@ -479,9 +491,10 @@ impl RestClient {
                     .and_then(|value| value.to_str().ok())
                     .is_some_and(|scope| scope == "global");
 
-            limiter
-                .update(&route, status, &response_headers, retry_after, global)
-                .await;
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                limiter.update(&route, status, &response_headers, retry_after, global).await;
+            }
+            drop(reservation);
 
             if status.is_success() {
                 return Ok(HttpResponse::new(status, response_headers, bytes));

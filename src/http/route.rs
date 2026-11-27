@@ -19,6 +19,7 @@ pub(crate) struct Route {
     pub(crate) path: String,
     template: &'static str,
     major: Option<String>,
+    resource_major: Option<String>,
     retry_safety: RetrySafety,
     token_authenticated: bool,
     global_exempt: bool,
@@ -76,6 +77,7 @@ impl Route {
             method,
             path: path.into(),
             template,
+            resource_major: major.clone(),
             major,
             retry_safety,
             token_authenticated: false,
@@ -86,8 +88,7 @@ impl Route {
     pub(crate) fn token_authenticated(mut self, token: &str, global_exempt: bool) -> Self {
         // A keyed, process-local fingerprint avoids retaining plaintext tokens
         // in rate-limit maps or debug output.
-        static HASHER: OnceLock<RandomState> = OnceLock::new();
-        let fingerprint = HASHER.get_or_init(RandomState::new).hash_one(token);
+        let fingerprint = credential_fingerprint(token.as_bytes());
         self.major = Some(format!("{}:{fingerprint:016x}", self.major()));
         self.token_authenticated = true;
         self.global_exempt = global_exempt;
@@ -110,9 +111,18 @@ impl Route {
         self.major.as_deref().unwrap_or("")
     }
 
+    pub(crate) fn resource_major(&self) -> &str {
+        self.resource_major.as_deref().unwrap_or("")
+    }
+
     pub(crate) fn is_retry_safe(&self) -> bool {
         self.retry_safety == RetrySafety::Safe
     }
+}
+
+pub(crate) fn credential_fingerprint(token: &[u8]) -> u64 {
+    static HASHER: OnceLock<RandomState> = OnceLock::new();
+    HASHER.get_or_init(RandomState::new).hash_one(token)
 }
 
 #[cfg(test)]
