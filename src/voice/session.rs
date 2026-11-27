@@ -167,8 +167,23 @@ impl VoiceSession {
 
     /// Returns mutable RTP transport cryptography state for outbound nonces.
     #[must_use]
-    pub const fn transport_crypto_mut(&mut self) -> &mut VoiceTransportCrypto {
+    pub(super) const fn transport_crypto_mut(&mut self) -> &mut VoiceTransportCrypto {
         &mut self.transport_crypto
+    }
+
+    /// Encrypts media using the session-owned outbound nonce state.
+    /// For end-to-end encryption, use a managed DAVE session instead.
+    pub fn encrypt_audio(
+        &mut self,
+        header: super::VoiceRtpHeader,
+        media: &[u8],
+    ) -> VoiceResult<Vec<u8>> {
+        if !self.is_media_ready() {
+            return Err(super::VoiceError::Protocol(
+                "voice media unavailable".into(),
+            ));
+        }
+        self.transport_crypto.encrypt_audio(header, media)
     }
 
     /// Returns the next Voice Gateway event, including events buffered while
@@ -546,7 +561,7 @@ mod tests {
             guild_id: GuildId::new(10),
             user_id: UserId::new(20),
             session_id: "fixture-session".to_owned(),
-            token: "fixture-token".to_owned(),
+            token: "fixture-token".into(),
             endpoint: format!("ws://{websocket_addr}"),
         })
         .with_insecure_loopback(true);

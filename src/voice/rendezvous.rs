@@ -8,7 +8,7 @@ use crate::{
 /// Main-Gateway `VOICE_SERVER_UPDATE` data required to establish voice.
 #[derive(Clone, PartialEq, Eq, Deserialize)]
 pub struct VoiceServerUpdate {
-    pub token: String,
+    pub token: crate::SecretString,
     pub guild_id: GuildId,
     /// Voice server host, or `None` while Discord is reallocating the server.
     pub endpoint: Option<String>,
@@ -30,7 +30,7 @@ pub struct VoiceConnectionInfo {
     pub guild_id: GuildId,
     pub user_id: UserId,
     pub session_id: String,
-    pub token: String,
+    pub token: crate::SecretString,
     pub endpoint: String,
 }
 
@@ -198,7 +198,7 @@ mod tests {
             panic!("expected completed rendezvous");
         };
         assert_eq!(info.session_id, "session");
-        assert_eq!(info.token, "voice-token");
+        assert_eq!(info.token.expose(), "voice-token");
     }
 
     #[test]

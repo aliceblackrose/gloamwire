@@ -50,6 +50,7 @@ pub struct GatewayConfig {
     intents: GatewayIntents,
     url: String,
     allow_insecure_loopback: bool,
+    allow_custom_origin: bool,
     shard: Option<[u32; 2]>,
     identify_coordinator: Option<Arc<dyn GatewayIdentifyCoordinator>>,
     encoding: GatewayEncoding,
@@ -80,6 +81,7 @@ impl GatewayConfig {
             intents,
             url: DEFAULT_GATEWAY_URL.to_owned(),
             allow_insecure_loopback: false,
+            allow_custom_origin: false,
             shard: None,
             identify_coordinator: None,
             encoding: GatewayEncoding::Json,
@@ -104,6 +106,7 @@ impl GatewayConfig {
             intents,
             url: gateway.url.clone(),
             allow_insecure_loopback: false,
+            allow_custom_origin: false,
             shard: None,
             identify_coordinator: Some(Arc::new(GatewayIdentifyLimiter::new(
                 &gateway.session_start_limit,
@@ -113,13 +116,14 @@ impl GatewayConfig {
         }
     }
 
-    /// Overrides the Gateway WebSocket URL.
+    /// Overrides the Gateway WebSocket URL with an explicitly trusted origin.
     ///
     /// Gloamwire normalizes the API version, encoding, and transport-compression
     /// query parameters when the connection is opened.
     #[must_use]
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         self.url = url.into();
+        self.allow_custom_origin = true;
         self
     }
 
@@ -129,6 +133,18 @@ impl GatewayConfig {
     pub const fn with_insecure_loopback(mut self, allow: bool) -> Self {
         self.allow_insecure_loopback = allow;
         self
+    }
+
+    fn trusts_endpoint(&self, endpoint: &str) -> bool {
+        let allow_loopback = self.allow_insecure_loopback && !self.url.starts_with("wss://");
+        if !crate::secret::secure_websocket_endpoint(endpoint, allow_loopback) {
+            return false;
+        }
+        if self.allow_custom_origin || (allow_loopback && self.url.starts_with("ws://")) {
+            crate::secret::same_origin(&self.url, endpoint)
+        } else {
+            crate::secret::discord_websocket_origin(endpoint)
+        }
     }
 
     /// Configures Discord Gateway wire encoding.
@@ -462,10 +478,7 @@ impl GatewayConnection {
 
         if name == "READY" {
             let ready = serde_json::from_value::<ReadySessionData>(envelope.d.clone())?;
-            if !crate::secret::secure_websocket_endpoint(
-                &ready.resume_gateway_url,
-                self.config.allow_insecure_loopback && !self.config.url.starts_with("wss://"),
-            ) {
+            if !self.config.trusts_endpoint(&ready.resume_gateway_url) {
                 return Err(Error::GatewayProtocol(
                     "insecure or invalid Gateway resume endpoint".into(),
                 ));
@@ -682,8 +695,7 @@ async fn open_and_handshake(
     rate_limiter: &GatewayRateLimiter,
 ) -> Result<(GatewaySocket, GatewayDecoder, Interval, Option<Instant>)> {
     let base_url = session.map_or(config.url.as_str(), GatewaySession::resume_gateway_url);
-    let allow_loopback = config.allow_insecure_loopback && !config.url.starts_with("wss://");
-    if !crate::secret::secure_websocket_endpoint(base_url, allow_loopback) {
+    if !config.trusts_endpoint(base_url) {
         return Err(Error::GatewayProtocol(
             "Gateway endpoint must use TLS (except explicitly enabled loopback fixtures)".into(),
         ));

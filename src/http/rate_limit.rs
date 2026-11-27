@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Weak},
+    sync::Arc,
     time::Duration,
 };
 
@@ -14,6 +14,8 @@ use super::route::Route;
 
 const GLOBAL_REQUEST_LIMIT: usize = 50;
 const GLOBAL_WINDOW: Duration = Duration::from_secs(1);
+const MAX_BUCKETS: usize = 4096;
+const GATE_STRIPES: usize = 256;
 
 #[derive(Debug, Default)]
 pub(crate) struct RateLimiter {
@@ -24,36 +26,57 @@ pub(crate) struct RateLimiter {
 /// Shared across authentication contexts. Serialize attempts by major resource,
 /// not by mutable server bucket hash; release the gate before any cooldown sleep.
 /// This deliberately sacrifices concurrency within one major resource.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SharedRateLimits {
-    gates: Mutex<HashMap<String, Weak<Mutex<()>>>>,
-    cooldowns: std::sync::Mutex<HashMap<String, Instant>>,
+    gates: Vec<Arc<Mutex<()>>>,
+    cooldowns: std::sync::Mutex<SharedCooldowns>,
+}
+
+#[derive(Debug, Default)]
+struct SharedCooldowns {
+    entries: HashMap<String, Instant>,
+    overflow_until: Option<Instant>,
+}
+
+impl Default for SharedRateLimits {
+    fn default() -> Self {
+        Self {
+            gates: (0..GATE_STRIPES)
+                .map(|_| Arc::new(Mutex::new(())))
+                .collect(),
+            cooldowns: std::sync::Mutex::default(),
+        }
+    }
 }
 
 impl SharedRateLimits {
     fn cooldown(&self, major: &str, now: Instant) -> Option<Instant> {
         let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
-        cooldowns.retain(|_, deadline| *deadline > now);
-        cooldowns.get(major).copied()
+        cooldowns.entries.retain(|_, deadline| *deadline > now);
+        let overflow = cooldowns.overflow_until.filter(|deadline| *deadline > now);
+        match cooldowns.entries.get(major).copied() {
+            Some(deadline) => later(overflow, deadline),
+            None => overflow,
+        }
     }
 
     fn update(&self, major: &str, deadline: Instant) {
         let mut cooldowns = self.cooldowns.lock().unwrap_or_else(|e| e.into_inner());
-        cooldowns.retain(|_, until| *until > Instant::now());
-        let until = cooldowns.entry(major.to_owned()).or_insert(deadline);
-        *until = (*until).max(deadline);
+        cooldowns.entries.retain(|_, until| *until > Instant::now());
+        if cooldowns.entries.len() >= MAX_BUCKETS && !cooldowns.entries.contains_key(major) {
+            cooldowns.overflow_until = later(cooldowns.overflow_until, deadline);
+        } else {
+            let until = cooldowns
+                .entries
+                .entry(major.to_owned())
+                .or_insert(deadline);
+            *until = (*until).max(deadline);
+        }
     }
 
-    async fn gate(&self, major: &str) -> Arc<Mutex<()>> {
-        let mut gates = self.gates.lock().await;
-        gates.retain(|_, gate| gate.strong_count() > 0);
-        if let Some(gate) = gates.get(major).and_then(Weak::upgrade) {
-            gate
-        } else {
-            let gate = Arc::new(Mutex::new(()));
-            gates.insert(major.to_owned(), Arc::downgrade(&gate));
-            gate
-        }
+    fn gate(&self, major: &str) -> Arc<Mutex<()>> {
+        let index = super::route::credential_fingerprint(major.as_bytes()) as usize % GATE_STRIPES;
+        Arc::clone(&self.gates[index])
     }
 }
 
@@ -128,12 +151,7 @@ impl RateLimiter {
 
     pub(crate) async fn reserve(&self, route: &Route) -> OwnedMutexGuard<()> {
         loop {
-            let guard = self
-                .shared
-                .gate(route.resource_major())
-                .await
-                .lock_owned()
-                .await;
+            let guard = self.shared.gate(route.resource_major()).lock_owned().await;
             match self.try_acquire(route) {
                 None => return guard,
                 Some(deadline) => {
@@ -161,9 +179,9 @@ impl RateLimiter {
             state.global_requests.pop_front();
         }
 
-        if state.buckets.len() > 4096 {
+        if state.buckets.len() >= MAX_BUCKETS {
             state.buckets.retain(|_, bucket| {
-                now.saturating_duration_since(bucket.reset_at) < Duration::from_secs(60)
+                bucket.reset_at > now || bucket.cooldown_until.is_some_and(|until| until > now)
             });
         }
 
@@ -238,7 +256,9 @@ impl RateLimiter {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         let route_identity = route.identity();
-        let bucket_hash = header_str(headers, "x-ratelimit-bucket").map(str::to_owned);
+        let bucket_hash = header_str(headers, "x-ratelimit-bucket")
+            .filter(|hash| hash.len() <= 128)
+            .map(str::to_owned);
 
         #[cfg(feature = "tracing")]
         tracing::trace!(
@@ -261,11 +281,18 @@ impl RateLimiter {
                 && (previous.reset_at > now
                     || previous.cooldown_until.is_some_and(|until| until > now))
             {
-                let next = state.buckets.entry(next_key).or_insert(previous);
-                next.remaining = next.remaining.min(previous.remaining);
-                next.reset_at = next.reset_at.max(previous.reset_at);
-                if let Some(until) = previous.cooldown_until {
-                    next.cooldown_until = later(next.cooldown_until, until);
+                if state.buckets.len() >= MAX_BUCKETS && !state.buckets.contains_key(&next_key) {
+                    let deadline = previous
+                        .cooldown_until
+                        .map_or(previous.reset_at, |until| until.max(previous.reset_at));
+                    state.global_until = later(state.global_until, deadline);
+                } else {
+                    let next = state.buckets.entry(next_key).or_insert(previous);
+                    next.remaining = next.remaining.min(previous.remaining);
+                    next.reset_at = next.reset_at.max(previous.reset_at);
+                    if let Some(until) = previous.cooldown_until {
+                        next.cooldown_until = later(next.cooldown_until, until);
+                    }
                 }
             }
             state
@@ -295,9 +322,12 @@ impl RateLimiter {
             if header_str(headers, "x-ratelimit-scope") == Some("shared") {
                 self.shared.update(route.resource_major(), deadline);
             }
+            let bucket_capacity_reached =
+                state.buckets.len() >= MAX_BUCKETS && !state.buckets.contains_key(&bucket_key);
             if global
                 || header_str(headers, "x-ratelimit-global") == Some("true")
                 || header_str(headers, "x-ratelimit-scope") == Some("global")
+                || bucket_capacity_reached
             {
                 state.global_until = later(state.global_until, deadline);
             } else {
@@ -322,6 +352,10 @@ impl RateLimiter {
 
         if let (Some(remaining), Some(reset_after)) = (remaining, reset_after) {
             let reset_at = now + reset_after;
+            if state.buckets.len() >= MAX_BUCKETS && !state.buckets.contains_key(&bucket_key) {
+                state.global_until = later(state.global_until, reset_at);
+                return;
+            }
             let bucket = state.buckets.entry(bucket_key).or_insert(BucketState {
                 remaining,
                 reset_at,
@@ -563,5 +597,22 @@ mod tests {
                 bucket_key(&hash, &major)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod bounded_state_tests {
+    use super::*;
+
+    #[test]
+    fn shared_cooldowns_are_bounded_without_discarding_deadlines() {
+        let shared = SharedRateLimits::default();
+        let now = Instant::now();
+        let deadline = now + Duration::from_secs(60);
+        for index in 0..=MAX_BUCKETS {
+            shared.update(&index.to_string(), deadline);
+        }
+        assert_eq!(shared.cooldowns.lock().unwrap().entries.len(), MAX_BUCKETS);
+        assert_eq!(shared.cooldown("untracked", now), Some(deadline));
     }
 }

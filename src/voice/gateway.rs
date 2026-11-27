@@ -58,6 +58,7 @@ pub struct VoiceGatewayConfig {
     max_dave_protocol_version: u16,
     min_dave_protocol_version: u16,
     allow_insecure_loopback: bool,
+    allow_custom_origin: bool,
     participant_limit: usize,
 }
 
@@ -83,11 +84,12 @@ impl VoiceGatewayConfig {
             guild_id: info.guild_id,
             user_id: info.user_id,
             session_id: info.session_id,
-            token: crate::secret::SecretString::new(info.token),
+            token: info.token,
             endpoint: info.endpoint,
             max_dave_protocol_version: 0,
-            min_dave_protocol_version: 0,
+            min_dave_protocol_version: 1,
             allow_insecure_loopback: false,
+            allow_custom_origin: false,
             participant_limit: 4096,
         }
     }
@@ -104,11 +106,18 @@ impl VoiceGatewayConfig {
         self
     }
 
-    /// Requires at least this DAVE version for managed media. Zero explicitly
-    /// permits transport-only calls (the compatibility default).
+    /// Requires at least this DAVE version for managed media (default: 1).
+    /// Zero explicitly opts into transport-only compatibility.
     #[must_use]
     pub const fn with_min_dave_protocol_version(mut self, version: u16) -> Self {
         self.min_dave_protocol_version = version;
+        self
+    }
+
+    /// Allows a trusted non-Discord WSS origin to receive voice credentials.
+    #[must_use]
+    pub const fn with_custom_origin(mut self, allow: bool) -> Self {
+        self.allow_custom_origin = allow;
         self
     }
 
@@ -172,8 +181,12 @@ impl VoiceGatewayConnection {
     /// Opens the Voice Gateway, receives Hello, identifies, and waits for Ready.
     pub async fn connect(config: VoiceGatewayConfig) -> VoiceResult<Self> {
         let config = Arc::new(config);
-        let (mut socket, mut heartbeat) =
-            open_socket(&config.endpoint, config.allow_insecure_loopback).await?;
+        let (mut socket, mut heartbeat) = open_socket(
+            &config.endpoint,
+            config.allow_insecure_loopback,
+            config.allow_custom_origin,
+        )
+        .await?;
         send_json(
             &mut socket,
             IDENTIFY_OPCODE,
@@ -439,8 +452,12 @@ impl VoiceGatewayConnection {
         // A stale synthetic Resumed event must not authorize media on a later recovery.
         self.pending
             .retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
-        let (mut socket, mut heartbeat) =
-            open_socket(&self.config.endpoint, self.config.allow_insecure_loopback).await?;
+        let (mut socket, mut heartbeat) = open_socket(
+            &self.config.endpoint,
+            self.config.allow_insecure_loopback,
+            self.config.allow_custom_origin,
+        )
+        .await?;
         send_json(
             &mut socket,
             RESUME_OPCODE,
@@ -628,12 +645,24 @@ struct Speaking {
     ssrc: u32,
 }
 
-async fn open_socket(endpoint: &str, allow_loopback: bool) -> VoiceResult<(VoiceSocket, Interval)> {
+async fn open_socket(
+    endpoint: &str,
+    allow_loopback: bool,
+    allow_custom_origin: bool,
+) -> VoiceResult<(VoiceSocket, Interval)> {
     let url = voice_gateway_url(endpoint);
     if !crate::secret::secure_websocket_endpoint(&url, allow_loopback) {
         return Err(VoiceError::Protocol(
             "Voice Gateway endpoint must use TLS (except explicitly enabled loopback fixtures)"
                 .into(),
+        ));
+    }
+    if !(allow_custom_origin
+        || crate::secret::discord_websocket_origin(&url)
+        || (allow_loopback && url.starts_with("ws://")))
+    {
+        return Err(VoiceError::Protocol(
+            "untrusted Voice Gateway origin".into(),
         ));
     }
     let (mut socket, _) = tokio::time::timeout(

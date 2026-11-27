@@ -222,11 +222,11 @@ impl OAuth2AuthorizationUrl {
 /// Access-token response returned by Discord OAuth2 token exchanges.
 #[derive(Clone, PartialEq, Deserialize)]
 pub struct OAuth2TokenResponse {
-    pub access_token: String,
+    pub access_token: crate::SecretString,
     pub token_type: String,
     pub expires_in: u64,
     #[serde(default)]
-    pub refresh_token: Option<String>,
+    pub refresh_token: Option<crate::SecretString>,
     pub scope: String,
     /// Additional flow-specific response fields such as `guild` or `webhook`.
     #[serde(flatten)]
@@ -294,6 +294,7 @@ pub struct OAuth2Client {
     client_id: ApplicationId,
     client_secret: crate::secret::SecretString,
     api_base_url: String,
+    allow_insecure_loopback: bool,
 }
 
 impl fmt::Debug for OAuth2Client {
@@ -301,7 +302,7 @@ impl fmt::Debug for OAuth2Client {
         formatter
             .debug_struct("OAuth2Client")
             .field("client_id", &self.client_id)
-            .field("api_base_url", &self.api_base_url)
+            .field("api_base_url", &"[OMITTED]")
             .finish_non_exhaustive()
     }
 }
@@ -319,14 +320,33 @@ impl OAuth2Client {
             client_id,
             client_secret: crate::secret::SecretString::new(client_secret.into()),
             api_base_url: API_BASE_URL.to_owned(),
+            allow_insecure_loopback: false,
         })
     }
 
-    /// Overrides the Discord API base URL, primarily for integration tests.
+    /// Overrides the Discord API base URL with a trusted HTTPS endpoint.
     #[must_use]
     pub fn with_api_base_url(mut self, api_base_url: impl Into<String>) -> Self {
         self.api_base_url = api_base_url.into().trim_end_matches('/').to_owned();
         self
+    }
+
+    /// Enables plaintext HTTP only for numeric loopback fixtures.
+    /// Never use production credentials with this option.
+    #[must_use]
+    pub const fn with_insecure_loopback(mut self, allow: bool) -> Self {
+        self.allow_insecure_loopback = allow;
+        self
+    }
+
+    fn validate_endpoint(&self) -> Result<()> {
+        if crate::secret::secure_http_endpoint(&self.api_base_url, self.allow_insecure_loopback) {
+            Ok(())
+        } else {
+            Err(Error::InvalidRestRequest(
+                "insecure or invalid OAuth2 base URL".into(),
+            ))
+        }
     }
 
     /// Exchanges an authorization code for an access token.
@@ -380,6 +400,7 @@ impl OAuth2Client {
         token: impl AsRef<str>,
         token_type_hint: Option<OAuth2TokenTypeHint>,
     ) -> Result<()> {
+        self.validate_endpoint()?;
         let response = self
             .http
             .post(format!("{}/oauth2/token/revoke", self.api_base_url))
@@ -399,6 +420,7 @@ impl OAuth2Client {
         &self,
         access_token: impl AsRef<str>,
     ) -> Result<OAuth2AuthorizationInfo> {
+        self.validate_endpoint()?;
         let response = self
             .http
             .get(format!("{}/oauth2/@me", self.api_base_url))
@@ -413,6 +435,7 @@ impl OAuth2Client {
     where
         F: Serialize + ?Sized,
     {
+        self.validate_endpoint()?;
         let response = self
             .http
             .post(format!("{}/oauth2/token", self.api_base_url))

@@ -48,7 +48,8 @@ async fn retries_a_discord_rate_limit_against_a_mock_server() {
 
     let client = RestClient::new("fixture-token")
         .expect("REST client")
-        .with_base_url(format!("http://{address}"));
+        .with_base_url(format!("http://{address}"))
+        .with_insecure_loopback(true);
     let user = timeout(Duration::from_secs(5), client.get_current_user())
         .await
         .expect("REST request timed out")
@@ -82,7 +83,8 @@ async fn accepts_empty_204_responses_against_a_mock_server() {
 
     let client = RestClient::new("fixture-token")
         .expect("REST client")
-        .with_base_url(format!("http://{address}"));
+        .with_base_url(format!("http://{address}"))
+        .with_insecure_loopback(true);
     timeout(
         Duration::from_secs(5),
         client.delete_message(ChannelId::new(10), MessageId::new(20)),

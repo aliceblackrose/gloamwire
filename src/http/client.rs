@@ -129,6 +129,7 @@ impl RestClientBuilder {
             http: builder.build()?,
             authorization: self.authorization,
             base_url: API_BASE_URL.to_owned(),
+            allow_insecure_loopback: false,
             rate_limiter: Arc::new(RateLimiter::with_shared(shared.clone())),
             token_rate_limiter: Arc::new(RateLimiter::with_shared(shared.clone())),
             interaction_rate_limiter: Arc::new(RateLimiter::with_shared(shared.clone())),
@@ -148,6 +149,7 @@ pub struct RestClient {
     http: reqwest::Client,
     authorization: HeaderValue,
     base_url: String,
+    allow_insecure_loopback: bool,
     rate_limiter: Arc<RateLimiter>,
     token_rate_limiter: Arc<RateLimiter>,
     interaction_rate_limiter: Arc<RateLimiter>,
@@ -168,7 +170,7 @@ impl std::fmt::Debug for RestClient {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("RestClient")
-            .field("base_url", &self.base_url)
+            .field("base_url", &"[OMITTED]")
             .field("max_transient_retries", &self.max_transient_retries)
             .field("retry_base_delay", &self.retry_base_delay)
             .finish_non_exhaustive()
@@ -188,10 +190,19 @@ impl RestClient {
 
     /// Overrides the API base URL.
     ///
-    /// This is primarily useful for integration tests and compatible proxies.
+    /// Custom HTTPS endpoints must be trusted with all request credentials.
+    /// Plaintext is rejected unless numeric loopback is explicitly enabled.
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into().trim_end_matches('/').to_owned();
+        self
+    }
+
+    /// Enables plaintext HTTP only for numeric loopback fixtures.
+    /// Never use production credentials with this option.
+    #[must_use]
+    pub const fn with_insecure_loopback(mut self, allow: bool) -> Self {
+        self.allow_insecure_loopback = allow;
         self
     }
 
@@ -395,6 +406,14 @@ impl RestClient {
         payload: RequestPayload<'_>,
         mut headers: HeaderMap,
     ) -> Result<HttpResponse<Vec<u8>>> {
+        if !crate::secret::secure_http_endpoint(&self.base_url, self.allow_insecure_loopback) {
+            return Err(Error::InvalidRestRequest(
+                "insecure or invalid API base URL".into(),
+            ));
+        }
+        if !super::encoding::valid_route_path(&route.path) {
+            return Err(Error::InvalidRestRequest("invalid API path segment".into()));
+        }
         let limiter = if route.global_exempt() {
             Arc::clone(&self.interaction_rate_limiter)
         } else if route.uses_token_auth() {

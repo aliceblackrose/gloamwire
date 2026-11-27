@@ -55,12 +55,16 @@ enum VoiceTransportCipher {
 }
 
 impl VoiceTransportCrypto {
-    /// Creates transport crypto from Voice Gateway Session Description data.
+    /// Creates transport crypto from a fresh Voice Gateway Session Description.
+    /// Never construct a second outbound encryptor for an already used key.
+    /// Prefer the session-owned encryptor for managed connections.
     pub fn from_session_description(description: &VoiceSessionDescription) -> VoiceResult<Self> {
         Self::new(description.mode.clone(), description.secret_key)
     }
 
-    /// Creates transport crypto from a negotiated mode and 32-byte session key.
+    /// Creates transport crypto from a negotiated mode and fresh 32-byte session key.
+    /// The caller must guarantee the key has never been used by another outbound
+    /// encryptor. Reusing a key resets the nonce and breaks AEAD security.
     pub fn new(mode: VoiceEncryptionMode, secret_key: [u8; 32]) -> VoiceResult<Self> {
         let secret_key = zeroize::Zeroizing::new(secret_key);
         let cipher = match mode.as_ref() {
