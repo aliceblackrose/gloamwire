@@ -41,15 +41,26 @@ mod tests {
 /// Require TLS for credential-bearing WebSockets. Plaintext is restricted to
 /// explicitly enabled numeric loopback endpoints (no DNS resolution).
 pub(crate) fn secure_websocket_endpoint(endpoint: &str, allow_loopback: bool) -> bool {
-    let Ok(url) = reqwest::Url::parse(endpoint) else { return false; };
-    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() || url.host_str().is_none() {
+    let Ok(url) = reqwest::Url::parse(endpoint) else {
+        return false;
+    };
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || url.host_str().is_none()
+    {
         return false;
     }
     if url.scheme() == "wss" {
         return true;
     }
-    url.scheme() == "ws" && allow_loopback
-        && url.host_str().is_some_and(|host| host.trim_matches(['[', ']']).parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()))
+    url.scheme() == "ws"
+        && allow_loopback
+        && url.host_str().is_some_and(|host| {
+            host.trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+        })
 }
 
 #[cfg(test)]

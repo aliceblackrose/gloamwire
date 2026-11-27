@@ -172,7 +172,8 @@ impl VoiceGatewayConnection {
     /// Opens the Voice Gateway, receives Hello, identifies, and waits for Ready.
     pub async fn connect(config: VoiceGatewayConfig) -> VoiceResult<Self> {
         let config = Arc::new(config);
-        let (mut socket, mut heartbeat) = open_socket(&config.endpoint, config.allow_insecure_loopback).await?;
+        let (mut socket, mut heartbeat) =
+            open_socket(&config.endpoint, config.allow_insecure_loopback).await?;
         send_json(
             &mut socket,
             IDENTIFY_OPCODE,
@@ -438,7 +439,8 @@ impl VoiceGatewayConnection {
         // A stale synthetic Resumed event must not authorize media on a later recovery.
         self.pending
             .retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
-        let (mut socket, mut heartbeat) = open_socket(&self.config.endpoint, self.config.allow_insecure_loopback).await?;
+        let (mut socket, mut heartbeat) =
+            open_socket(&self.config.endpoint, self.config.allow_insecure_loopback).await?;
         send_json(
             &mut socket,
             RESUME_OPCODE,
@@ -629,7 +631,10 @@ struct Speaking {
 async fn open_socket(endpoint: &str, allow_loopback: bool) -> VoiceResult<(VoiceSocket, Interval)> {
     let url = voice_gateway_url(endpoint);
     if !crate::secret::secure_websocket_endpoint(&url, allow_loopback) {
-        return Err(VoiceError::Protocol("Voice Gateway endpoint must use TLS (except explicitly enabled loopback fixtures)".into()));
+        return Err(VoiceError::Protocol(
+            "Voice Gateway endpoint must use TLS (except explicitly enabled loopback fixtures)"
+                .into(),
+        ));
     }
     let (mut socket, _) = tokio::time::timeout(
         NEGOTIATION_TIMEOUT,

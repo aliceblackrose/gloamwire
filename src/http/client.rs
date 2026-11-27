@@ -446,11 +446,14 @@ impl RestClient {
         let mut transient_retries = 0;
 
         loop {
-            let upload_slot = if is_upload {
-                Some(self.upload_slots.acquire().await.map_err(|_| Error::InvalidRestRequest("upload preparation closed".into()))?)
-            } else {
-                None
-            };
+            let upload_slot =
+                if is_upload {
+                    Some(self.upload_slots.acquire().await.map_err(|_| {
+                        Error::InvalidRestRequest("upload preparation closed".into())
+                    })?)
+                } else {
+                    None
+                };
             let reservation = limiter.reserve(&route).await;
             let mut request = self
                 .http

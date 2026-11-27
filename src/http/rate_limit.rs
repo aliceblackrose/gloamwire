@@ -109,8 +109,14 @@ impl Drop for Ambiguous429<'_> {
 
 impl RateLimiter {
     pub(crate) fn begin_ambiguous_429(&self) -> Ambiguous429<'_> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).ambiguous_429s += 1;
-        Ambiguous429 { limiter: self, classified: false }
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .ambiguous_429s += 1;
+        Ambiguous429 {
+            limiter: self,
+            classified: false,
+        }
     }
 
     pub(crate) fn with_shared(shared: Arc<SharedRateLimits>) -> Self {
@@ -211,7 +217,10 @@ impl RateLimiter {
     pub(crate) fn has_live_cooldown(&self, now: Instant) -> bool {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.ambiguous_429s > 0
-            || state.global_requests.back().is_some_and(|time| now.saturating_duration_since(*time) < GLOBAL_WINDOW)
+            || state
+                .global_requests
+                .back()
+                .is_some_and(|time| now.saturating_duration_since(*time) < GLOBAL_WINDOW)
             || state.global_until.is_some_and(|until| until > now)
             || state.buckets.values().any(|bucket| {
                 bucket.reset_at > now || bucket.cooldown_until.is_some_and(|until| until > now)

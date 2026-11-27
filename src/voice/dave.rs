@@ -125,7 +125,9 @@ impl DaveProtocolEvent {
                         epoch: data.epoch,
                     })
                 }
-                DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE => Err(VoiceError::Protocol("invalid inbound DAVE JSON opcode or framing".into())),
+                DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE => Err(
+                    VoiceError::Protocol("invalid inbound DAVE JSON opcode or framing".into()),
+                ),
                 _ => Ok(Self::Unknown(event.clone())),
             },
             DaveGatewayEvent::Binary {
@@ -159,7 +161,9 @@ impl DaveProtocolEvent {
                         welcome,
                     })
                 }
-                DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE => Err(VoiceError::Protocol("invalid inbound DAVE binary opcode or framing".into())),
+                DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE => Err(
+                    VoiceError::Protocol("invalid inbound DAVE binary opcode or framing".into()),
+                ),
                 _ => Ok(Self::Unknown(event.clone())),
             },
         }
@@ -273,10 +277,13 @@ impl DaveParticipantSet {
         if let DaveProtocolEvent::ClientsConnect { user_ids } = event {
             let mut additions = HashSet::new();
             for id in user_ids {
-                if !self.user_ids.contains(id) && additions.insert(*id)
+                if !self.user_ids.contains(id)
+                    && additions.insert(*id)
                     && self.user_ids.len().saturating_add(additions.len()) > limit
                 {
-                    return Err(VoiceError::Protocol("DAVE participant capacity exceeded".into()));
+                    return Err(VoiceError::Protocol(
+                        "DAVE participant capacity exceeded".into(),
+                    ));
                 }
             }
         }

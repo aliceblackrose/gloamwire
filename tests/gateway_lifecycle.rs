@@ -51,7 +51,9 @@ async fn reconnect_opcode_resumes_the_existing_gateway_session() {
         send_fixture(&mut second, RESUMED).await;
     });
 
-    let config = GatewayConfig::new("fixture-token", GatewayIntents::empty()).with_url(gateway_url).with_insecure_loopback(true);
+    let config = GatewayConfig::new("fixture-token", GatewayIntents::empty())
+        .with_url(gateway_url)
+        .with_insecure_loopback(true);
     let mut connection = timeout(Duration::from_secs(5), GatewayConnection::connect(config))
         .await
         .expect("Gateway connect timed out")
@@ -145,7 +147,8 @@ async fn managed_gateway_heartbeats_before_application_polls_events() {
         }
     });
     let config = GatewayConfig::new("fixture-token", GatewayIntents::empty())
-        .with_url(format!("ws://{address}")).with_insecure_loopback(true);
+        .with_url(format!("ws://{address}"))
+        .with_insecure_loopback(true);
     let mut driver = GatewayDriver::connect(config).await.expect("driver");
     timeout(Duration::from_secs(3), observed)
         .await

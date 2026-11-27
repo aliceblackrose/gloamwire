@@ -420,12 +420,24 @@ fn unrelated_message_update_preserves_newer_user_profile() {
     use gloamwire::model::UserId;
     let mut cache = Cache::new(gloamwire::CacheConfig::new().message_capacity(4));
     let events = [
-        ("MESSAGE_CREATE", json!({"id":"50","channel_id":"10","author":{"id":"2","username":"old"},"content":"old"})),
+        (
+            "MESSAGE_CREATE",
+            json!({"id":"50","channel_id":"10","author":{"id":"2","username":"old"},"content":"old"}),
+        ),
         ("USER_UPDATE", json!({"id":"2","username":"new"})),
-        ("MESSAGE_UPDATE", json!({"id":"50","channel_id":"10","content":"edited"})),
+        (
+            "MESSAGE_UPDATE",
+            json!({"id":"50","channel_id":"10","content":"edited"}),
+        ),
     ];
-    for (i, (name,data)) in events.into_iter().enumerate() {
-        cache.update_dispatch(&DispatchEvent {name:name.into(),sequence:i as u64+1,data}).unwrap();
+    for (i, (name, data)) in events.into_iter().enumerate() {
+        cache
+            .update_dispatch(&DispatchEvent {
+                name: name.into(),
+                sequence: i as u64 + 1,
+                data,
+            })
+            .unwrap();
     }
     assert_eq!(cache.user(UserId::new(2)).unwrap().username, "new");
     assert_eq!(cache.message(MessageId::new(50)).unwrap().content, "edited");

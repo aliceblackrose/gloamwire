@@ -462,8 +462,13 @@ impl GatewayConnection {
 
         if name == "READY" {
             let ready = serde_json::from_value::<ReadySessionData>(envelope.d.clone())?;
-            if !crate::secret::secure_websocket_endpoint(&ready.resume_gateway_url, self.config.allow_insecure_loopback && !self.config.url.starts_with("wss://")) {
-                return Err(Error::GatewayProtocol("insecure or invalid Gateway resume endpoint".into()));
+            if !crate::secret::secure_websocket_endpoint(
+                &ready.resume_gateway_url,
+                self.config.allow_insecure_loopback && !self.config.url.starts_with("wss://"),
+            ) {
+                return Err(Error::GatewayProtocol(
+                    "insecure or invalid Gateway resume endpoint".into(),
+                ));
             }
             self.session = Some(GatewaySession::new(
                 ready.session_id,
@@ -679,7 +684,9 @@ async fn open_and_handshake(
     let base_url = session.map_or(config.url.as_str(), GatewaySession::resume_gateway_url);
     let allow_loopback = config.allow_insecure_loopback && !config.url.starts_with("wss://");
     if !crate::secret::secure_websocket_endpoint(base_url, allow_loopback) {
-        return Err(Error::GatewayProtocol("Gateway endpoint must use TLS (except explicitly enabled loopback fixtures)".into()));
+        return Err(Error::GatewayProtocol(
+            "Gateway endpoint must use TLS (except explicitly enabled loopback fixtures)".into(),
+        ));
     }
     let url = gateway_url(base_url, config.encoding, config.compression);
     let timeout = Duration::from_secs(15);

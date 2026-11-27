@@ -78,7 +78,9 @@ where
         let config = config.with_max_dave_protocol_version(provider.max_protocol_version());
         let mut session = VoiceSession::connect(config).await?;
         if session.session_description().dave_protocol_version < minimum_dave_version {
-            return Err(VoiceError::Protocol("negotiated DAVE version is below configured minimum".into()));
+            return Err(VoiceError::Protocol(
+                "negotiated DAVE version is below configured minimum".into(),
+            ));
         }
         let commands = provider
             .configure_protocol_version(session.session_description().dave_protocol_version)
@@ -200,15 +202,20 @@ where
         // during command transmission, the session remains fail-closed.
         self.protocol_failed = true;
         match &dave_event {
-            DaveProtocolEvent::PrepareTransition { protocol_version, .. }
-            | DaveProtocolEvent::PrepareEpoch { protocol_version, .. }
-                if *protocol_version < self.minimum_dave_version =>
-            {
-                return Err(VoiceError::Protocol("DAVE downgrade below configured minimum".into()));
+            DaveProtocolEvent::PrepareTransition {
+                protocol_version, ..
+            }
+            | DaveProtocolEvent::PrepareEpoch {
+                protocol_version, ..
+            } if *protocol_version < self.minimum_dave_version => {
+                return Err(VoiceError::Protocol(
+                    "DAVE downgrade below configured minimum".into(),
+                ));
             }
             _ => {}
         }
-        self.participants.try_apply(&dave_event, self.participant_limit)?;
+        self.participants
+            .try_apply(&dave_event, self.participant_limit)?;
         // The provider owns MLS recovery and knows the pending epoch version.
         // Reconfiguring from the active version can downgrade an upgrade.
         let commands = self
@@ -216,7 +223,9 @@ where
             .handle_gateway_event(&dave_event, &self.participants)
             .map_err(provider_error)?;
         if self.provider.active_protocol_version() < self.minimum_dave_version {
-            return Err(VoiceError::Protocol("DAVE provider downgraded below configured minimum".into()));
+            return Err(VoiceError::Protocol(
+                "DAVE provider downgraded below configured minimum".into(),
+            ));
         }
         let result = send_commands(&mut self.session, commands).await;
         if result.is_ok() {
@@ -306,7 +315,10 @@ where
     }
 
     fn ensure_media_ready(&self) -> VoiceResult<()> {
-        if self.protocol_failed || !self.session.is_media_ready() || self.provider.active_protocol_version() < self.minimum_dave_version {
+        if self.protocol_failed
+            || !self.session.is_media_ready()
+            || self.provider.active_protocol_version() < self.minimum_dave_version
+        {
             return Err(VoiceError::Protocol(
                 "voice media unavailable; recover or restart session".into(),
             ));
