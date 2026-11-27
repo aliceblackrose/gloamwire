@@ -93,12 +93,38 @@ pub enum InteractionCallbackData {
 }
 
 /// Outgoing response to an interaction.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InteractionResponse {
     #[serde(rename = "type")]
     pub kind: InteractionCallbackType,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<InteractionCallbackData>,
+}
+
+impl<'de> Deserialize<'de> for InteractionResponse {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(rename = "type")]
+            kind: InteractionCallbackType,
+            data: Option<Value>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        let data = wire
+            .data
+            .map(|data| match wire.kind.0 {
+                8 => serde_json::from_value(data).map(InteractionCallbackData::Autocomplete),
+                9 => serde_json::from_value(data).map(InteractionCallbackData::Modal),
+                _ => serde_json::from_value(data).map(InteractionCallbackData::Message),
+            })
+            .transpose()
+            .map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            kind: wire.kind,
+            data,
+        })
+    }
 }
 
 impl InteractionResponse {
@@ -357,6 +383,18 @@ mod tests {
     use crate::model::{
         ApplicationIntegrationType, ComponentType, ComponentValue, InteractionContextType,
     };
+
+    #[test]
+    fn callback_message_round_trips_without_becoming_autocomplete() {
+        let value = serde_json::json!({"type": 4, "data": {"content": "hello"}});
+        let response: super::InteractionResponse =
+            serde_json::from_value(value.clone()).expect("response");
+        assert!(matches!(
+            &response.data,
+            Some(super::InteractionCallbackData::Message(_))
+        ));
+        assert_eq!(serde_json::to_value(response).expect("json"), value);
+    }
 
     #[test]
     fn parses_current_application_command_interaction() {

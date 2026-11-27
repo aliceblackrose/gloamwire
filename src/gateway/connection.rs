@@ -635,12 +635,45 @@ async fn open_and_handshake(
         .await?;
     } else {
         if let Some(coordinator) = &config.identify_coordinator {
-            coordinator
-                .acquire_identify(ShardId::new(config.shard_id()))
-                .await
-                .map_err(|error| {
-                    Error::GatewayProtocol(format!("Gateway Identify coordination failed: {error}"))
-                })?;
+            let reservation = coordinator.acquire_identify(ShardId::new(config.shard_id()));
+            tokio::pin!(reservation);
+            let mut acknowledged = true;
+            loop {
+                tokio::select! {
+                    result = &mut reservation => {
+                        result.map_err(|error| {
+                            Error::GatewayProtocol(format!("Gateway Identify coordination failed: {error}"))
+                        })?;
+                        break;
+                    }
+                    _ = heartbeat.tick() => {
+                        if !acknowledged {
+                            return Err(Error::GatewayClosed {
+                                code: None,
+                                reason: "Gateway heartbeat not acknowledged while awaiting Identify".to_owned(),
+                            });
+                        }
+                        send_heartbeat(&mut socket, rate_limiter, config.encoding, None).await?;
+                        acknowledged = false;
+                    }
+                    envelope = next_envelope(&mut socket, &mut decoder, config.encoding) => {
+                        match envelope?.op {
+                            11 => acknowledged = true,
+                            1 => {
+                                send_heartbeat(&mut socket, rate_limiter, config.encoding, None).await?;
+                                acknowledged = false;
+                            }
+                            7 | 9 => {
+                                return Err(Error::GatewayClosed {
+                                    code: None,
+                                    reason: "Gateway requested recovery while awaiting Identify".to_owned(),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
         }
 
         send_encoded(

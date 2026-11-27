@@ -164,6 +164,18 @@ mod tests {
     use super::{VoiceEncryptionMode, VoiceError};
 
     #[test]
+    fn session_description_debug_redacts_transport_key() {
+        let description = super::VoiceSessionDescription {
+            mode: VoiceEncryptionMode::from("test"),
+            secret_key: [123; 32],
+            dave_protocol_version: 0,
+        };
+        let debug = format!("{description:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("123"));
+    }
+
+    #[test]
     fn prefers_aes_when_available() {
         let modes = vec![
             VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE),

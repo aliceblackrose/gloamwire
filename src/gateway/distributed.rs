@@ -3,7 +3,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
-    time::{Instant, MissedTickBehavior},
+    time::Instant,
 };
 
 use crate::{
@@ -286,104 +286,95 @@ async fn run_shard_supervisor<C>(
             "acquired distributed Gateway shard lease"
         );
 
-        let mut gateway = match GatewayConnection::connect(gateway_config.clone()).await {
-            Ok(gateway) => gateway,
-            Err(error) => {
-                if event_tx.send(Err(error)).await.is_err() {
-                    let _ = coordinator.release_shard(&owner_id, shard_id).await;
-                    return;
-                }
-                release_lease(&event_tx, &*coordinator, &owner_id, shard_id).await;
-                if wait_or_shutdown(&mut shutdown, distributed.acquire_interval).await {
-                    return;
-                }
-                continue;
+        // Keep renewal alive even when connecting, identifying, reconnecting,
+        // or waiting for an application consumer to make room in its queue.
+        let result = tokio::select! {
+            result = run_owned_shard(
+                gateway_config.clone(),
+                shard_id,
+                &event_tx,
+                &mut shutdown,
+            ) => result,
+            result = renew_owned_shard(&*coordinator, &owner_id, shard_id, distributed) => {
+                // Dropping the owned-shard future also drops its socket.
+                result
             }
         };
 
-        let mut renew = tokio::time::interval_at(
-            Instant::now() + distributed.renew_interval,
-            distributed.renew_interval,
-        );
-        renew.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let mut should_stop = false;
+        release_lease(&event_tx, &*coordinator, &owner_id, shard_id).await;
+        if let Err(error) = result
+            && event_tx.send(Err(error)).await.is_err()
+        {
+            return;
+        }
+        if shutdown_requested(&shutdown)
+            || event_tx.is_closed()
+            || wait_or_shutdown(&mut shutdown, distributed.acquire_interval).await
+        {
+            return;
+        }
+    }
+}
 
-        loop {
-            tokio::select! {
-                changed = shutdown.changed() => {
-                    if changed.is_err() || shutdown_requested(&shutdown) {
-                        let _ = gateway.shutdown().await;
-                        should_stop = true;
-                        break;
-                    }
-                }
-                _ = renew.tick() => {
-                    match coordinator
-                        .renew_shard(&owner_id, shard_id, distributed.lease_ttl)
-                        .await
-                    {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            let _ = gateway.shutdown().await;
-                            let error = GatewayCoordinationError::new(format!(
-                                "distributed shard {} lease was lost by owner {}",
-                                shard_id.get(), owner_id
-                            ));
-                            if !send_coordination_error(
-                                &event_tx,
-                                shard_id,
-                                "renewing shard lease",
-                                error,
-                            )
-                            .await
-                            {
-                                return;
-                            }
-                            break;
-                        }
-                        Err(error) => {
-                            // A failed renewal is treated as loss of ownership. Continuing to
-                            // run would risk two processes serving the same shard.
-                            let _ = gateway.shutdown().await;
-                            if !send_coordination_error(
-                                &event_tx,
-                                shard_id,
-                                "renewing shard lease",
-                                error,
-                            )
-                            .await
-                            {
-                                return;
-                            }
-                            break;
-                        }
-                    }
-                }
-                event = gateway.next_event() => {
-                    match event {
-                        Ok(event) => {
-                            if event_tx.send(Ok(ShardEvent { shard_id, event })).await.is_err() {
-                                let _ = gateway.shutdown().await;
-                                release_lease(&event_tx, &*coordinator, &owner_id, shard_id).await;
-                                return;
-                            }
-                        }
-                        Err(error) => {
-                            if event_tx.send(Err(error)).await.is_err() {
-                                release_lease(&event_tx, &*coordinator, &owner_id, shard_id).await;
-                                return;
-                            }
-                            break;
-                        }
-                    }
+async fn run_owned_shard(
+    config: GatewayConfig,
+    shard_id: ShardId,
+    event_tx: &mpsc::Sender<Result<ShardEvent>>,
+    shutdown: &mut watch::Receiver<bool>,
+) -> Result<()> {
+    let mut gateway = tokio::select! {
+        result = GatewayConnection::connect(config) => result?,
+        _ = shutdown.changed() => return Ok(()),
+        _ = event_tx.closed() => return Ok(()),
+    };
+
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => {
+                let _ = gateway.shutdown().await;
+                return Ok(());
+            }
+            event = gateway.next_event() => {
+                let event = event?;
+                if event_tx.send(Ok(ShardEvent { shard_id, event })).await.is_err() {
+                    let _ = gateway.shutdown().await;
+                    return Ok(());
                 }
             }
         }
+    }
+}
 
-        release_lease(&event_tx, &*coordinator, &owner_id, shard_id).await;
-        if should_stop || wait_or_shutdown(&mut shutdown, distributed.acquire_interval).await {
-            return;
+async fn renew_owned_shard<C>(
+    coordinator: &C,
+    owner_id: &str,
+    shard_id: ShardId,
+    distributed: DistributedShardConfig,
+) -> Result<()>
+where
+    C: DistributedShardCoordinator + ?Sized,
+{
+    let mut deadline = Instant::now() + distributed.lease_ttl;
+    loop {
+        tokio::time::sleep(distributed.renew_interval).await;
+        let started = Instant::now();
+        let renewed = tokio::time::timeout_at(
+            deadline,
+            coordinator.renew_shard(owner_id, shard_id, distributed.lease_ttl),
+        )
+        .await
+        .map_err(|_| Error::GatewayProtocol("distributed shard lease renewal timed out".into()))?
+        .map_err(|error| {
+            Error::GatewayProtocol(format!("distributed shard lease renewal failed: {error}"))
+        })?;
+        if !renewed {
+            return Err(Error::GatewayProtocol(format!(
+                "distributed shard {} lease was lost by owner {owner_id}",
+                shard_id.get()
+            )));
         }
+        // Conservatively measure the next lease from the request start.
+        deadline = started + distributed.lease_ttl;
     }
 }
 

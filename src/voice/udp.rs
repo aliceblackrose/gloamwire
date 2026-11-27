@@ -71,7 +71,8 @@ impl VoiceUdpSocket {
         let mut received = None;
         for _ in 0..3 {
             self.socket.send(&request).await?;
-            if let Ok(result) = tokio::time::timeout(timeout, self.socket.recv(&mut response)).await {
+            if let Ok(result) = tokio::time::timeout(timeout, self.socket.recv(&mut response)).await
+            {
                 received = Some(result?);
                 break;
             }

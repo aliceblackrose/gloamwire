@@ -169,7 +169,7 @@ pub enum Error {
 
     /// An HTTP transport error occurred.
     #[error(transparent)]
-    Http(#[source] reqwest::Error),
+    Http(reqwest::Error),
 
     /// Reading a file-backed upload failed.
     #[error(transparent)]

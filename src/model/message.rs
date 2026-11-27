@@ -351,6 +351,13 @@ mod tests {
     use crate::model::{AttachmentId, ComponentType, PollLayoutType};
 
     #[test]
+    fn allowed_mentions_keeps_explicit_empty_parse_array() {
+        let mentions = super::AllowedMentions::default();
+        let value = serde_json::to_value(mentions).expect("mentions");
+        assert_eq!(value, serde_json::json!({"parse": []}));
+    }
+
+    #[test]
     fn message_collections_default_when_omitted() {
         let message: Message = serde_json::from_str(
             r#"{
