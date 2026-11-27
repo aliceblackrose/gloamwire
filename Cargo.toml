@@ -32,6 +32,8 @@ transport = [
     "reqwest/system-proxy",
 ]
 cache = ["transport"]
+# Unstable, test-only hooks for the separate cargo-fuzz package.
+fuzzing = ["voice", "compression-zlib", "compression-zstd"]
 compression-zlib = ["transport", "dep:flate2"]
 compression-zstd = ["transport", "dep:zstd"]
 tls-rustls-native-roots = [

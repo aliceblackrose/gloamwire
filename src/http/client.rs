@@ -650,6 +650,13 @@ fn retry_delay(base: Duration, attempt: usize) -> Duration {
     )
 }
 
+#[cfg(feature = "fuzzing")]
+pub(super) fn fuzz_response_error(bytes: &[u8]) {
+    let error = response_error(reqwest::StatusCode::BAD_REQUEST, bytes);
+    let _ = error.to_string();
+    let _ = format!("{error:?}");
+}
+
 fn response_error(status: reqwest::StatusCode, bytes: &[u8]) -> Error {
     if let Ok(api_error) = serde_json::from_slice::<ApiErrorResponse>(bytes) {
         if let Some(raw_errors) = api_error.errors {

@@ -60,3 +60,10 @@ pub use webhook::{
     ExecuteWebhook, ExecuteWebhookQuery, ModifyWebhook, ModifyWebhookWithToken,
     WebhookMessageQuery,
 };
+
+/// Unstable REST error-parser hook for cargo-fuzz.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub fn fuzz_response_error(bytes: &[u8]) {
+    client::fuzz_response_error(bytes);
+}

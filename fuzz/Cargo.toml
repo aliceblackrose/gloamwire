@@ -1,0 +1,72 @@
+[package]
+name = "gloamwire-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+gloamwire = { path = "..", default-features = false, features = ["fuzzing"] }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "gateway_json"
+path = "fuzz_targets/gateway_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gateway_etf"
+path = "fuzz_targets/gateway_etf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gateway_zlib"
+path = "fuzz_targets/gateway_zlib.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gateway_zstd"
+path = "fuzz_targets/gateway_zstd.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "voice_rtp"
+path = "fuzz_targets/voice_rtp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "voice_aead"
+path = "fuzz_targets/voice_aead.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dave"
+path = "fuzz_targets/dave.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rest_error"
+path = "fuzz_targets/rest_error.rs"
+test = false
+doc = false
+bench = false

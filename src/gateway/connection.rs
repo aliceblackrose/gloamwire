@@ -834,6 +834,20 @@ async fn open_and_handshake(
     Ok((socket, decoder, heartbeat, last_heartbeat_sent))
 }
 
+#[cfg(feature = "fuzzing")]
+pub(super) fn fuzz_envelope(encoding: GatewayEncoding, bytes: &[u8]) {
+    if let Ok(envelope) = encoding.decode_bytes::<InboundEnvelope>(bytes)
+        && let (0, Some(name), Some(sequence)) = (envelope.op, envelope.t, envelope.s)
+    {
+        let dispatch = super::DispatchEvent {
+            name,
+            sequence,
+            data: envelope.d,
+        };
+        let _ = dispatch.typed();
+    }
+}
+
 async fn next_envelope(
     socket: &mut GatewaySocket,
     decoder: &mut GatewayDecoder,
