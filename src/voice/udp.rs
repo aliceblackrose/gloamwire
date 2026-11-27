@@ -66,11 +66,14 @@ impl VoiceUdpSocket {
         request[..2].copy_from_slice(&DISCOVERY_REQUEST_TYPE.to_be_bytes());
         request[2..4].copy_from_slice(&DISCOVERY_PAYLOAD_BYTES.to_be_bytes());
         request[4..8].copy_from_slice(&self.ssrc.to_be_bytes());
-        let mut response = [0_u8; DISCOVERY_PACKET_BYTES];
+        // One extra byte makes an oversized datagram distinguishable from a valid reply.
+        let mut response = [0_u8; DISCOVERY_PACKET_BYTES + 1];
         let timeout = std::time::Duration::from_secs(3);
         let mut received = None;
         for _ in 0..3 {
-            self.socket.send(&request).await?;
+            tokio::time::timeout(timeout, self.socket.send(&request))
+                .await
+                .map_err(|_| VoiceError::Timeout(timeout))??;
             if let Ok(result) = tokio::time::timeout(timeout, self.socket.recv(&mut response)).await
             {
                 received = Some(result?);
@@ -116,13 +119,18 @@ impl VoiceUdpSocket {
                 )
             })?
             .to_owned();
-        if address.is_empty() {
+        if address.parse::<std::net::IpAddr>().is_err() {
             return Err(VoiceError::InvalidDiscoveryResponse(
-                "external address was empty".to_owned(),
+                "external address was not an IP address".to_owned(),
             ));
         }
 
         let port = u16::from_be_bytes([response[72], response[73]]);
+        if port == 0 {
+            return Err(VoiceError::InvalidDiscoveryResponse(
+                "external port was zero".into(),
+            ));
+        }
         Ok(VoiceUdpDiscovery { address, port })
     }
 

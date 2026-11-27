@@ -31,6 +31,10 @@ pub struct VoiceSession {
     description: VoiceSessionDescription,
     transport_crypto: VoiceTransportCrypto,
     pending: VecDeque<VoiceGatewayEvent>,
+    retired_keys: zeroize::Zeroizing<Vec<[u8; 32]>>,
+    key_generation: u64,
+    media_ready: bool,
+    restart_required: bool,
 }
 
 impl std::fmt::Debug for VoiceSession {
@@ -112,6 +116,10 @@ impl VoiceSession {
             description,
             transport_crypto,
             pending,
+            retired_keys: zeroize::Zeroizing::new(Vec::new()),
+            key_generation: 0,
+            media_ready: true,
+            restart_required: false,
         })
     }
 
@@ -166,10 +174,19 @@ impl VoiceSession {
     /// Returns the next Voice Gateway event, including events buffered while
     /// waiting for Session Description or Resume completion.
     pub async fn next_event(&mut self) -> VoiceResult<VoiceGatewayEvent> {
-        if let Some(event) = self.pending.pop_front() {
-            return Ok(event);
-        }
-        self.gateway.next_event().await
+        let event = if let Some(event) = self.pending.pop_front() {
+            event
+        } else {
+            match self.gateway.next_event().await {
+                Ok(event) => event,
+                Err(error) => {
+                    self.media_ready = false;
+                    return Err(error);
+                }
+            }
+        };
+        self.apply_transport_event(&event)?;
+        Ok(event)
     }
 
     pub(super) async fn next_input<F: std::future::Future>(
@@ -179,6 +196,7 @@ impl VoiceSession {
     ) -> VoiceResult<VoiceInput<F::Output>> {
         use futures_util::future::Either;
         if let Some(event) = self.pending.pop_front() {
+            self.apply_transport_event(&event)?;
             return Ok(VoiceInput::Gateway(event));
         }
         let udp = &self.udp;
@@ -190,12 +208,77 @@ impl VoiceSession {
                     received = udp.recv(buffer) => Either::Right(received),
                 }
             })
-            .await?;
+            .await;
+        let input = match input {
+            Ok(input) => input,
+            Err(error) => {
+                self.media_ready = false;
+                return Err(error);
+            }
+        };
         match input {
-            Either::Left(event) => Ok(VoiceInput::Gateway(event)),
+            Either::Left(event) => {
+                self.apply_transport_event(&event)?;
+                Ok(VoiceInput::Gateway(event))
+            }
             Either::Right(Either::Left(output)) => Ok(VoiceInput::External(output)),
             Either::Right(Either::Right(received)) => Ok(VoiceInput::Udp(received?)),
         }
+    }
+
+    /// Whether the negotiated transport may currently be used for media.
+    #[must_use]
+    pub const fn is_media_ready(&self) -> bool {
+        self.media_ready && !self.restart_required
+    }
+
+    pub(super) const fn key_generation(&self) -> u64 {
+        self.key_generation
+    }
+
+    fn apply_transport_event(&mut self, event: &VoiceGatewayEvent) -> VoiceResult<()> {
+        if self.restart_required {
+            return Err(super::VoiceError::Protocol(
+                "voice session must be restarted".into(),
+            ));
+        }
+        match event {
+            VoiceGatewayEvent::SessionDescription(description) => {
+                if description.mode != self.mode
+                    || description.dave_protocol_version != self.description.dave_protocol_version
+                {
+                    self.media_ready = false;
+                    self.restart_required = true;
+                    return Err(super::VoiceError::Protocol(
+                        "voice protocol changed; restart session".into(),
+                    ));
+                }
+                if description.secret_key != self.description.secret_key {
+                    // Never reset the nonce counter for a previously used key.
+                    if self.retired_keys.len() >= 32
+                        || self.retired_keys.contains(&description.secret_key)
+                    {
+                        self.media_ready = false;
+                        self.restart_required = true;
+                        return Err(super::VoiceError::Protocol(
+                            "voice key reuse or rekey limit; restart session".into(),
+                        ));
+                    }
+                    let was_ready = self.media_ready;
+                    self.media_ready = false;
+                    let crypto = VoiceTransportCrypto::from_session_description(description)?;
+                    self.retired_keys.push(self.description.secret_key);
+                    self.transport_crypto = crypto;
+                    self.description = description.clone();
+                    self.key_generation += 1;
+                    // A rekey buffered during Resume must not bypass recovery.
+                    self.media_ready = was_ready;
+                }
+            }
+            VoiceGatewayEvent::Resumed => self.media_ready = true,
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Applies the reconnect policy for a Voice Gateway close.
@@ -207,23 +290,37 @@ impl VoiceSession {
         &mut self,
         code: Option<VoiceCloseCode>,
     ) -> VoiceResult<VoiceRecoveryOutcome> {
+        self.media_ready = false;
         let strategy = code.map_or(
             VoiceReconnectStrategy::Resume,
             VoiceCloseCode::reconnect_strategy,
         );
+        if self.restart_required && strategy != VoiceReconnectStrategy::Stop {
+            return Ok(VoiceRecoveryOutcome::RestartRequired);
+        }
         match strategy {
             VoiceReconnectStrategy::Resume => {
+                self.pending
+                    .retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
                 self.gateway.resume().await?;
                 Ok(VoiceRecoveryOutcome::Resumed)
             }
-            VoiceReconnectStrategy::Restart => Ok(VoiceRecoveryOutcome::RestartRequired),
-            VoiceReconnectStrategy::Stop => Ok(VoiceRecoveryOutcome::Stopped),
+            VoiceReconnectStrategy::Restart => {
+                self.restart_required = true;
+                Ok(VoiceRecoveryOutcome::RestartRequired)
+            }
+            VoiceReconnectStrategy::Stop => {
+                self.restart_required = true;
+                Ok(VoiceRecoveryOutcome::Stopped)
+            }
         }
     }
 
     /// Gracefully closes the Voice Gateway. The UDP socket is released when the
     /// session is dropped.
     pub async fn shutdown(&mut self) -> VoiceResult<()> {
+        self.media_ready = false;
+        self.restart_required = true;
         self.gateway.shutdown().await
     }
 }
@@ -409,7 +506,7 @@ mod tests {
             let heartbeat = recv_json(&mut socket, "Voice heartbeat").await;
             assert_eq!(heartbeat["op"], 3);
             assert_eq!(heartbeat["d"]["seq_ack"], 12);
-            send_json(&mut socket, 6, json!({}), Some(13)).await;
+            send_json(&mut socket, 6, json!({"t": heartbeat["d"]["t"]}), Some(13)).await;
             within(
                 "fixture crash close",
                 socket.send(Message::Close(Some(CloseFrame {
@@ -451,7 +548,8 @@ mod tests {
             session_id: "fixture-session".to_owned(),
             token: "fixture-token".to_owned(),
             endpoint: format!("ws://{websocket_addr}"),
-        });
+        })
+        .with_insecure_loopback(true);
         let mut session = within("VoiceSession::connect", VoiceSession::connect(config))
             .await
             .expect("voice session");
@@ -485,12 +583,14 @@ mod tests {
             panic!("expected Voice Gateway close error");
         };
         assert_eq!(code, Some(VoiceCloseCode::SERVER_CRASHED));
+        assert!(!session.is_media_ready());
         assert_eq!(
             within("Voice Resume recovery", session.recover_after_close(code))
                 .await
                 .expect("resume recovery"),
             VoiceRecoveryOutcome::Resumed
         );
+        assert!(!session.is_media_ready());
 
         let VoiceGatewayEvent::Speaking(speaking) =
             within("buffered resumed Speaking event", session.next_event())
@@ -500,6 +600,7 @@ mod tests {
             panic!("expected buffered resumed Speaking event");
         };
         assert_eq!(speaking.ssrc, 88);
+        assert!(!session.is_media_ready());
         assert_eq!(
             within("Resumed event", session.next_event())
                 .await
@@ -507,6 +608,27 @@ mod tests {
             VoiceGatewayEvent::Resumed
         );
         assert_eq!(session.gateway().sequence(), Some(15));
+        assert!(session.is_media_ready());
+
+        // Repeated descriptions must not reset the outgoing nonce.
+        let mut sequencer = crate::voice::VoiceRtpSequencer::new(SSRC);
+        session
+            .transport_crypto_mut()
+            .encrypt_audio(sequencer.next_header(), &[1])
+            .expect("first packet");
+        let original = session.session_description().clone();
+        session
+            .apply_transport_event(&VoiceGatewayEvent::SessionDescription(original.clone()))
+            .expect("same key");
+        assert_eq!(session.transport_crypto().next_send_nonce(), Some(1));
+        let mut replacement = original.clone();
+        replacement.secret_key = [8; 32];
+        session
+            .apply_transport_event(&VoiceGatewayEvent::SessionDescription(replacement))
+            .expect("new key");
+        assert_eq!(session.key_generation(), 1);
+        assert_eq!(session.transport_crypto().next_send_nonce(), Some(0));
+        assert!(session.is_media_ready());
 
         assert_eq!(
             within(
@@ -526,6 +648,8 @@ mod tests {
             .expect("stop classification"),
             VoiceRecoveryOutcome::Stopped
         );
+
+        assert!(!session.is_media_ready());
 
         within("UDP fixture task", udp_task)
             .await

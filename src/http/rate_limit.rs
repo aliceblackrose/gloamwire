@@ -17,7 +17,7 @@ const GLOBAL_WINDOW: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Default)]
 pub(crate) struct RateLimiter {
-    state: Mutex<RateLimitState>,
+    state: std::sync::Mutex<RateLimitState>,
     shared: Arc<SharedRateLimits>,
 }
 
@@ -61,6 +61,7 @@ impl SharedRateLimits {
 struct RateLimitState {
     global_requests: VecDeque<Instant>,
     global_until: Option<Instant>,
+    ambiguous_429s: usize,
     route_buckets: HashMap<String, String>,
     buckets: HashMap<RateLimitBucketKey, BucketState>,
 }
@@ -81,9 +82,43 @@ enum RateLimitBucketKey {
 struct BucketState {
     remaining: u32,
     reset_at: Instant,
+    cooldown_until: Option<Instant>,
+}
+
+/// Cancellation-safe provisional admission barrier for an unclassified 429.
+pub(crate) struct Ambiguous429<'a> {
+    limiter: &'a RateLimiter,
+    classified: bool,
+}
+
+impl Ambiguous429<'_> {
+    pub(crate) fn classified(mut self) {
+        self.classified = true;
+    }
+}
+
+impl Drop for Ambiguous429<'_> {
+    fn drop(&mut self) {
+        let mut state = self.limiter.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.ambiguous_429s -= 1;
+        if !self.classified {
+            state.global_until = later(state.global_until, Instant::now() + Duration::from_secs(1));
+        }
+    }
 }
 
 impl RateLimiter {
+    pub(crate) fn begin_ambiguous_429(&self) -> Ambiguous429<'_> {
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .ambiguous_429s += 1;
+        Ambiguous429 {
+            limiter: self,
+            classified: false,
+        }
+    }
+
     pub(crate) fn with_shared(shared: Arc<SharedRateLimits>) -> Self {
         Self {
             shared,
@@ -99,7 +134,7 @@ impl RateLimiter {
                 .await
                 .lock_owned()
                 .await;
-            match self.try_acquire(route).await {
+            match self.try_acquire(route) {
                 None => return guard,
                 Some(deadline) => {
                     drop(guard);
@@ -114,8 +149,8 @@ impl RateLimiter {
         drop(self.reserve(route).await);
     }
 
-    async fn try_acquire(&self, route: &Route) -> Option<Instant> {
-        let mut state = self.state.lock().await;
+    fn try_acquire(&self, route: &Route) -> Option<Instant> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
 
         while state
@@ -133,6 +168,9 @@ impl RateLimiter {
         }
 
         let mut wait_until = state.global_until.filter(|deadline| *deadline > now);
+        if state.ambiguous_429s > 0 {
+            wait_until = later(wait_until, now + Duration::from_millis(50));
+        }
         if let Some(deadline) = self.shared.cooldown(route.resource_major(), now) {
             wait_until = later(wait_until, deadline);
         }
@@ -151,11 +189,13 @@ impl RateLimiter {
             .map(|hash| bucket_key(hash, route.major()))
             .unwrap_or_else(|| provisional_bucket_key(&route_identity, route.major()));
 
-        if let Some(bucket) = state.buckets.get(&bucket_key)
-            && bucket.remaining == 0
-            && bucket.reset_at > now
-        {
-            wait_until = later(wait_until, bucket.reset_at);
+        if let Some(bucket) = state.buckets.get(&bucket_key) {
+            if bucket.remaining == 0 && bucket.reset_at > now {
+                wait_until = later(wait_until, bucket.reset_at);
+            }
+            if let Some(deadline) = bucket.cooldown_until.filter(|deadline| *deadline > now) {
+                wait_until = later(wait_until, deadline);
+            }
         }
 
         if wait_until.is_none() {
@@ -173,7 +213,21 @@ impl RateLimiter {
         wait_until
     }
 
-    pub(crate) async fn update(
+    /// A limiter with a live bucket/global deadline must not be evicted.
+    pub(crate) fn has_live_cooldown(&self, now: Instant) -> bool {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.ambiguous_429s > 0
+            || state
+                .global_requests
+                .back()
+                .is_some_and(|time| now.saturating_duration_since(*time) < GLOBAL_WINDOW)
+            || state.global_until.is_some_and(|until| until > now)
+            || state.buckets.values().any(|bucket| {
+                bucket.reset_at > now || bucket.cooldown_until.is_some_and(|until| until > now)
+            })
+    }
+
+    pub(crate) fn update(
         &self,
         route: &Route,
         status: StatusCode,
@@ -181,7 +235,7 @@ impl RateLimiter {
         retry_after: Option<Duration>,
         global: bool,
     ) {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         let route_identity = route.identity();
         let bucket_hash = header_str(headers, "x-ratelimit-bucket").map(str::to_owned);
@@ -195,7 +249,25 @@ impl RateLimiter {
             "updated Discord REST rate-limit state"
         );
 
+        let previous_key = state
+            .route_buckets
+            .get(&route_identity)
+            .map(|hash| bucket_key(hash, route.major()))
+            .unwrap_or_else(|| provisional_bucket_key(&route_identity, route.major()));
         if let Some(hash) = &bucket_hash {
+            let next_key = bucket_key(hash, route.major());
+            if previous_key != next_key
+                && let Some(previous) = state.buckets.get(&previous_key).copied()
+                && (previous.reset_at > now
+                    || previous.cooldown_until.is_some_and(|until| until > now))
+            {
+                let next = state.buckets.entry(next_key).or_insert(previous);
+                next.remaining = next.remaining.min(previous.remaining);
+                next.reset_at = next.reset_at.max(previous.reset_at);
+                if let Some(until) = previous.cooldown_until {
+                    next.cooldown_until = later(next.cooldown_until, until);
+                }
+            }
             state
                 .route_buckets
                 .insert(route_identity.clone(), hash.clone());
@@ -232,9 +304,11 @@ impl RateLimiter {
                 let bucket = state.buckets.entry(bucket_key).or_insert(BucketState {
                     remaining: 0,
                     reset_at: deadline,
+                    cooldown_until: Some(deadline),
                 });
                 bucket.remaining = 0;
                 bucket.reset_at = bucket.reset_at.max(deadline);
+                bucket.cooldown_until = later(bucket.cooldown_until, deadline);
             }
             return;
         }
@@ -251,15 +325,16 @@ impl RateLimiter {
             let bucket = state.buckets.entry(bucket_key).or_insert(BucketState {
                 remaining,
                 reset_at,
+                cooldown_until: None,
             });
-            if bucket.remaining == 0 && bucket.reset_at > now {
-                // Preserve a live 429 cooldown. Single-flight reservations
-                // prevent older successful responses from racing newer ones.
+            if bucket.cooldown_until.is_some_and(|until| until > now) {
+                // A response must not erase a separately recorded 429 deadline.
                 bucket.reset_at = bucket.reset_at.max(reset_at);
             } else {
                 *bucket = BucketState {
                     remaining,
                     reset_at,
+                    cooldown_until: None,
                 };
             }
         }
@@ -298,23 +373,72 @@ mod tests {
     use super::{RateLimiter, bucket_key, provisional_bucket_key};
     use crate::http::route::Route;
 
+    #[test]
+    fn bucket_remapping_preserves_cooldown_but_success_restores_ordinary_capacity() {
+        let limiter = RateLimiter::default();
+        let route = Route::current_user();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ratelimit-bucket", "old".parse().unwrap());
+        headers.insert("x-ratelimit-remaining", "1".parse().unwrap());
+        headers.insert("x-ratelimit-reset-after", "10".parse().unwrap());
+        limiter.update(&route, StatusCode::OK, &headers, None, false);
+        assert!(limiter.try_acquire(&route).is_none());
+        limiter.update(&route, StatusCode::OK, &headers, None, false);
+        assert!(limiter.try_acquire(&route).is_none());
+        limiter.update(
+            &route,
+            StatusCode::TOO_MANY_REQUESTS,
+            &headers,
+            Some(Duration::from_secs(10)),
+            false,
+        );
+        headers.insert("x-ratelimit-bucket", "new".parse().unwrap());
+        limiter.update(&route, StatusCode::OK, &headers, None, false);
+        assert!(limiter.try_acquire(&route).is_some());
+    }
+
+    #[test]
+    fn ambiguous_global_rate_limit_blocks_other_routes_until_classified() {
+        let limiter = RateLimiter::default();
+        let guard = limiter.begin_ambiguous_429();
+        assert!(limiter.try_acquire(&Route::gateway_bot()).is_some());
+        guard.classified();
+        assert!(limiter.try_acquire(&Route::gateway_bot()).is_none());
+        drop(limiter.begin_ambiguous_429());
+        assert!(limiter.try_acquire(&Route::current_user()).is_some());
+    }
+
+    #[test]
+    fn active_cooldown_prevents_limiter_eviction() {
+        let limiter = RateLimiter::default();
+        let route = Route::current_user();
+        limiter.update(
+            &route,
+            StatusCode::TOO_MANY_REQUESTS,
+            &HeaderMap::new(),
+            Some(Duration::from_secs(30)),
+            true,
+        );
+        let now = tokio::time::Instant::now();
+        assert!(limiter.has_live_cooldown(now));
+        assert!(!limiter.has_live_cooldown(now + Duration::from_secs(31)));
+    }
+
     #[tokio::test]
     async fn global_scope_header_applies_before_body() {
         let limiter = RateLimiter::default();
         let route = Route::current_user();
         let mut headers = HeaderMap::new();
         headers.insert("x-ratelimit-scope", "global".parse().unwrap());
-        limiter
-            .update(
-                &route,
-                StatusCode::TOO_MANY_REQUESTS,
-                &headers,
-                Some(Duration::from_secs(5)),
-                false,
-            )
-            .await;
-        assert!(limiter.try_acquire(&Route::gateway_bot()).await.is_some());
-        assert!(limiter.state.lock().await.global_until.is_some());
+        limiter.update(
+            &route,
+            StatusCode::TOO_MANY_REQUESTS,
+            &headers,
+            Some(Duration::from_secs(5)),
+            false,
+        );
+        assert!(limiter.try_acquire(&Route::gateway_bot()).is_some());
+        assert!(limiter.state.lock().unwrap().global_until.is_some());
     }
 
     #[tokio::test]
@@ -322,15 +446,13 @@ mod tests {
         let limiter = RateLimiter::default();
         let route = Route::current_user();
 
-        limiter
-            .update(
-                &route,
-                StatusCode::TOO_MANY_REQUESTS,
-                &HeaderMap::new(),
-                Some(Duration::from_millis(20)),
-                true,
-            )
-            .await;
+        limiter.update(
+            &route,
+            StatusCode::TOO_MANY_REQUESTS,
+            &HeaderMap::new(),
+            Some(Duration::from_millis(20)),
+            true,
+        );
 
         let started = tokio::time::Instant::now();
         limiter.acquire(&route).await;
@@ -345,22 +467,16 @@ mod tests {
         headers.insert("x-ratelimit-bucket", "bucket".parse().unwrap());
         headers.insert("x-ratelimit-remaining", "1".parse().unwrap());
         headers.insert("x-ratelimit-reset-after", "10".parse().unwrap());
-        limiter
-            .update(&route, StatusCode::OK, &headers, None, false)
-            .await;
-        limiter
-            .update(
-                &route,
-                StatusCode::TOO_MANY_REQUESTS,
-                &HeaderMap::new(),
-                Some(Duration::from_secs(10)),
-                false,
-            )
-            .await;
-        limiter
-            .update(&route, StatusCode::OK, &headers, None, false)
-            .await;
-        let state = limiter.state.lock().await;
+        limiter.update(&route, StatusCode::OK, &headers, None, false);
+        limiter.update(
+            &route,
+            StatusCode::TOO_MANY_REQUESTS,
+            &HeaderMap::new(),
+            Some(Duration::from_secs(10)),
+            false,
+        );
+        limiter.update(&route, StatusCode::OK, &headers, None, false);
+        let state = limiter.state.lock().unwrap();
         assert_eq!(
             state.buckets[&bucket_key("bucket", route.major())].remaining,
             0
@@ -376,15 +492,13 @@ mod tests {
         let b = Route::create_message(crate::model::ChannelId::new(2));
         let mut headers = HeaderMap::new();
         headers.insert("x-ratelimit-scope", "shared".parse().unwrap());
-        first
-            .update(
-                &a,
-                StatusCode::TOO_MANY_REQUESTS,
-                &headers,
-                Some(Duration::from_secs(5)),
-                false,
-            )
-            .await;
+        first.update(
+            &a,
+            StatusCode::TOO_MANY_REQUESTS,
+            &headers,
+            Some(Duration::from_secs(5)),
+            false,
+        );
         assert!(
             tokio::time::timeout(Duration::from_millis(20), second.reserve(&a))
                 .await
@@ -407,9 +521,7 @@ mod tests {
         headers.insert("x-ratelimit-remaining", "5".parse().unwrap());
         headers.insert("x-ratelimit-reset-after", "10".parse().unwrap());
         for route in [&first, &second] {
-            limiter
-                .update(route, StatusCode::OK, &headers, None, false)
-                .await;
+            limiter.update(route, StatusCode::OK, &headers, None, false);
         }
         let held = limiter.reserve(&first).await;
         assert!(

@@ -8,10 +8,10 @@ use tokio::{
     time::{Instant, Interval, MissedTickBehavior},
 };
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async,
+    MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{
         Message,
-        protocol::{CloseFrame, frame::coding::CloseCode},
+        protocol::{CloseFrame, WebSocketConfig, frame::coding::CloseCode},
     },
 };
 
@@ -49,6 +49,7 @@ pub struct GatewayConfig {
     token: crate::secret::SecretString,
     intents: GatewayIntents,
     url: String,
+    allow_insecure_loopback: bool,
     shard: Option<[u32; 2]>,
     identify_coordinator: Option<Arc<dyn GatewayIdentifyCoordinator>>,
     encoding: GatewayEncoding,
@@ -78,6 +79,7 @@ impl GatewayConfig {
             token: crate::secret::SecretString::new(token.into()),
             intents,
             url: DEFAULT_GATEWAY_URL.to_owned(),
+            allow_insecure_loopback: false,
             shard: None,
             identify_coordinator: None,
             encoding: GatewayEncoding::Json,
@@ -101,6 +103,7 @@ impl GatewayConfig {
             token: crate::secret::SecretString::new(token.into()),
             intents,
             url: gateway.url.clone(),
+            allow_insecure_loopback: false,
             shard: None,
             identify_coordinator: Some(Arc::new(GatewayIdentifyLimiter::new(
                 &gateway.session_start_limit,
@@ -117,6 +120,14 @@ impl GatewayConfig {
     #[must_use]
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         self.url = url.into();
+        self
+    }
+
+    /// Explicitly permits plaintext WebSocket connections to numeric loopback
+    /// addresses for local fixtures. Never use production credentials with this.
+    #[must_use]
+    pub const fn with_insecure_loopback(mut self, allow: bool) -> Self {
+        self.allow_insecure_loopback = allow;
         self
     }
 
@@ -290,9 +301,12 @@ impl GatewayConnection {
         }
 
         self.ready = false;
-        if let Some(socket) = self.socket.as_mut() {
+        self.shutdown = true;
+        self.session = None;
+        self.sequence = None;
+        if let Some(mut socket) = self.socket.take() {
             write_message(
-                socket,
+                &mut socket,
                 Message::Close(Some(CloseFrame {
                     code: CloseCode::Normal,
                     reason: "Gloamwire shutdown".into(),
@@ -300,11 +314,6 @@ impl GatewayConnection {
             )
             .await?;
         }
-        self.socket.take();
-        self.shutdown = true;
-        self.session = None;
-        self.sequence = None;
-
         Ok(())
     }
 
@@ -369,6 +378,7 @@ impl GatewayConnection {
                                 self.socket.take();
                                 self.shutdown = true;
                                 self.session = None;
+                                self.sequence = None;
                                 return Err(Error::GatewayClosed { code, reason });
                             }
 
@@ -379,15 +389,22 @@ impl GatewayConnection {
                             self.reconnect(GatewayReconnectStrategy::Resume).await?;
                             continue;
                         }
-                        Err(error) => return Err(error),
+                        Err(error) => {
+                            self.ready = false;
+                            self.socket.take();
+                            return Err(error);
+                        }
                     };
 
-                    if let Some(sequence) = envelope.s {
-                        self.update_sequence(sequence);
-                    }
-
                     match envelope.op {
-                        0 => return self.dispatch(envelope).map(Either::Left),
+                        0 => {
+                            let result = self.dispatch(envelope);
+                            if result.is_err() {
+                                self.ready = false;
+                                self.socket.take();
+                            }
+                            return result.map(Either::Left);
+                        }
                         1 => {
                             match self.send_heartbeat().await {
                                 Ok(()) => {}
@@ -402,7 +419,14 @@ impl GatewayConnection {
                             return Ok(Either::Left(GatewayEvent::Reconnect));
                         }
                         9 => {
-                            let resumable = serde_json::from_value::<bool>(envelope.d)?;
+                            let resumable = match serde_json::from_value::<bool>(envelope.d) {
+                                Ok(value) => value,
+                                Err(error) => {
+                                    self.ready = false;
+                                    self.socket.take();
+                                    return Err(error.into());
+                                }
+                            };
                             let strategy = if resumable {
                                 GatewayReconnectStrategy::Resume
                             } else {
@@ -438,6 +462,14 @@ impl GatewayConnection {
 
         if name == "READY" {
             let ready = serde_json::from_value::<ReadySessionData>(envelope.d.clone())?;
+            if !crate::secret::secure_websocket_endpoint(
+                &ready.resume_gateway_url,
+                self.config.allow_insecure_loopback && !self.config.url.starts_with("wss://"),
+            ) {
+                return Err(Error::GatewayProtocol(
+                    "insecure or invalid Gateway resume endpoint".into(),
+                ));
+            }
             self.session = Some(GatewaySession::new(
                 ready.session_id,
                 ready.resume_gateway_url,
@@ -445,6 +477,7 @@ impl GatewayConnection {
             ));
         }
 
+        self.update_sequence(sequence);
         if name == "READY" || name == "RESUMED" {
             self.ready = true;
         }
@@ -480,6 +513,9 @@ impl GatewayConnection {
             });
         }
 
+        if !self.is_ready() {
+            return Err(Error::GatewayProtocol("Gateway is not READY".into()));
+        }
         let payload = encode_payload(
             self.config.encoding,
             &OutboundEnvelope {
@@ -564,6 +600,9 @@ impl GatewayConnection {
                     );
                     match recovery {
                         GatewayReconnectStrategy::Stop => {
+                            self.shutdown = true;
+                            self.session = None;
+                            self.sequence = None;
                             return Err(Error::GatewayClosed { code, reason });
                         }
                         GatewayReconnectStrategy::Reidentify => {
@@ -643,14 +682,31 @@ async fn open_and_handshake(
     rate_limiter: &GatewayRateLimiter,
 ) -> Result<(GatewaySocket, GatewayDecoder, Interval, Option<Instant>)> {
     let base_url = session.map_or(config.url.as_str(), GatewaySession::resume_gateway_url);
+    let allow_loopback = config.allow_insecure_loopback && !config.url.starts_with("wss://");
+    if !crate::secret::secure_websocket_endpoint(base_url, allow_loopback) {
+        return Err(Error::GatewayProtocol(
+            "Gateway endpoint must use TLS (except explicitly enabled loopback fixtures)".into(),
+        ));
+    }
     let url = gateway_url(base_url, config.encoding, config.compression);
     let timeout = Duration::from_secs(15);
-    let (mut socket, _) = tokio::time::timeout(timeout, connect_async(url))
-        .await
-        .map_err(|_| Error::GatewayClosed {
-            code: None,
-            reason: "Gateway connection timed out".to_owned(),
-        })??;
+    let (mut socket, _) = tokio::time::timeout(
+        timeout,
+        connect_async_with_config(
+            url,
+            Some(
+                WebSocketConfig::default()
+                    .max_message_size(Some(32 * 1024 * 1024))
+                    .max_frame_size(Some(32 * 1024 * 1024)),
+            ),
+            false,
+        ),
+    )
+    .await
+    .map_err(|_| Error::GatewayClosed {
+        code: None,
+        reason: "Gateway connection timed out".to_owned(),
+    })??;
     let mut decoder = GatewayDecoder::new(config.compression)?;
 
     let hello = tokio::time::timeout(

@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-#[cfg(feature = "dave-davey")]
-use crate::model::ChannelId;
 use crate::model::UserId;
 
 use super::{
@@ -41,7 +39,10 @@ pub struct DaveVoiceSession<P> {
     ssrc_users: HashMap<u32, UserId>,
     sequencer: VoiceRtpSequencer,
     protocol_failed: bool,
+    minimum_dave_version: u16,
+    participant_limit: usize,
     replay: HashMap<u32, ReplayWindow>,
+    replay_generation: u64,
 }
 
 impl<P> std::fmt::Debug for DaveVoiceSession<P>
@@ -67,8 +68,18 @@ where
     /// supported DAVE protocol version and initializing it from Session
     /// Description.
     pub async fn connect(config: VoiceGatewayConfig, mut provider: P) -> VoiceResult<Self> {
+        let minimum_dave_version = config.min_dave_protocol_version();
+        let participant_limit = config.participant_limit();
+        if minimum_dave_version > provider.max_protocol_version() || participant_limit == 0 {
+            return Err(VoiceError::Protocol("invalid managed DAVE policy".into()));
+        }
         let config = config.with_max_dave_protocol_version(provider.max_protocol_version());
         let mut session = VoiceSession::connect(config).await?;
+        if session.session_description().dave_protocol_version < minimum_dave_version {
+            return Err(VoiceError::Protocol(
+                "negotiated DAVE version is below configured minimum".into(),
+            ));
+        }
         let commands = provider
             .configure_protocol_version(session.session_description().dave_protocol_version)
             .map_err(provider_error)?;
@@ -82,7 +93,10 @@ where
             ssrc_users: HashMap::new(),
             sequencer,
             protocol_failed: false,
+            minimum_dave_version,
+            participant_limit,
             replay: HashMap::new(),
+            replay_generation: 0,
         })
     }
 
@@ -118,6 +132,7 @@ where
 
     /// Sends Voice Gateway Speaking state.
     pub async fn set_speaking(&mut self, flags: VoiceSpeakingFlags) -> VoiceResult<()> {
+        self.ensure_media_ready()?;
         self.session.gateway_mut().set_speaking(flags).await
     }
 
@@ -153,6 +168,12 @@ where
         if let VoiceGatewayEvent::Speaking(speaking) = event
             && let Some(user_id) = speaking.user_id
         {
+            if !self.ssrc_users.contains_key(&speaking.ssrc) && self.ssrc_users.len() >= 4096 {
+                self.protocol_failed = true;
+                return Err(VoiceError::Protocol(
+                    "voice SSRC mapping capacity exceeded; restart session".into(),
+                ));
+            }
             self.ssrc_users.insert(speaking.ssrc, user_id);
         }
 
@@ -178,13 +199,32 @@ where
         // Set before any provider mutation or await. If this future is dropped
         // during command transmission, the session remains fail-closed.
         self.protocol_failed = true;
-        self.participants.apply(&dave_event);
+        match &dave_event {
+            DaveProtocolEvent::PrepareTransition {
+                protocol_version, ..
+            }
+            | DaveProtocolEvent::PrepareEpoch {
+                protocol_version, ..
+            } if *protocol_version < self.minimum_dave_version => {
+                return Err(VoiceError::Protocol(
+                    "DAVE downgrade below configured minimum".into(),
+                ));
+            }
+            _ => {}
+        }
+        self.participants
+            .try_apply(&dave_event, self.participant_limit)?;
         // The provider owns MLS recovery and knows the pending epoch version.
         // Reconfiguring from the active version can downgrade an upgrade.
         let commands = self
             .provider
             .handle_gateway_event(&dave_event, &self.participants)
             .map_err(provider_error)?;
+        if self.provider.active_protocol_version() < self.minimum_dave_version {
+            return Err(VoiceError::Protocol(
+                "DAVE provider downgraded below configured minimum".into(),
+            ));
+        }
         let result = send_commands(&mut self.session, commands).await;
         if result.is_ok() {
             self.protocol_failed = false;
@@ -195,11 +235,7 @@ where
     /// Sends one complete encoded Opus frame through DAVE, RTP, transport AEAD,
     /// and the connected UDP socket.
     pub async fn send_opus_frame(&mut self, frame: VoiceOpusFrame<'_>) -> VoiceResult<usize> {
-        if self.protocol_failed {
-            return Err(VoiceError::Protocol(
-                "DAVE control state failed; restart voice session".into(),
-            ));
-        }
+        self.ensure_media_ready()?;
         let media = if frame.payload() == OPUS_SILENCE_FRAME {
             frame.payload().to_vec()
         } else {
@@ -220,10 +256,10 @@ where
     /// Decrypts one already-received Discord UDP packet into an encoded Opus
     /// frame, including DAVE sender-ratchet processing when required.
     pub fn decrypt_rtp_packet(&mut self, packet: &[u8]) -> VoiceResult<VoiceReceivedOpus> {
-        if self.protocol_failed {
-            return Err(VoiceError::Protocol(
-                "DAVE control state failed; restart voice session".into(),
-            ));
+        self.ensure_media_ready()?;
+        if self.replay_generation != self.session.key_generation() {
+            self.replay.clear();
+            self.replay_generation = self.session.key_generation();
         }
         let decrypted = self.session.transport_crypto().decrypt_rtp(packet)?;
         let header = decode_audio_header(&decrypted.header)?;
@@ -276,31 +312,33 @@ where
         self.decrypt_rtp_packet(&buffer[..received])
     }
 
+    fn ensure_media_ready(&self) -> VoiceResult<()> {
+        if self.protocol_failed
+            || !self.session.is_media_ready()
+            || self.provider.active_protocol_version() < self.minimum_dave_version
+        {
+            return Err(VoiceError::Protocol(
+                "voice media unavailable; recover or restart session".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Applies Voice Gateway close-code recovery to the managed session.
     pub async fn recover_after_close(
         &mut self,
         code: Option<super::VoiceCloseCode>,
     ) -> VoiceResult<VoiceRecoveryOutcome> {
+        if self.protocol_failed {
+            return Ok(VoiceRecoveryOutcome::RestartRequired);
+        }
         self.session.recover_after_close(code).await
     }
 
     /// Gracefully closes the Voice Gateway transport.
     pub async fn shutdown(&mut self) -> VoiceResult<()> {
+        self.protocol_failed = true;
         self.session.shutdown().await
-    }
-}
-
-#[cfg(feature = "dave-davey")]
-impl DaveVoiceSession<super::DaveyProvider> {
-    /// Connects a managed voice session using Gloamwire's optional pure-Rust
-    /// `davey` backend. `channel_id` is the voice channel snowflake and becomes
-    /// the MLS group ID.
-    pub async fn connect_davey(
-        info: super::VoiceConnectionInfo,
-        channel_id: ChannelId,
-    ) -> VoiceResult<Self> {
-        let provider = super::DaveyProvider::new(info.user_id, channel_id);
-        Self::connect(VoiceGatewayConfig::new(info), provider).await
     }
 }
 

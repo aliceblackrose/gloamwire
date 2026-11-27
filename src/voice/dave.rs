@@ -125,6 +125,9 @@ impl DaveProtocolEvent {
                         epoch: data.epoch,
                     })
                 }
+                opcode if is_known_dave_opcode(opcode) => Err(VoiceError::Protocol(
+                    "invalid inbound DAVE JSON opcode or framing".into(),
+                )),
                 _ => Ok(Self::Unknown(event.clone())),
             },
             DaveGatewayEvent::Binary {
@@ -158,10 +161,17 @@ impl DaveProtocolEvent {
                         welcome,
                     })
                 }
+                opcode if is_known_dave_opcode(opcode) => Err(VoiceError::Protocol(
+                    "invalid inbound DAVE binary opcode or framing".into(),
+                )),
                 _ => Ok(Self::Unknown(event.clone())),
             },
         }
     }
+}
+
+fn is_known_dave_opcode(opcode: u8) -> bool {
+    (DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE).contains(&opcode)
 }
 
 fn transition_payload(payload: &[u8], opcode: u8) -> VoiceResult<(u16, Vec<u8>)> {
@@ -266,6 +276,25 @@ pub struct DaveParticipantSet {
 }
 
 impl DaveParticipantSet {
+    /// Applies membership atomically, refusing additions beyond the limit.
+    pub fn try_apply(&mut self, event: &DaveProtocolEvent, limit: usize) -> VoiceResult<()> {
+        if let DaveProtocolEvent::ClientsConnect { user_ids } = event {
+            let mut additions = HashSet::new();
+            for id in user_ids {
+                if !self.user_ids.contains(id)
+                    && additions.insert(*id)
+                    && self.user_ids.len().saturating_add(additions.len()) > limit
+                {
+                    return Err(VoiceError::Protocol(
+                        "DAVE participant capacity exceeded".into(),
+                    ));
+                }
+            }
+        }
+        self.apply(event);
+        Ok(())
+    }
+
     pub fn apply(&mut self, event: &DaveProtocolEvent) {
         match event {
             DaveProtocolEvent::ClientsConnect { user_ids } => {

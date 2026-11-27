@@ -128,6 +128,20 @@ impl<'de> Deserialize<'de> for InteractionResponse {
 }
 
 impl InteractionResponse {
+    /// Validates known callback type/data combinations before transmission.
+    /// Unknown future types are left to Discord for forward compatibility.
+    #[must_use]
+    pub fn has_valid_data(&self) -> bool {
+        match self.kind.0 {
+            1 | 6 | 10 | 12 => self.data.is_none(),
+            4 | 7 => matches!(&self.data, Some(InteractionCallbackData::Message(_))),
+            5 => matches!(&self.data, None | Some(InteractionCallbackData::Message(_))),
+            8 => matches!(&self.data, Some(InteractionCallbackData::Autocomplete(_))),
+            9 => matches!(&self.data, Some(InteractionCallbackData::Modal(_))),
+            _ => true,
+        }
+    }
+
     /// Creates a response with no callback data, such as `PONG` or a deferred update.
     #[must_use]
     pub const fn new(kind: InteractionCallbackType) -> Self {
@@ -383,6 +397,24 @@ mod tests {
     use crate::model::{
         ApplicationIntegrationType, ComponentType, ComponentValue, InteractionContextType,
     };
+
+    #[test]
+    fn rejects_callback_type_data_mismatches() {
+        let mut response =
+            super::InteractionResponse::message(super::InteractionMessageData::content("hello"));
+        assert!(response.has_valid_data());
+        response.kind = super::InteractionCallbackType::MODAL;
+        assert!(!response.has_valid_data());
+        assert!(
+            super::InteractionResponse::new(super::InteractionCallbackType::PONG).has_valid_data()
+        );
+        assert!(
+            !super::InteractionResponse::new(
+                super::InteractionCallbackType::APPLICATION_COMMAND_AUTOCOMPLETE_RESULT
+            )
+            .has_valid_data()
+        );
+    }
 
     #[test]
     fn callback_message_round_trips_without_becoming_autocomplete() {

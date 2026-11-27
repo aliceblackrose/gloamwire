@@ -12,10 +12,10 @@ use tokio::{
     time::{Instant, Interval, MissedTickBehavior},
 };
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async,
+    MaybeTlsStream, WebSocketStream, connect_async_with_config,
     tungstenite::{
         Message,
-        protocol::{CloseFrame, frame::coding::CloseCode},
+        protocol::{CloseFrame, WebSocketConfig, frame::coding::CloseCode},
     },
 };
 
@@ -56,6 +56,9 @@ pub struct VoiceGatewayConfig {
     token: crate::secret::SecretString,
     endpoint: String,
     max_dave_protocol_version: u16,
+    min_dave_protocol_version: u16,
+    allow_insecure_loopback: bool,
+    participant_limit: usize,
 }
 
 impl std::fmt::Debug for VoiceGatewayConfig {
@@ -83,6 +86,9 @@ impl VoiceGatewayConfig {
             token: crate::secret::SecretString::new(info.token),
             endpoint: info.endpoint,
             max_dave_protocol_version: 0,
+            min_dave_protocol_version: 0,
+            allow_insecure_loopback: false,
+            participant_limit: 4096,
         }
     }
 
@@ -98,6 +104,36 @@ impl VoiceGatewayConfig {
         self
     }
 
+    /// Requires at least this DAVE version for managed media. Zero explicitly
+    /// permits transport-only calls (the compatibility default).
+    #[must_use]
+    pub const fn with_min_dave_protocol_version(mut self, version: u16) -> Self {
+        self.min_dave_protocol_version = version;
+        self
+    }
+
+    /// Permits plaintext only for numeric loopback test endpoints.
+    #[must_use]
+    pub const fn with_insecure_loopback(mut self, allow: bool) -> Self {
+        self.allow_insecure_loopback = allow;
+        self
+    }
+
+    /// Bounds the managed MLS participant set.
+    #[must_use]
+    pub const fn with_participant_limit(mut self, limit: usize) -> Self {
+        self.participant_limit = limit;
+        self
+    }
+
+    pub(super) const fn min_dave_protocol_version(&self) -> u16 {
+        self.min_dave_protocol_version
+    }
+
+    pub(super) const fn participant_limit(&self) -> usize {
+        self.participant_limit
+    }
+
     #[must_use]
     pub const fn max_dave_protocol_version(&self) -> u16 {
         self.max_dave_protocol_version
@@ -107,11 +143,11 @@ impl VoiceGatewayConfig {
 /// Live Discord Voice Gateway v8 connection.
 pub struct VoiceGatewayConnection {
     config: Arc<VoiceGatewayConfig>,
-    socket: VoiceSocket,
+    socket: Option<VoiceSocket>,
     ready: VoiceReady,
     heartbeat: Interval,
     heartbeat_acknowledged: bool,
-    last_heartbeat_sent: Option<Instant>,
+    last_heartbeat_sent: Option<(Instant, u64)>,
     latency: Option<Duration>,
     sequence: Option<u16>,
     pending: VecDeque<VoiceGatewayEvent>,
@@ -136,7 +172,8 @@ impl VoiceGatewayConnection {
     /// Opens the Voice Gateway, receives Hello, identifies, and waits for Ready.
     pub async fn connect(config: VoiceGatewayConfig) -> VoiceResult<Self> {
         let config = Arc::new(config);
-        let (mut socket, mut heartbeat) = open_socket(&config.endpoint).await?;
+        let (mut socket, mut heartbeat) =
+            open_socket(&config.endpoint, config.allow_insecure_loopback).await?;
         send_json(
             &mut socket,
             IDENTIFY_OPCODE,
@@ -164,31 +201,38 @@ impl VoiceGatewayConnection {
                 .await?
             {
                 Inbound::Json(envelope) => {
-                    update_sequence(&mut sequence, envelope.sequence);
+                    let received = envelope.sequence;
                     if envelope.opcode == READY_OPCODE {
-                        break serde_json::from_value::<VoiceReady>(envelope.data)?;
+                        let ready = serde_json::from_value::<VoiceReady>(envelope.data)?;
+                        update_sequence(&mut sequence, received);
+                        break ready;
                     }
                     if envelope.opcode == HELLO_OPCODE {
                         continue;
                     }
                     if let Some(event) = event_from_envelope(envelope)? {
+                        super::DaveProtocolEvent::from_gateway_event(&event)?;
+                        update_sequence(&mut sequence, received);
                         pending.push_back(event);
                     }
                 }
                 Inbound::DaveBinary(event) => {
-                    update_sequence(&mut sequence, Some(event.sequence));
-                    pending.push_back(VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
+                    let received = event.sequence;
+                    let event = VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
                         opcode: event.opcode,
-                        sequence: event.sequence,
+                        sequence: received,
                         payload: event.payload,
-                    }));
+                    });
+                    super::DaveProtocolEvent::from_gateway_event(&event)?;
+                    update_sequence(&mut sequence, Some(received));
+                    pending.push_back(event);
                 }
             }
         };
 
         Ok(Self {
             config,
-            socket,
+            socket: Some(socket),
             ready,
             heartbeat,
             heartbeat_acknowledged: sent.is_none(),
@@ -232,7 +276,7 @@ impl VoiceGatewayConnection {
         }
 
         send_json(
-            &mut self.socket,
+            self.socket.as_mut().ok_or_else(transport_unavailable)?,
             SELECT_PROTOCOL_OPCODE,
             &SelectProtocol {
                 protocol: "udp",
@@ -252,7 +296,7 @@ impl VoiceGatewayConnection {
     /// A zero bitmask is valid after transmission and clears the speaking state.
     pub async fn set_speaking(&mut self, flags: VoiceSpeakingFlags) -> VoiceResult<()> {
         send_json(
-            &mut self.socket,
+            self.socket.as_mut().ok_or_else(transport_unavailable)?,
             SPEAKING_OPCODE,
             &Speaking {
                 speaking: flags.bits(),
@@ -273,7 +317,12 @@ impl VoiceGatewayConnection {
                 "Voice DAVE opcode {opcode} is not a client JSON opcode"
             )));
         }
-        send_json(&mut self.socket, opcode, data).await
+        send_json(
+            self.socket.as_mut().ok_or_else(transport_unavailable)?,
+            opcode,
+            data,
+        )
+        .await
     }
 
     /// Sends a binary DAVE client opcode. Client binary messages contain the
@@ -286,10 +335,19 @@ impl VoiceGatewayConnection {
             )));
         }
 
+        if payload.len() >= MAX_INBOUND_BYTES {
+            return Err(VoiceError::Protocol(
+                "oversized outbound Voice Gateway binary payload".into(),
+            ));
+        }
         let mut bytes = Vec::with_capacity(payload.len() + 1);
         bytes.push(opcode);
         bytes.extend_from_slice(payload);
-        write_message(&mut self.socket, Message::Binary(bytes.into())).await?;
+        write_message(
+            self.socket.as_mut().ok_or_else(transport_unavailable)?,
+            Message::Binary(bytes.into()),
+        )
+        .await?;
         Ok(())
     }
 
@@ -328,29 +386,41 @@ impl VoiceGatewayConnection {
                     }
                     self.send_heartbeat().await?;
                 }
-                inbound = next_inbound(&mut self.socket) => {
+                inbound = next_inbound(self.socket.as_mut().ok_or_else(transport_unavailable)?) => {
                     match inbound? {
                         Inbound::Json(envelope) => {
-                            update_sequence(&mut self.sequence, envelope.sequence);
+                            let received = envelope.sequence;
                             if envelope.opcode == HEARTBEAT_ACK_OPCODE {
-                                self.heartbeat_acknowledged = true;
-                                self.latency = self.last_heartbeat_sent.take().map(|sent| sent.elapsed());
-                                return Ok(Either::Left(VoiceGatewayEvent::HeartbeatAck));
+                                if let Some((sent, nonce)) = self.last_heartbeat_sent
+                                    && heartbeat_ack_matches(&envelope.data, nonce)
+                                {
+                                    update_sequence(&mut self.sequence, received);
+                                    self.heartbeat_acknowledged = true;
+                                    self.last_heartbeat_sent = None;
+                                    self.latency = Some(sent.elapsed());
+                                    return Ok(Either::Left(VoiceGatewayEvent::HeartbeatAck));
+                                }
+                                continue;
                             }
                             if envelope.opcode == HELLO_OPCODE {
                                 continue;
                             }
                             if let Some(event) = event_from_envelope(envelope)? {
+                                super::DaveProtocolEvent::from_gateway_event(&event)?;
+                                update_sequence(&mut self.sequence, received);
                                 return Ok(Either::Left(event));
                             }
                         }
                         Inbound::DaveBinary(event) => {
-                            update_sequence(&mut self.sequence, Some(event.sequence));
-                            return Ok(Either::Left(VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
+                            let received = event.sequence;
+                            let event = VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
                                 opcode: event.opcode,
-                                sequence: event.sequence,
+                                sequence: received,
                                 payload: event.payload,
-                            })));
+                            });
+                            super::DaveProtocolEvent::from_gateway_event(&event)?;
+                            update_sequence(&mut self.sequence, Some(received));
+                            return Ok(Either::Left(event));
                         }
                     }
                 }
@@ -361,7 +431,16 @@ impl VoiceGatewayConnection {
     /// Opens a new Voice Gateway socket and resumes this v8 session using the
     /// latest `seq_ack`. Buffered messages received before Resumed are queued.
     pub async fn resume(&mut self) -> VoiceResult<()> {
-        let (mut socket, mut heartbeat) = open_socket(&self.config.endpoint).await?;
+        if self.shutdown {
+            return Err(transport_unavailable());
+        }
+        // Retire the previous socket before initiating the replacement handshake.
+        self.socket.take();
+        // A stale synthetic Resumed event must not authorize media on a later recovery.
+        self.pending
+            .retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
+        let (mut socket, mut heartbeat) =
+            open_socket(&self.config.endpoint, self.config.allow_insecure_loopback).await?;
         send_json(
             &mut socket,
             RESUME_OPCODE,
@@ -388,29 +467,35 @@ impl VoiceGatewayConnection {
                 .await?
             {
                 Inbound::Json(envelope) => {
-                    update_sequence(&mut sequence, envelope.sequence);
+                    let received = envelope.sequence;
                     if envelope.opcode == RESUMED_OPCODE {
+                        update_sequence(&mut sequence, received);
                         break;
                     }
                     if envelope.opcode == HELLO_OPCODE {
                         continue;
                     }
                     if let Some(event) = event_from_envelope(envelope)? {
+                        super::DaveProtocolEvent::from_gateway_event(&event)?;
+                        update_sequence(&mut sequence, received);
                         buffered.push_back(event);
                     }
                 }
                 Inbound::DaveBinary(event) => {
-                    update_sequence(&mut sequence, Some(event.sequence));
-                    buffered.push_back(VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
+                    let received = event.sequence;
+                    let event = VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
                         opcode: event.opcode,
-                        sequence: event.sequence,
+                        sequence: received,
                         payload: event.payload,
-                    }));
+                    });
+                    super::DaveProtocolEvent::from_gateway_event(&event)?;
+                    update_sequence(&mut sequence, Some(received));
+                    buffered.push_back(event);
                 }
             }
         }
 
-        self.socket = socket;
+        self.socket = Some(socket);
         self.heartbeat = heartbeat;
         self.heartbeat_acknowledged = sent.is_none();
         self.last_heartbeat_sent = sent;
@@ -426,17 +511,18 @@ impl VoiceGatewayConnection {
         if self.shutdown {
             return Ok(());
         }
-        let timeout = Duration::from_secs(5);
-        tokio::time::timeout(
-            timeout,
-            self.socket.send(Message::Close(Some(CloseFrame {
-                code: CloseCode::Normal,
-                reason: "Gloamwire voice shutdown".into(),
-            }))),
-        )
-        .await
-        .map_err(|_| VoiceError::Timeout(timeout))??;
         self.shutdown = true;
+        self.pending.clear();
+        if let Some(mut socket) = self.socket.take() {
+            write_message(
+                &mut socket,
+                Message::Close(Some(CloseFrame {
+                    code: CloseCode::Normal,
+                    reason: "Gloamwire voice shutdown".into(),
+                })),
+            )
+            .await?;
+        }
         Ok(())
     }
 
@@ -446,7 +532,7 @@ impl VoiceGatewayConnection {
             .unwrap_or_default()
             .as_millis() as u64;
         send_json(
-            &mut self.socket,
+            self.socket.as_mut().ok_or_else(transport_unavailable)?,
             HEARTBEAT_OPCODE,
             &Heartbeat {
                 t: nonce,
@@ -454,7 +540,7 @@ impl VoiceGatewayConnection {
             },
         )
         .await?;
-        self.last_heartbeat_sent = Some(Instant::now());
+        self.last_heartbeat_sent = Some((Instant::now(), nonce));
         self.heartbeat_acknowledged = false;
         Ok(())
     }
@@ -542,11 +628,28 @@ struct Speaking {
     ssrc: u32,
 }
 
-async fn open_socket(endpoint: &str) -> VoiceResult<(VoiceSocket, Interval)> {
+async fn open_socket(endpoint: &str, allow_loopback: bool) -> VoiceResult<(VoiceSocket, Interval)> {
     let url = voice_gateway_url(endpoint);
-    let (mut socket, _) = tokio::time::timeout(NEGOTIATION_TIMEOUT, connect_async(url))
-        .await
-        .map_err(|_| VoiceError::Timeout(NEGOTIATION_TIMEOUT))??;
+    if !crate::secret::secure_websocket_endpoint(&url, allow_loopback) {
+        return Err(VoiceError::Protocol(
+            "Voice Gateway endpoint must use TLS (except explicitly enabled loopback fixtures)"
+                .into(),
+        ));
+    }
+    let (mut socket, _) = tokio::time::timeout(
+        NEGOTIATION_TIMEOUT,
+        connect_async_with_config(
+            url,
+            Some(
+                WebSocketConfig::default()
+                    .max_message_size(Some(MAX_INBOUND_BYTES))
+                    .max_frame_size(Some(MAX_INBOUND_BYTES)),
+            ),
+            false,
+        ),
+    )
+    .await
+    .map_err(|_| VoiceError::Timeout(NEGOTIATION_TIMEOUT))??;
 
     match tokio::time::timeout(NEGOTIATION_TIMEOUT, next_inbound(&mut socket))
         .await
@@ -579,7 +682,7 @@ async fn negotiation_inbound(
     socket: &mut VoiceSocket,
     heartbeat: &mut Interval,
     sequence: Option<u16>,
-    sent: &mut Option<Instant>,
+    sent: &mut Option<(Instant, u64)>,
     deadline: Instant,
 ) -> VoiceResult<Inbound> {
     loop {
@@ -599,12 +702,18 @@ async fn negotiation_inbound(
                     deadline,
                     send_json(socket, HEARTBEAT_OPCODE, &Heartbeat { t, seq_ack: sequence }),
                 ).await.map_err(|_| VoiceError::Timeout(NEGOTIATION_TIMEOUT))??;
-                *sent = Some(Instant::now());
+                *sent = Some((Instant::now(), t));
             }
             inbound = next_inbound(socket) => {
                 let inbound = inbound?;
-                if matches!(&inbound, Inbound::Json(envelope) if envelope.opcode == HEARTBEAT_ACK_OPCODE) {
-                    *sent = None;
+                if let Inbound::Json(envelope) = &inbound
+                    && envelope.opcode == HEARTBEAT_ACK_OPCODE
+                {
+                    if sent.is_some_and(|(_, nonce)| heartbeat_ack_matches(&envelope.data, nonce)) {
+                        *sent = None;
+                    } else {
+                        continue;
+                    }
                 }
                 return Ok(inbound);
             }
@@ -702,6 +811,15 @@ fn event_from_envelope(envelope: NormalizedEnvelope) -> VoiceResult<Option<Voice
     Ok(Some(event))
 }
 
+fn heartbeat_ack_matches(data: &Value, nonce: u64) -> bool {
+    // Voice v8 acknowledges with the sent timestamp in d.t.
+    data.get("t").and_then(Value::as_u64) == Some(nonce) || data.as_u64() == Some(nonce)
+}
+
+fn transport_unavailable() -> VoiceError {
+    VoiceError::Protocol("Voice Gateway transport unavailable".into())
+}
+
 async fn write_message(socket: &mut VoiceSocket, message: Message) -> VoiceResult<()> {
     let timeout = Duration::from_secs(5);
     tokio::time::timeout(timeout, socket.send(message))
@@ -750,6 +868,19 @@ fn voice_gateway_url(endpoint: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::voice_gateway_url;
+
+    #[test]
+    fn heartbeat_ack_requires_matching_nonce() {
+        assert!(super::heartbeat_ack_matches(
+            &serde_json::json!({"t":123}),
+            123
+        ));
+        assert!(!super::heartbeat_ack_matches(
+            &serde_json::json!({"t":122}),
+            123
+        ));
+        assert!(!super::heartbeat_ack_matches(&serde_json::json!({}), 123));
+    }
 
     #[test]
     fn voice_gateway_url_adds_secure_scheme_path_and_v8() {

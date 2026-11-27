@@ -45,7 +45,12 @@ impl VoiceCommandSender {
     /// Queues an operation with a ten-second end-to-end deadline.
     /// Abandoned queued commands are skipped; cancellation cannot undo a write
     /// that has already started.
-    pub async fn send(&self, command: VoiceCommand) -> VoiceResult<()> {
+    pub async fn send(&self, mut command: VoiceCommand) -> VoiceResult<()> {
+        if let VoiceCommand::SendOpus { payload, duration } = &mut command {
+            VoiceOpusFrame::new(payload, *duration)?;
+            // A small slice may otherwise retain a large backing allocation.
+            *payload = std::mem::take(payload).into_boxed_slice().into_vec();
+        }
         let deadline = tokio::time::Instant::now() + COMMAND_TIMEOUT;
         tokio::time::timeout_at(deadline, async {
             let (reply, response) = oneshot::channel();
@@ -65,6 +70,9 @@ impl VoiceCommandSender {
 /// Control events are lossless until the bounded queue fills, at which point
 /// the session stops. Inbound audio is best effort: malformed packets and
 /// packets arriving when the audio queue is full are counted and discarded.
+/// Outbound Opus packets must be paced by the caller (for example with
+/// VoiceFramePacer); declared duration advances the RTP clock, not wall time.
+/// The 64-command queue and 8192-byte packet limit bound queued audio memory.
 /// A terminal error is delivered through the control stream; reconnect by
 /// establishing a fresh voice session after observing that error.
 pub struct VoiceDriver {

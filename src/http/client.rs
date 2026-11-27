@@ -12,11 +12,15 @@ use super::{
     GatewayBot, HttpResponse,
     rate_limit::{RateLimiter, SharedRateLimits},
     route::{Route, credential_fingerprint},
-    upload::{UploadFile, multipart_form, named_file_form},
+    upload::{UploadFile, multipart_form, named_file_form, validate_uploads},
 };
 
 const API_BASE_URL: &str = "https://discord.com/api/v10";
-const USER_AGENT: &str = "Gloamwire/0.1 (+https://github.com/aliceblackrose/gloamwire)";
+const USER_AGENT: &str = concat!(
+    "Gloamwire/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/aliceblackrose/gloamwire)"
+);
 const MAX_RATE_LIMIT_RETRIES: usize = 3;
 const DEFAULT_TRANSIENT_RETRIES: usize = 2;
 const DEFAULT_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
@@ -106,6 +110,7 @@ impl RestClientBuilder {
         // A stalled request holds a resource reservation; provide finite defaults.
         let mut builder = reqwest::Client::builder()
             .user_agent(USER_AGENT)
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(10));
 
@@ -130,6 +135,7 @@ impl RestClientBuilder {
             bearer_rate_limiters: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             bearer_overflow_limiter: Arc::new(RateLimiter::with_shared(shared.clone())),
             shared_rate_limits: shared,
+            upload_slots: Arc::new(tokio::sync::Semaphore::new(8)),
             max_transient_retries: self.max_transient_retries,
             retry_base_delay: self.retry_base_delay,
         })
@@ -147,6 +153,7 @@ pub struct RestClient {
     interaction_rate_limiter: Arc<RateLimiter>,
     bearer_rate_limiters: Arc<tokio::sync::Mutex<HashMap<u64, BearerLimiter>>>,
     shared_rate_limits: Arc<SharedRateLimits>,
+    upload_slots: Arc<tokio::sync::Semaphore>,
     bearer_overflow_limiter: Arc<RateLimiter>,
     max_transient_retries: usize,
     retry_base_delay: Duration,
@@ -400,13 +407,17 @@ impl RestClient {
             // 24h matches the maximum recorded cooldown.
             limiters.retain(|_, entry| {
                 Arc::strong_count(&entry.limiter) > 1
+                    || entry.limiter.has_live_cooldown(now)
                     || now.saturating_duration_since(entry.last_used) < Duration::from_secs(86_401)
             });
             let key = credential_fingerprint(authorization.as_bytes());
             if let Some(entry) = limiters.get_mut(&key) {
                 entry.last_used = now;
                 Arc::clone(&entry.limiter)
-            } else if limiters.len() < 128 {
+            } else if limiters.len() < 128
+                && Arc::strong_count(&self.bearer_overflow_limiter) == 1
+                && !self.bearer_overflow_limiter.has_live_cooldown(now)
+            {
                 let limiter = Arc::new(RateLimiter::with_shared(self.shared_rate_limits.clone()));
                 limiters.insert(
                     key,
@@ -423,11 +434,31 @@ impl RestClient {
             headers.insert(AUTHORIZATION, self.authorization.clone());
             Arc::clone(&self.rate_limiter)
         };
+        let is_upload = match &payload {
+            RequestPayload::Multipart { files, .. } => {
+                validate_uploads(files)?;
+                true
+            }
+            RequestPayload::NamedFile { file, .. } => {
+                file.validate()?;
+                true
+            }
+            _ => false,
+        };
         let url = format!("{}{}", self.base_url, route.path);
         let mut rate_limit_retries = 0;
         let mut transient_retries = 0;
 
         loop {
+            let upload_slot =
+                if is_upload {
+                    Some(self.upload_slots.acquire().await.map_err(|_| {
+                        Error::InvalidRestRequest("upload preparation closed".into())
+                    })?)
+                } else {
+                    None
+                };
+            let reservation = limiter.reserve(&route).await;
             let mut request = self
                 .http
                 .request(route.method.clone(), &url)
@@ -448,7 +479,6 @@ impl RestClient {
                 } => request.multipart(named_file_form(payload_json.clone(), field, file).await?),
             };
 
-            let reservation = limiter.reserve(&route).await;
             let response = match request.send().await {
                 Ok(response) => response,
                 Err(error)
@@ -459,25 +489,35 @@ impl RestClient {
                     let delay = retry_delay(self.retry_base_delay, transient_retries);
                     transient_retries += 1;
                     drop(reservation);
+                    drop(upload_slot);
                     tokio::time::sleep(delay).await;
                     continue;
                 }
                 Err(error) => return Err(error.into()),
             };
 
+            drop(upload_slot);
             let status = response.status();
             let response_headers = response.headers().clone();
+            // A headerless 429 may turn out to be global. Block new admissions
+            // in this authentication context until its body is classified.
+            let ambiguous = if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                && !response_headers.contains_key("x-ratelimit-scope")
+                && !response_headers.contains_key("x-ratelimit-global")
+            {
+                Some(limiter.begin_ambiguous_429())
+            } else {
+                None
+            };
             // Commit header information before awaiting the body. For 429s
             // retain a provisional cooldown until the JSON retry hint arrives.
-            limiter
-                .update(
-                    &route,
-                    status,
-                    &response_headers,
-                    retry_after_header(&response_headers),
-                    false,
-                )
-                .await;
+            limiter.update(
+                &route,
+                status,
+                &response_headers,
+                retry_after_header(&response_headers),
+                false,
+            );
             // Non-429 bodies have no additional rate-limit metadata.
             let reservation = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 Some(reservation)
@@ -517,9 +557,12 @@ impl RestClient {
                     .is_some_and(|scope| scope == "global");
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                limiter
-                    .update(&route, status, &response_headers, retry_after, global)
-                    .await;
+                limiter.update(&route, status, &response_headers, retry_after, global);
+            }
+            if let Some(guard) = ambiguous
+                && rate_limit.is_some()
+            {
+                guard.classified();
             }
             drop(reservation);
 

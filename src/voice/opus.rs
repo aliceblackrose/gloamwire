@@ -64,6 +64,13 @@ pub struct VoiceOpusFrame<'a> {
 impl<'a> VoiceOpusFrame<'a> {
     /// Creates an encoded Opus frame with its RTP clock duration.
     pub fn new(payload: &'a [u8], duration: VoiceOpusFrameDuration) -> VoiceResult<Self> {
+        // Bound encoded packets before queuing or performing encryption.
+        // This allows multi-frame Opus packets while remaining well below UDP limits.
+        if payload.len() > 8192 {
+            return Err(VoiceError::Protocol(
+                "encoded Opus packet exceeds 8192 bytes".into(),
+            ));
+        }
         if payload.is_empty() {
             return Err(VoiceError::Protocol(
                 "encoded Opus frame must not be empty".to_owned(),
@@ -166,6 +173,7 @@ mod tests {
     #[test]
     fn frame_boundary_rejects_empty_payload_and_exposes_silence() {
         assert!(VoiceOpusFrame::new(&[], VoiceOpusFrameDuration::TwentyMs).is_err());
+        assert!(VoiceOpusFrame::new(&[0; 8193], VoiceOpusFrameDuration::TwentyMs).is_err());
         let silence = VoiceOpusFrame::silence();
         assert_eq!(silence.payload(), &[0xF8, 0xFF, 0xFE]);
         assert_eq!(silence.duration(), VoiceOpusFrameDuration::TwentyMs);

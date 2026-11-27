@@ -41,6 +41,21 @@ impl GatewayCommandSender {
     /// Abandoned queued commands are skipped; cancellation cannot undo a write
     /// that has already started.
     pub async fn send(&self, command: GatewayCommand) -> Result<()> {
+        // Reject oversized commands before queueing. JSON size is a conservative
+        // admission limit independent of the actual negotiated wire encoding.
+        let bytes = match &command {
+            GatewayCommand::UpdatePresence(value) => serde_json::to_vec(value)?,
+            GatewayCommand::UpdateVoiceState(value) => serde_json::to_vec(value)?,
+            GatewayCommand::RequestGuildMembers(value) => serde_json::to_vec(value)?,
+            GatewayCommand::RequestSoundboardSounds(value) => serde_json::to_vec(value)?,
+            GatewayCommand::RequestChannelInfo(value) => serde_json::to_vec(value)?,
+        };
+        if bytes.len() > 4096 {
+            return Err(Error::GatewayPayloadTooLarge {
+                actual: bytes.len(),
+                limit: 4096,
+            });
+        }
         let deadline = tokio::time::Instant::now() + COMMAND_TIMEOUT;
         tokio::time::timeout_at(deadline, async {
             let (reply, response) = oneshot::channel();

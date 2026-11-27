@@ -1,4 +1,4 @@
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Distinguishes omitted properties from explicit null and supplied values.
 /// Use with serde(default) on fields in partial protocol payloads.
@@ -16,6 +16,32 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Patch<T> {
             Some(value) => Self::Value(value),
             None => Self::Null,
         })
+    }
+}
+
+impl<T> Patch<T> {
+    /// True when the property was omitted from the payload.
+    #[must_use]
+    pub const fn is_absent(&self) -> bool {
+        matches!(self, Self::Absent)
+    }
+
+    /// Returns the supplied value, if any.
+    #[must_use]
+    pub const fn as_option(&self) -> Option<&T> {
+        match self {
+            Self::Value(value) => Some(value),
+            _ => None,
+        }
+    }
+}
+
+impl<T: Serialize> Serialize for Patch<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Value(value) => value.serialize(serializer),
+            Self::Null | Self::Absent => serializer.serialize_none(),
+        }
     }
 }
 
