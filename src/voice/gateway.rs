@@ -808,6 +808,13 @@ mod tests {
     use super::voice_gateway_url;
 
     #[test]
+    fn heartbeat_ack_requires_matching_nonce() {
+        assert!(super::heartbeat_ack_matches(&serde_json::json!({"t":123}), 123));
+        assert!(!super::heartbeat_ack_matches(&serde_json::json!({"t":122}), 123));
+        assert!(!super::heartbeat_ack_matches(&serde_json::json!({}), 123));
+    }
+
+    #[test]
     fn voice_gateway_url_adds_secure_scheme_path_and_v8() {
         assert_eq!(
             voice_gateway_url("voice.example.test:443"),

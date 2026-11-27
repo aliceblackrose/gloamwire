@@ -309,3 +309,54 @@ fn guild_delete_removes_messages_without_explicit_guild_id() {
     }
     assert!(cache.message(MessageId::new(50)).is_none());
 }
+
+#[test]
+fn shard_zero_ready_preserves_messages_in_other_shard_channels() {
+    use gloamwire::gateway::{GatewayEvent, ShardCount, ShardEvent, ShardId};
+    let mut cache = Cache::new(gloamwire::CacheConfig::new().message_capacity(4));
+    let count = ShardCount::new(2).unwrap();
+    let events = [
+        (1, "GUILD_CREATE", json!({"id":"4194304","name":"guild","owner_id":"2","channels":[{"id":"10","type":0}]})),
+        (1, "MESSAGE_CREATE", json!({"id":"50","channel_id":"10","author":{"id":"2","username":"user"},"content":"cached"})),
+        (0, "READY", json!({"v":10,"user":{"id":"2","username":"bot"},"guilds":[],"session_id":"session","resume_gateway_url":"wss://gateway.discord.gg","application":{"id":"2","flags":0}})),
+    ];
+    for (i, (shard, name, data)) in events.into_iter().enumerate() {
+        cache.update_shard_event(&ShardEvent { shard_id: ShardId::new(shard), event: GatewayEvent::Dispatch(DispatchEvent {name:name.into(),sequence:i as u64+1,data}) },count).unwrap();
+    }
+    assert!(cache.message(MessageId::new(50)).is_some());
+}
+
+#[test]
+fn presence_null_clears_avatar_but_omitted_name_is_preserved() {
+    use gloamwire::model::UserId;
+    let mut cache = Cache::default();
+    let events = [
+        ("USER_UPDATE", json!({"id":"2","username":"user","avatar":"hash","global_name":"name"})),
+        ("PRESENCE_UPDATE", json!({"guild_id":"1","user":{"id":"2","avatar":null},"status":"online"})),
+    ];
+    for (i, (name,data)) in events.into_iter().enumerate() {
+        cache.update_dispatch(&DispatchEvent{name:name.into(),sequence:i as u64+1,data}).unwrap();
+    }
+    let user = cache.user(UserId::new(2)).unwrap();
+    assert!(user.avatar.is_none());
+    assert_eq!(user.global_name.as_deref(),Some("name"));
+}
+
+#[test]
+fn deleted_voice_channel_removes_normalized_and_embedded_states() {
+    use gloamwire::model::UserId;
+    let mut cache = Cache::default();
+    let events = [
+        ("GUILD_CREATE", json!({"id":"1","name":"guild","owner_id":"2","channels":[{"id":"10","type":2}]})),
+        ("VOICE_STATE_UPDATE", json!({"guild_id":"1","channel_id":"10","user_id":"2","session_id":"session","deaf":false,"mute":false,"self_deaf":false,"self_mute":false,"suppress":false})),
+        ("CHANNEL_DELETE", json!({"id":"10","guild_id":"1","type":2})),
+    ];
+    for (i, (name,data)) in events.into_iter().enumerate() {
+        cache.update_dispatch(&DispatchEvent{name:name.into(),sequence:i as u64+1,data}).unwrap();
+        if i == 1 {
+            assert!(cache.voice_state(GuildId::new(1),UserId::new(2)).is_some());
+        }
+    }
+    assert!(cache.voice_state(GuildId::new(1),UserId::new(2)).is_none());
+    assert!(cache.guild(GuildId::new(1)).unwrap().voice_states.is_empty());
+}

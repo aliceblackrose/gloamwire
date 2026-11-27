@@ -43,3 +43,17 @@ pub struct PartialUser {
     #[serde(default, skip_serializing_if = "Patch::is_absent")]
     pub avatar: Patch<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{PartialUser, Patch};
+
+    #[test]
+    fn partial_user_round_trip_preserves_null_and_absent() {
+        let raw = serde_json::json!({"id":"1","avatar":null});
+        let user: PartialUser = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(user.avatar, Patch::Null);
+        assert_eq!(user.global_name, Patch::Absent);
+        assert_eq!(serde_json::to_value(user).unwrap(), raw);
+    }
+}

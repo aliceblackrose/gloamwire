@@ -372,6 +372,11 @@ mod tests {
 
     proptest! {
         #[test]
+        fn arbitrary_etf_input_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..1024)) {
+            let _ = GatewayEncoding::Etf.decode_bytes::<Value>(&bytes);
+        }
+
+        #[test]
         fn json_round_trips_arbitrary_gateway_values(
             op in any::<u8>(),
             data in gateway_json_value(),
