@@ -428,10 +428,7 @@ impl Component {
 
     /// Creates a message section with text displays and a button or thumbnail accessory.
     #[must_use]
-    pub fn section(
-        components: impl IntoIterator<Item = Component>,
-        accessory: Component,
-    ) -> Self {
+    pub fn section(components: impl IntoIterator<Item = Component>, accessory: Component) -> Self {
         Self {
             components: components.into_iter().collect(),
             accessory: Some(Box::new(accessory)),
@@ -603,14 +600,20 @@ impl Component {
 
     /// Sets defaults for an auto-populated select.
     #[must_use]
-    pub fn with_default_values(mut self, default_values: impl IntoIterator<Item = SelectDefaultValue>) -> Self {
+    pub fn with_default_values(
+        mut self,
+        default_values: impl IntoIterator<Item = SelectDefaultValue>,
+    ) -> Self {
         self.default_values = default_values.into_iter().collect();
         self
     }
 
     /// Restricts a channel select to the supplied channel types.
     #[must_use]
-    pub fn with_channel_types(mut self, channel_types: impl IntoIterator<Item = ChannelType>) -> Self {
+    pub fn with_channel_types(
+        mut self,
+        channel_types: impl IntoIterator<Item = ChannelType>,
+    ) -> Self {
         self.channel_types = channel_types.into_iter().collect();
         self
     }
@@ -720,13 +723,22 @@ mod tests {
                 json!({"type":3,"custom_id":"choice","options":[{"label":"One","value":"one"}],
                     "min_values":1,"max_values":2}),
             ),
-            (Component::user_select("user"), json!({"type":5,"custom_id":"user"})),
-            (Component::role_select("role"), json!({"type":6,"custom_id":"role"})),
+            (
+                Component::user_select("user"),
+                json!({"type":5,"custom_id":"user"}),
+            ),
+            (
+                Component::role_select("role"),
+                json!({"type":6,"custom_id":"role"}),
+            ),
             (
                 Component::mentionable_select("mention"),
                 json!({"type":7,"custom_id":"mention"}),
             ),
-            (Component::channel_select("channel"), json!({"type":8,"custom_id":"channel"})),
+            (
+                Component::channel_select("channel"),
+                json!({"type":8,"custom_id":"channel"}),
+            ),
             (
                 Component::text_input(ComponentStyle::SHORT, "name")
                     .with_length_bounds(1, 50)
@@ -757,12 +769,18 @@ mod tests {
             ),
         ];
         for (component, expected) in cases {
-            assert_eq!(serde_json::to_value(component).expect("component"), expected);
+            assert_eq!(
+                serde_json::to_value(component).expect("component"),
+                expected
+            );
         }
         let modal = Modal::new(
             "form",
             "Form",
-            [Component::label("Confirm", Component::checkbox("confirm", true))],
+            [Component::label(
+                "Confirm",
+                Component::checkbox("confirm", true),
+            )],
         );
         assert_eq!(
             serde_json::to_value(modal).expect("modal"),
@@ -787,8 +805,9 @@ mod tests {
                 "attachment://image.png",
             ))]),
             Component::file("report.pdf").with_spoiler(true),
-            Component::action_row([Component::button(InteractiveButtonStyle::Primary, "ok")
-                .with_label("OK")]),
+            Component::action_row([
+                Component::button(InteractiveButtonStyle::Primary, "ok").with_label("OK")
+            ]),
         ])
         .with_accent_color(0x123456);
         assert!(layout.find_custom_id("ok").is_some());
