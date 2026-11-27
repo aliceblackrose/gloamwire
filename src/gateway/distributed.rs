@@ -89,9 +89,9 @@ impl DistributedShardConfig {
     }
 
     fn validate(self) -> Result<()> {
-        if self.lease_ttl.is_zero() {
+        if self.lease_ttl.is_zero() || self.lease_ttl > Duration::from_secs(86_400) {
             return Err(Error::GatewayProtocol(
-                "distributed shard lease TTL must be non-zero".to_owned(),
+                "distributed shard lease TTL must be non-zero and at most 24 hours".to_owned(),
             ));
         }
         if self.renew_interval.is_zero() || self.renew_interval >= self.lease_ttl {

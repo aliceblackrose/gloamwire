@@ -103,7 +103,11 @@ impl RestClientBuilder {
 
     /// Builds the configured REST client.
     pub fn build(self) -> Result<RestClient> {
-        let mut builder = reqwest::Client::builder().user_agent(USER_AGENT);
+        // A stalled request holds a resource reservation; provide finite defaults.
+        let mut builder = reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .timeout(Duration::from_secs(60))
+            .connect_timeout(Duration::from_secs(10));
 
         if let Some(timeout) = self.request_timeout {
             builder = builder.timeout(timeout);
@@ -424,8 +428,6 @@ impl RestClient {
         let mut transient_retries = 0;
 
         loop {
-            let reservation = limiter.reserve(&route).await;
-
             let mut request = self
                 .http
                 .request(route.method.clone(), &url)
@@ -446,6 +448,7 @@ impl RestClient {
                 } => request.multipart(named_file_form(payload_json.clone(), field, file).await?),
             };
 
+            let reservation = limiter.reserve(&route).await;
             let response = match request.send().await {
                 Ok(response) => response,
                 Err(error)
@@ -475,6 +478,13 @@ impl RestClient {
                     false,
                 )
                 .await;
+            // Non-429 bodies have no additional rate-limit metadata.
+            let reservation = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                Some(reservation)
+            } else {
+                drop(reservation);
+                None
+            };
             let bytes = match crate::error::read_limited_body(response).await {
                 Ok(bytes) => bytes,
                 Err(error) => {

@@ -208,6 +208,11 @@ impl std::fmt::Debug for GatewayConnection {
 impl GatewayConnection {
     /// Opens the WebSocket, receives Hello, initializes heartbeats, and identifies.
     pub async fn connect(config: GatewayConfig) -> Result<Self> {
+        if let Some([id, count]) = config.shard
+            && (count == 0 || id >= count)
+        {
+            return Err(Error::GatewayProtocol("invalid Gateway shard ID/count".into()));
+        }
         let rate_limiter = Arc::new(GatewayRateLimiter::default());
         let (socket, decoder, heartbeat, last_heartbeat_sent) =
             open_and_handshake(&config, None, &rate_limiter).await?;
@@ -358,6 +363,10 @@ impl GatewayConnection {
                                 .map_or(GatewayReconnectStrategy::Resume, GatewayCloseCode::reconnect_strategy);
 
                             if strategy == GatewayReconnectStrategy::Stop {
+                                self.ready = false;
+                                self.socket.take();
+                                self.shutdown = true;
+                                self.session = None;
                                 return Err(Error::GatewayClosed { code, reason });
                             }
 
@@ -484,7 +493,12 @@ impl GatewayConnection {
             return Err(Error::GatewayOutboundRateLimited { retry_after });
         }
 
-        send_payload(self.socket.as_mut().ok_or_else(disconnected)?, payload).await
+        let result = send_payload(self.socket.as_mut().ok_or_else(disconnected)?, payload).await;
+        if matches!(&result, Err(Error::WebSocket(_))) {
+            self.ready = false;
+            self.socket.take();
+        }
+        result
     }
 
     async fn send_heartbeat(&mut self) -> Result<()> {
@@ -654,9 +668,9 @@ async fn open_and_handshake(
     }
 
     let hello = serde_json::from_value::<Hello>(hello.d)?;
-    if hello.heartbeat_interval == 0 {
+    if !(1..=300_000).contains(&hello.heartbeat_interval) {
         return Err(Error::GatewayProtocol(
-            "Hello contained a zero heartbeat interval".to_owned(),
+            "Hello contained an invalid heartbeat interval".to_owned(),
         ));
     }
 

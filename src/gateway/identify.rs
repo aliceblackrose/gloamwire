@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use tokio::{sync::Mutex, time::Instant};
 
@@ -7,6 +7,7 @@ use crate::http::SessionStartLimit;
 use super::{GatewayCoordinationFuture, GatewayIdentifyCoordinator, ShardId};
 
 const IDENTIFY_BUCKET_WINDOW: Duration = Duration::from_secs(5);
+const SESSION_START_WINDOW: Duration = Duration::from_secs(86_400);
 
 #[derive(Debug, Clone)]
 pub(crate) struct GatewayIdentifyLimiter {
@@ -17,50 +18,57 @@ pub(crate) struct GatewayIdentifyLimiter {
 struct IdentifyState {
     total: u32,
     remaining: u32,
-    reset_after: Duration,
     reset_at: Instant,
-    next_bucket_allowed: Vec<Instant>,
+    max_concurrency: u32,
+    next_bucket_allowed: HashMap<u32, Instant>,
 }
 
 impl GatewayIdentifyLimiter {
     pub(crate) fn new(limit: &SessionStartLimit) -> Self {
         let now = Instant::now();
-        let max_concurrency = limit.max_concurrency.max(1) as usize;
+        let max_concurrency = limit.max_concurrency.max(1);
         let reset_after = Duration::from_millis(limit.reset_after);
 
         Self {
             state: Arc::new(Mutex::new(IdentifyState {
                 total: limit.total,
-                remaining: limit.remaining,
-                reset_after,
+                remaining: limit.remaining.min(limit.total),
                 reset_at: now + reset_after,
-                next_bucket_allowed: vec![now; max_concurrency],
+                max_concurrency,
+                next_bucket_allowed: HashMap::new(),
             })),
         }
     }
 
-    async fn acquire(&self, shard_id: u32) {
+    async fn acquire(&self, shard_id: u32) -> super::GatewayCoordinationResult<()> {
         loop {
             let wait_until = {
                 let mut state = self.state.lock().await;
                 let now = Instant::now();
 
+                if state.total == 0 {
+                    return Err(super::GatewayCoordinationError::new(
+                        "Discord reported zero Identify session capacity",
+                    ));
+                }
                 if now >= state.reset_at {
                     state.remaining = state.total;
-                    state.reset_at = now + state.reset_after;
+                    // reset_after describes the current window, not future quota windows.
+                    state.reset_at = now + SESSION_START_WINDOW;
                 }
 
                 if state.remaining == 0 {
                     Some(state.reset_at)
                 } else {
-                    let bucket = shard_id as usize % state.next_bucket_allowed.len();
-                    let next_allowed = state.next_bucket_allowed[bucket];
+                    state.next_bucket_allowed.retain(|_, deadline| *deadline > now);
+                    let bucket = shard_id % state.max_concurrency;
+                    let next_allowed = state.next_bucket_allowed.get(&bucket).copied().unwrap_or(now);
 
                     if next_allowed > now {
                         Some(next_allowed)
                     } else {
                         state.remaining -= 1;
-                        state.next_bucket_allowed[bucket] = now + IDENTIFY_BUCKET_WINDOW;
+                        state.next_bucket_allowed.insert(bucket, now + IDENTIFY_BUCKET_WINDOW);
 
                         #[cfg(feature = "tracing")]
                         tracing::trace!(
@@ -89,7 +97,7 @@ impl GatewayIdentifyLimiter {
                     }
                     tokio::time::sleep_until(deadline).await;
                 }
-                None => return,
+                None => return Ok(()),
             }
         }
     }
@@ -98,8 +106,7 @@ impl GatewayIdentifyLimiter {
 impl GatewayIdentifyCoordinator for GatewayIdentifyLimiter {
     fn acquire_identify(&self, shard_id: ShardId) -> GatewayCoordinationFuture<'_, ()> {
         Box::pin(async move {
-            self.acquire(shard_id.get()).await;
-            Ok(())
+            self.acquire(shard_id.get()).await
         })
     }
 }

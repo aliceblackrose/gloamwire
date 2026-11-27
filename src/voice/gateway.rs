@@ -379,7 +379,7 @@ impl VoiceGatewayConnection {
         let mut sent = None;
         let deadline = Instant::now() + NEGOTIATION_TIMEOUT;
         loop {
-            if buffered.len() >= MAX_PENDING_EVENTS {
+            if self.pending.len().saturating_add(buffered.len()) >= MAX_PENDING_EVENTS {
                 return Err(VoiceError::Protocol(
                     "Voice Resume event buffer exceeded".into(),
                 ));
@@ -554,9 +554,9 @@ async fn open_socket(endpoint: &str) -> VoiceResult<(VoiceSocket, Interval)> {
     {
         Inbound::Json(envelope) if envelope.opcode == HELLO_OPCODE => {
             let hello = serde_json::from_value::<Hello>(envelope.data)?;
-            if hello.heartbeat_interval == 0 {
+            if !(1..=300_000).contains(&hello.heartbeat_interval) {
                 return Err(VoiceError::Protocol(
-                    "Voice Hello contained a zero heartbeat interval".to_owned(),
+                    "Voice Hello contained an invalid heartbeat interval".to_owned(),
                 ));
             }
             let interval = Duration::from_millis(hello.heartbeat_interval);

@@ -156,7 +156,11 @@ where
             self.ssrc_users.insert(speaking.ssrc, user_id);
         }
 
-        let Some(dave_event) = DaveProtocolEvent::from_gateway_event(event)? else {
+        let parsed = DaveProtocolEvent::from_gateway_event(event);
+        if parsed.is_err() {
+            self.protocol_failed = true;
+        }
+        let Some(dave_event) = parsed? else {
             return Ok(());
         };
 
@@ -175,31 +179,11 @@ where
         // during command transmission, the session remains fail-closed.
         self.protocol_failed = true;
         self.participants.apply(&dave_event);
-        let commands = match self
-            .provider
+        // The provider owns MLS recovery and knows the pending epoch version.
+        // Reconfiguring from the active version can downgrade an upgrade.
+        let commands = self.provider
             .handle_gateway_event(&dave_event, &self.participants)
-        {
-            Ok(commands) => commands,
-            Err(error) => {
-                if let Some(transition_id) = recovery_transition_id(&dave_event) {
-                    let mut commands =
-                        vec![DaveGatewayCommand::InvalidCommitWelcome { transition_id }];
-                    let version = self.provider.active_protocol_version();
-                    commands.extend(
-                        self.provider
-                            .configure_protocol_version(version)
-                            .map_err(provider_error)?,
-                    );
-                    if let Err(error) = send_commands(&mut self.session, commands).await {
-                        self.protocol_failed = true;
-                        return Err(error);
-                    }
-                    self.protocol_failed = false;
-                    return Ok(());
-                }
-                return Err(provider_error(error));
-            }
-        };
+            .map_err(provider_error)?;
         let result = send_commands(&mut self.session, commands).await;
         if result.is_ok() {
             self.protocol_failed = false;
@@ -321,14 +305,6 @@ impl DaveVoiceSession<super::DaveyProvider> {
 
 fn provider_error(error: DaveProviderError) -> VoiceError {
     VoiceError::Protocol(format!("DAVE provider error: {error}"))
-}
-
-fn recovery_transition_id(event: &DaveProtocolEvent) -> Option<u16> {
-    match event {
-        DaveProtocolEvent::AnnounceCommit { transition_id, .. }
-        | DaveProtocolEvent::Welcome { transition_id, .. } => Some(*transition_id),
-        _ => None,
-    }
 }
 
 async fn send_commands(
