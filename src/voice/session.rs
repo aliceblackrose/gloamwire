@@ -179,7 +179,9 @@ impl VoiceSession {
         media: &[u8],
     ) -> VoiceResult<Vec<u8>> {
         if !self.is_media_ready() {
-            return Err(super::VoiceError::Protocol("voice media unavailable".into()));
+            return Err(super::VoiceError::Protocol(
+                "voice media unavailable".into(),
+            ));
         }
         self.transport_crypto.encrypt_audio(header, media)
     }

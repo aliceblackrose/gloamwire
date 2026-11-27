@@ -181,13 +181,12 @@ impl VoiceGatewayConnection {
     /// Opens the Voice Gateway, receives Hello, identifies, and waits for Ready.
     pub async fn connect(config: VoiceGatewayConfig) -> VoiceResult<Self> {
         let config = Arc::new(config);
-        let (mut socket, mut heartbeat) =
-            open_socket(
-                &config.endpoint,
-                config.allow_insecure_loopback,
-                config.allow_custom_origin,
-            )
-            .await?;
+        let (mut socket, mut heartbeat) = open_socket(
+            &config.endpoint,
+            config.allow_insecure_loopback,
+            config.allow_custom_origin,
+        )
+        .await?;
         send_json(
             &mut socket,
             IDENTIFY_OPCODE,
@@ -453,13 +452,12 @@ impl VoiceGatewayConnection {
         // A stale synthetic Resumed event must not authorize media on a later recovery.
         self.pending
             .retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
-        let (mut socket, mut heartbeat) =
-            open_socket(
-                &self.config.endpoint,
-                self.config.allow_insecure_loopback,
-                self.config.allow_custom_origin,
-            )
-            .await?;
+        let (mut socket, mut heartbeat) = open_socket(
+            &self.config.endpoint,
+            self.config.allow_insecure_loopback,
+            self.config.allow_custom_origin,
+        )
+        .await?;
         send_json(
             &mut socket,
             RESUME_OPCODE,
@@ -663,7 +661,9 @@ async fn open_socket(
         || crate::secret::discord_websocket_origin(&url)
         || (allow_loopback && url.starts_with("ws://")))
     {
-        return Err(VoiceError::Protocol("untrusted Voice Gateway origin".into()));
+        return Err(VoiceError::Protocol(
+            "untrusted Voice Gateway origin".into(),
+        ));
     }
     let (mut socket, _) = tokio::time::timeout(
         NEGOTIATION_TIMEOUT,

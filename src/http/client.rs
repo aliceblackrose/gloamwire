@@ -407,7 +407,9 @@ impl RestClient {
         mut headers: HeaderMap,
     ) -> Result<HttpResponse<Vec<u8>>> {
         if !crate::secret::secure_http_endpoint(&self.base_url, self.allow_insecure_loopback) {
-            return Err(Error::InvalidRestRequest("insecure or invalid API base URL".into()));
+            return Err(Error::InvalidRestRequest(
+                "insecure or invalid API base URL".into(),
+            ));
         }
         if !super::encoding::valid_route_path(&route.path) {
             return Err(Error::InvalidRestRequest("invalid API path segment".into()));

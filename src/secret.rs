@@ -168,7 +168,10 @@ mod http_endpoint_tests {
         assert!(secure_http_endpoint("http://127.0.0.1:8080", true));
         assert!(!secure_http_endpoint("https://a:b@example.com", false));
         assert!(!secure_http_endpoint("https://example.com/?q=1", false));
-        assert!(!secure_http_endpoint("https://example.com/#fragment", false));
+        assert!(!secure_http_endpoint(
+            "https://example.com/#fragment",
+            false
+        ));
     }
 
     #[test]

@@ -343,7 +343,9 @@ impl OAuth2Client {
         if crate::secret::secure_http_endpoint(&self.api_base_url, self.allow_insecure_loopback) {
             Ok(())
         } else {
-            Err(Error::InvalidRestRequest("insecure or invalid OAuth2 base URL".into()))
+            Err(Error::InvalidRestRequest(
+                "insecure or invalid OAuth2 base URL".into(),
+            ))
         }
     }
 

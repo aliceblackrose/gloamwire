@@ -41,7 +41,9 @@ struct SharedCooldowns {
 impl Default for SharedRateLimits {
     fn default() -> Self {
         Self {
-            gates: (0..GATE_STRIPES).map(|_| Arc::new(Mutex::new(()))).collect(),
+            gates: (0..GATE_STRIPES)
+                .map(|_| Arc::new(Mutex::new(())))
+                .collect(),
             cooldowns: std::sync::Mutex::default(),
         }
     }
@@ -64,7 +66,10 @@ impl SharedRateLimits {
         if cooldowns.entries.len() >= MAX_BUCKETS && !cooldowns.entries.contains_key(major) {
             cooldowns.overflow_until = later(cooldowns.overflow_until, deadline);
         } else {
-            let until = cooldowns.entries.entry(major.to_owned()).or_insert(deadline);
+            let until = cooldowns
+                .entries
+                .entry(major.to_owned())
+                .or_insert(deadline);
             *until = (*until).max(deadline);
         }
     }
@@ -146,11 +151,7 @@ impl RateLimiter {
 
     pub(crate) async fn reserve(&self, route: &Route) -> OwnedMutexGuard<()> {
         loop {
-            let guard = self
-                .shared
-                .gate(route.resource_major())
-                .lock_owned()
-                .await;
+            let guard = self.shared.gate(route.resource_major()).lock_owned().await;
             match self.try_acquire(route) {
                 None => return guard,
                 Some(deadline) => {
@@ -326,7 +327,8 @@ impl RateLimiter {
                 || header_str(headers, "x-ratelimit-scope") == Some("global")
             {
                 state.global_until = later(state.global_until, deadline);
-            } else if state.buckets.len() >= MAX_BUCKETS && !state.buckets.contains_key(&bucket_key) {
+            } else if state.buckets.len() >= MAX_BUCKETS && !state.buckets.contains_key(&bucket_key)
+            {
                 state.global_until = later(state.global_until, deadline);
             } else {
                 let bucket = state.buckets.entry(bucket_key).or_insert(BucketState {
