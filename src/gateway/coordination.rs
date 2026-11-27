@@ -75,7 +75,11 @@ pub trait DistributedShardCoordinator: GatewayIdentifyCoordinator + Send + Sync 
     /// Attempts to acquire an exclusive lease for one shard.
     ///
     /// Returns `true` when `owner_id` owns the shard after the call and `false`
-    /// when another live owner currently holds it.
+    /// when another live owner currently holds it. The manager supplies a fresh
+    /// opaque ownership identity per acquisition. Backends must compare the
+    /// complete identity atomically on renew and release, reject expired
+    /// renewals, and enforce expiration even if a caller is cancelled.
+    /// Scope the backend to a single Discord application.
     fn acquire_shard<'a>(
         &'a self,
         owner_id: &'a str,

@@ -208,17 +208,18 @@ impl GatewayConnection {
     /// Opens the WebSocket, receives Hello, initializes heartbeats, and identifies.
     pub async fn connect(config: GatewayConfig) -> Result<Self> {
         let rate_limiter = Arc::new(GatewayRateLimiter::default());
-        let (socket, decoder, heartbeat) = open_and_handshake(&config, None, &rate_limiter).await?;
+        let (socket, decoder, heartbeat, last_heartbeat_sent) =
+            open_and_handshake(&config, None, &rate_limiter).await?;
 
         Ok(Self {
             config,
             socket,
             decoder,
             heartbeat,
-            heartbeat_acknowledged: true,
+            heartbeat_acknowledged: last_heartbeat_sent.is_none(),
             sequence: None,
             session: None,
-            last_heartbeat_sent: None,
+            last_heartbeat_sent,
             latency: None,
             shutdown: false,
             rate_limiter,
@@ -279,16 +280,18 @@ impl GatewayConnection {
             return Ok(());
         }
 
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            self.socket.send(Message::Close(Some(CloseFrame {
+                code: CloseCode::Normal,
+                reason: "Gloamwire shutdown".into(),
+            }))),
+        )
+        .await
+        .map_err(|_| Error::GatewayProtocol("Gateway shutdown timed out".into()))??;
         self.shutdown = true;
         self.session = None;
         self.sequence = None;
-
-        self.socket
-            .send(Message::Close(Some(CloseFrame {
-                code: CloseCode::Normal,
-                reason: "Gloamwire shutdown".into(),
-            })))
-            .await?;
 
         Ok(())
     }
@@ -350,7 +353,15 @@ impl GatewayConnection {
 
                     match envelope.op {
                         0 => return self.dispatch(envelope),
-                        1 => self.send_heartbeat().await?,
+                        1 => {
+                            match self.send_heartbeat().await {
+                                Ok(()) => {}
+                                Err(Error::WebSocket(_)) => {
+                                    self.reconnect(GatewayReconnectStrategy::Resume).await?;
+                                }
+                                Err(error) => return Err(error),
+                            }
+                        }
                         7 => {
                             self.reconnect(GatewayReconnectStrategy::Resume).await?;
                             return Ok(GatewayEvent::Reconnect);
@@ -482,12 +493,12 @@ impl GatewayConnection {
         loop {
             let rate_limiter = Arc::new(GatewayRateLimiter::default());
             match open_and_handshake(&config, session.as_ref(), &rate_limiter).await {
-                Ok((socket, decoder, heartbeat)) => {
+                Ok((socket, decoder, heartbeat, last_heartbeat_sent)) => {
                     self.socket = socket;
                     self.decoder = decoder;
                     self.heartbeat = heartbeat;
-                    self.heartbeat_acknowledged = true;
-                    self.last_heartbeat_sent = None;
+                    self.heartbeat_acknowledged = last_heartbeat_sent.is_none();
+                    self.last_heartbeat_sent = last_heartbeat_sent;
                     self.latency = None;
                     self.rate_limiter = rate_limiter;
                     return Ok(());
@@ -576,7 +587,7 @@ async fn open_and_handshake(
     config: &GatewayConfig,
     session: Option<&GatewaySession>,
     rate_limiter: &GatewayRateLimiter,
-) -> Result<(GatewaySocket, GatewayDecoder, Interval)> {
+) -> Result<(GatewaySocket, GatewayDecoder, Interval, Option<Instant>)> {
     let base_url = session.map_or(config.url.as_str(), GatewaySession::resume_gateway_url);
     let url = gateway_url(base_url, config.encoding, config.compression);
     let timeout = Duration::from_secs(15);
@@ -617,6 +628,7 @@ async fn open_and_handshake(
         tokio::time::interval_at(Instant::now() + first_heartbeat, heartbeat_interval);
     heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
+    let mut last_heartbeat_sent = None;
     if let Some(session) = session {
         send_encoded(
             &mut socket,
@@ -637,7 +649,6 @@ async fn open_and_handshake(
         if let Some(coordinator) = &config.identify_coordinator {
             let reservation = coordinator.acquire_identify(ShardId::new(config.shard_id()));
             tokio::pin!(reservation);
-            let mut acknowledged = true;
             loop {
                 tokio::select! {
                     result = &mut reservation => {
@@ -647,21 +658,21 @@ async fn open_and_handshake(
                         break;
                     }
                     _ = heartbeat.tick() => {
-                        if !acknowledged {
+                        if last_heartbeat_sent.is_some() {
                             return Err(Error::GatewayClosed {
                                 code: None,
                                 reason: "Gateway heartbeat not acknowledged while awaiting Identify".to_owned(),
                             });
                         }
                         send_heartbeat(&mut socket, rate_limiter, config.encoding, None).await?;
-                        acknowledged = false;
+                        last_heartbeat_sent = Some(Instant::now());
                     }
                     envelope = next_envelope(&mut socket, &mut decoder, config.encoding) => {
                         match envelope?.op {
-                            11 => acknowledged = true,
+                            11 => last_heartbeat_sent = None,
                             1 => {
                                 send_heartbeat(&mut socket, rate_limiter, config.encoding, None).await?;
-                                acknowledged = false;
+                                last_heartbeat_sent = Some(Instant::now());
                             }
                             7 | 9 => {
                                 return Err(Error::GatewayClosed {
@@ -698,7 +709,7 @@ async fn open_and_handshake(
         .await?;
     }
 
-    Ok((socket, decoder, heartbeat))
+    Ok((socket, decoder, heartbeat, last_heartbeat_sent))
 }
 
 async fn next_envelope(

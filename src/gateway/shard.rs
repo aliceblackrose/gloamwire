@@ -161,15 +161,21 @@ impl ShardManager {
                         event = gateway.next_event() => {
                             match event {
                                 Ok(event) => {
-                                    if event_tx.send(Ok(ShardEvent { shard_id, event })).await.is_err() {
-                                        #[cfg(feature = "tracing")]
-                                        tracing::debug!(
-                                            target: "gloamwire::gateway",
-                                            shard_id = raw_shard_id,
-                                            "Gateway shard event receiver dropped"
-                                        );
-                                        let _ = gateway.shutdown().await;
-                                        break;
+                                    match event_tx.try_send(Ok(ShardEvent { shard_id, event })) {
+                                        Ok(()) => {}
+                                        Err(error) => {
+                                            let full = matches!(error, mpsc::error::TrySendError::Full(_));
+                                            let _ = gateway.shutdown().await;
+                                            drop(gateway);
+                                            if full {
+                                                let error = Error::GatewayProtocol(format!(
+                                                    "shard {} event queue overflow; connection stopped",
+                                                    shard_id.get()
+                                                ));
+                                                let _ = event_tx.send(Err(error)).await;
+                                            }
+                                            break;
+                                        }
                                     }
                                 }
                                 Err(error) => {
@@ -179,6 +185,7 @@ impl ShardManager {
                                         shard_id = raw_shard_id,
                                         "Discord Gateway shard stopped with an error"
                                     );
+                                    drop(gateway);
                                     let _ = event_tx.send(Err(error)).await;
                                     break;
                                 }

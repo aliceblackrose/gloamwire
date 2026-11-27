@@ -12,8 +12,10 @@ use crate::{
 };
 
 use super::{
-    DistributedShardCoordinator, GatewayConfig, GatewayConnection, GatewayCoordinationError,
-    GatewayIdentifyCoordinator, GatewayIntents, ShardCount, ShardEvent, ShardId,
+    DistributedShardCoordinator, GatewayConfig, GatewayConnection,
+    GatewayCoordinationError,
+    GatewayIdentifyCoordinator, GatewayIntents, GatewayReconnectStrategy, ShardCount, ShardEvent,
+    ShardId,
 };
 
 /// Timing policy for distributed shard leases.
@@ -253,9 +255,22 @@ async fn run_shard_supervisor<C>(
             return;
         }
 
-        let owns_shard = match coordinator
-            .acquire_shard(&owner_id, shard_id, distributed.lease_ttl)
-            .await
+        // Each acquisition has a unique ownership identity. A delayed release
+        // from a previous acquisition must not release a newer lease.
+        let lease_owner = format!("{owner_id}:{}:{:032x}", shard_id.get(), fastrand::u128(..));
+        let started = Instant::now();
+        let deadline = started + distributed.lease_ttl;
+        let acquired = tokio::select! {
+            _ = shutdown.changed() => return,
+            _ = event_tx.closed() => return,
+            result = tokio::time::timeout_at(
+                deadline,
+                coordinator.acquire_shard(&lease_owner, shard_id, distributed.lease_ttl),
+            ) => result,
+        };
+        let owns_shard = match acquired
+            .map_err(|_| GatewayCoordinationError::new("shard lease acquisition timed out"))
+            .and_then(|result| result)
         {
             Ok(owns_shard) => owns_shard,
             Err(error) => {
@@ -286,6 +301,11 @@ async fn run_shard_supervisor<C>(
             "acquired distributed Gateway shard lease"
         );
 
+        if Instant::now() >= deadline {
+            release_lease(&event_tx, &*coordinator, &lease_owner, shard_id).await;
+            continue;
+        }
+
         // Keep renewal alive even when connecting, identifying, reconnecting,
         // or waiting for an application consumer to make room in its queue.
         let result = tokio::select! {
@@ -295,17 +315,22 @@ async fn run_shard_supervisor<C>(
                 &event_tx,
                 &mut shutdown,
             ) => result,
-            result = renew_owned_shard(&*coordinator, &owner_id, shard_id, distributed) => {
+            result = renew_owned_shard(&*coordinator, &lease_owner, shard_id, distributed, deadline) => {
                 // Dropping the owned-shard future also drops its socket.
                 result
             }
         };
 
-        release_lease(&event_tx, &*coordinator, &owner_id, shard_id).await;
-        if let Err(error) = result
-            && event_tx.send(Err(error)).await.is_err()
-        {
-            return;
+        release_lease(&event_tx, &*coordinator, &lease_owner, shard_id).await;
+        if let Err(error) = result {
+            let terminal = matches!(
+                &error,
+                Error::GatewayClosed { code: Some(code), .. }
+                    if code.reconnect_strategy() == GatewayReconnectStrategy::Stop
+            );
+            if event_tx.send(Err(error)).await.is_err() || terminal {
+                return;
+            }
         }
         if shutdown_requested(&shutdown)
             || event_tx.is_closed()
@@ -336,9 +361,19 @@ async fn run_owned_shard(
             }
             event = gateway.next_event() => {
                 let event = event?;
-                if event_tx.send(Ok(ShardEvent { shard_id, event })).await.is_err() {
-                    let _ = gateway.shutdown().await;
-                    return Ok(());
+                match event_tx.try_send(Ok(ShardEvent { shard_id, event })) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        let _ = gateway.shutdown().await;
+                        return Ok(());
+                    }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        // Fail closed before publishing the error or releasing the lease.
+                        return Err(Error::GatewayProtocol(format!(
+                            "shard {} event queue overflow; connection stopped",
+                            shard_id.get()
+                        )));
+                    }
                 }
             }
         }
@@ -350,14 +385,18 @@ async fn renew_owned_shard<C>(
     owner_id: &str,
     shard_id: ShardId,
     distributed: DistributedShardConfig,
+    mut deadline: Instant,
 ) -> Result<()>
 where
     C: DistributedShardCoordinator + ?Sized,
 {
-    let mut deadline = Instant::now() + distributed.lease_ttl;
     loop {
-        tokio::time::sleep(distributed.renew_interval).await;
+        let renew_at = deadline - (distributed.lease_ttl - distributed.renew_interval);
+        tokio::time::sleep_until(renew_at).await;
         let started = Instant::now();
+        if started >= deadline {
+            return Err(Error::GatewayProtocol("distributed shard lease expired".into()));
+        }
         let renewed = tokio::time::timeout_at(
             deadline,
             coordinator.renew_shard(owner_id, shard_id, distributed.lease_ttl),
@@ -367,7 +406,7 @@ where
         .map_err(|error| {
             Error::GatewayProtocol(format!("distributed shard lease renewal failed: {error}"))
         })?;
-        if !renewed {
+        if !renewed || Instant::now() >= deadline {
             return Err(Error::GatewayProtocol(format!(
                 "distributed shard {} lease was lost by owner {owner_id}",
                 shard_id.get()
@@ -401,7 +440,14 @@ async fn release_lease<C>(
 ) where
     C: DistributedShardCoordinator + ?Sized,
 {
-    if let Err(error) = coordinator.release_shard(owner_id, shard_id).await {
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        coordinator.release_shard(owner_id, shard_id),
+    )
+    .await
+    .map_err(|_| GatewayCoordinationError::new("shard lease release timed out"))
+    .and_then(|result| result);
+    if let Err(error) = result {
         let _ = send_coordination_error(event_tx, shard_id, "releasing shard lease", error).await;
     }
 }

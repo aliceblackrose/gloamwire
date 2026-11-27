@@ -1,9 +1,18 @@
 /// State required to resume a Discord Gateway session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct GatewaySession {
     session_id: String,
     resume_gateway_url: String,
     sequence: u64,
+}
+
+impl std::fmt::Debug for GatewaySession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GatewaySession")
+            .field("session_id", &"[REDACTED]")
+            .field("sequence", &self.sequence)
+            .finish_non_exhaustive()
+    }
 }
 
 impl GatewaySession {
