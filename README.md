@@ -187,6 +187,62 @@ data; use `DEFERRED_UPDATE_MESSAGE` to acknowledge first and edit later.
 Applications remain responsible for routing custom IDs and authorizing
 actions for the user who clicked.
 
+## Components V2 and modals
+
+Use the model constructors to build layouts without manually populating optional
+wire fields. For a Components V2 message, set `IS_COMPONENTS_V2` and use text
+displays instead of the ordinary message content and embeds.
+
+```rust
+use gloamwire::model::{Component, CreateMessage, MessageFlags, SeparatorSpacing};
+
+let message = CreateMessage {
+    flags: Some(MessageFlags::IS_COMPONENTS_V2),
+    components: vec![Component::container([
+        Component::text_display("# Welcome"),
+        Component::separator(true, SeparatorSpacing::SMALL),
+        Component::text_display("Choose an option below."),
+    ])],
+    ..CreateMessage::default()
+};
+```
+
+For modal inputs, use labels rather than legacy action rows:
+
+```rust
+use gloamwire::model::{Component, ComponentOption, ComponentStyle, Modal};
+
+let modal = Modal::new("feedback", "Feedback", [
+    Component::label(
+        "Feedback",
+        Component::text_input(ComponentStyle::PARAGRAPH, "text")
+            .with_length_bounds(1, 1000),
+    ),
+    Component::label(
+        "Category",
+        Component::radio_group("category", [
+            ComponentOption::new("Bug", "bug"),
+            ComponentOption::new("Suggestion", "suggestion"),
+        ]),
+    ),
+    Component::label(
+        "Screenshot",
+        Component::file_upload("screenshot")
+            .with_required(false)
+            .with_value_bounds(0, 1)
+            .with_file_types(["image"]),
+    ),
+]);
+```
+
+The other constructors cover all select-menu types, sections, thumbnails, media
+galleries, attached files, checkbox groups and single checkboxes. On a modal
+submission, `ModalSubmitInteractionData::component(custom_id)` searches both
+labels and legacy rows. Inspect `value` for scalar inputs, `values` for
+multi-selects or uploaded attachment IDs, and `resolved` for resolved objects.
+Constructors do not validate Discord's field limits or legal component nesting;
+set only fields permitted for the component and its context.
+
 ## Voice transport and DAVE
 
 **Security and migration notice (2026-11-27):** Gloamwire 1.0.1 removes the bundled `dave-davey` feature, `DaveyProvider`, and `DaveVoiceSession::connect_davey`. The previous backend (`davey 0.2.0`) pulled in nine RustSec vulnerabilities (RUSTSEC-2026-0387, -0209, -0211, -0124, -0330, -0331, -0212, -0208, -0207), including two with no fixed release in the affected crate family. Updating the other direct dependencies did not resolve these advisories. The old implementation and its backend-specific tests remain in Git history at [30aba01](https://github.com/aliceblackrose/gloamwire/tree/30aba01404e5b8a9a0fcd4d994e25b47cbf6c5fd); do not deploy that backend until its dependencies are remediated. This is a breaking change to the unreleased feature, not a patch to the vulnerable upstream libraries. No advisories are ignored and CI audits the complete remaining dependency graph.
