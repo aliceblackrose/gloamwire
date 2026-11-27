@@ -105,7 +105,8 @@ pub trait DistributedShardCoordinator: GatewayIdentifyCoordinator + Send + Sync 
         lease_ttl: Duration,
     ) -> GatewayCoordinationFuture<'a, Option<ShardLease>> {
         Box::pin(async move {
-            self.acquire_shard(owner_id, shard_id, lease_ttl).await
+            self.acquire_shard(owner_id, shard_id, lease_ttl)
+                .await
                 .map(|owned| owned.then_some(ShardLease { generation: None }))
         })
     }

@@ -222,7 +222,10 @@ impl ShardManager {
 
     /// Receives the next event from any managed shard.
     pub async fn next_event(&mut self) -> Option<Result<ShardEvent>> {
-        self.events.recv().await.map(|event| event.map(crate::queue_budget::Budgeted::into_inner))
+        self.events
+            .recv()
+            .await
+            .map(|event| event.map(crate::queue_budget::Budgeted::into_inner))
     }
 
     /// Requests graceful shutdown of every shard and waits for their tasks to exit.
@@ -248,7 +251,10 @@ impl ShardManager {
 }
 
 pub(super) fn shard_error(shard_id: ShardId, source: Error) -> Error {
-    Error::Shard { shard_id: shard_id.get(), source: Box::new(source) }
+    Error::Shard {
+        shard_id: shard_id.get(),
+        source: Box::new(source),
+    }
 }
 
 impl Drop for ShardManager {

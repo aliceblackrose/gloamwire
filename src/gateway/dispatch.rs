@@ -5,8 +5,8 @@ use crate::model::{
     ApplicationId, AuditLogEntry, AutoModerationAction, AutoModerationRule, AutoModerationRuleId,
     AutoModerationTriggerType, Channel, ChannelId, Entitlement, Guild, GuildId, GuildMember,
     GuildMemberFlags, GuildScheduledEvent, Interaction, InviteTargetType, Message, MessageId,
-    PartialEmoji, PresenceUpdate, ReactionType, Role, RoleId, ScheduledEventId, Snowflake,
-    Patch, Subscription, ThreadMember, UnavailableGuild, User, UserId, VoiceState,
+    PartialEmoji, Patch, PresenceUpdate, ReactionType, Role, RoleId, ScheduledEventId, Snowflake,
+    Subscription, ThreadMember, UnavailableGuild, User, UserId, VoiceState,
 };
 
 use super::DispatchEvent;

@@ -1,4 +1,7 @@
-use std::{sync::{Arc, Mutex}, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use tokio::{
     sync::{mpsc, watch},
@@ -128,7 +131,9 @@ struct LeaseState {
 
 impl LeaseState {
     fn valid(&self) -> bool {
-        self.deadline.lock().unwrap_or_else(|e| e.into_inner())
+        self.deadline
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
             .is_some_and(|deadline| Instant::now() < deadline)
     }
 
@@ -144,7 +149,6 @@ struct OwnedEvent {
 }
 
 type QueuedEvent = Result<crate::queue_budget::Budgeted<OwnedEvent>>;
-
 
 /// Manages Discord Gateway shards across multiple cooperating processes.
 ///
@@ -266,7 +270,9 @@ where
 
     /// Receives the next event from a shard currently owned by this worker.
     pub async fn next_event(&mut self) -> Option<Result<ShardEvent>> {
-        self.next_fenced_event().await.map(|event| event.map(|event| event.shard))
+        self.next_fenced_event()
+            .await
+            .map(|event| event.map(|event| event.shard))
     }
 
     /// Receives an event together with its lease identity for downstream
@@ -276,9 +282,15 @@ where
         Some(queued.and_then(|queued| {
             let owned = queued.into_inner();
             if !owned.lease.valid() {
-                return Err(shard_error(owned.event.shard_id, Error::GatewayProtocol("queued event belongs to a retired shard lease".into())));
+                return Err(shard_error(
+                    owned.event.shard_id,
+                    Error::GatewayProtocol("queued event belongs to a retired shard lease".into()),
+                ));
             }
-            Ok(DistributedShardEvent { shard: owned.event, lease: owned.lease.identity.clone() })
+            Ok(DistributedShardEvent {
+                shard: owned.event,
+                lease: owned.lease.identity.clone(),
+            })
         }))
     }
 
@@ -368,7 +380,10 @@ async fn run_shard_supervisor<C>(
         // or waiting for an application consumer to make room in its queue.
         let lease = Arc::new(LeaseState {
             deadline: Mutex::new(Some(deadline)),
-            identity: LeaseIdentity { owner_id: lease_owner.clone(), generation: acquired_lease.generation },
+            identity: LeaseIdentity {
+                owner_id: lease_owner.clone(),
+                generation: acquired_lease.generation,
+            },
         });
         let result = tokio::select! {
             biased;
@@ -393,7 +408,12 @@ async fn run_shard_supervisor<C>(
                 Error::GatewayClosed { code: Some(code), .. }
                     if code.reconnect_strategy() == GatewayReconnectStrategy::Stop
             );
-            if event_tx.send(Err(shard_error(shard_id, error))).await.is_err() || terminal {
+            if event_tx
+                .send(Err(shard_error(shard_id, error)))
+                .await
+                .is_err()
+                || terminal
+            {
                 return;
             }
         }
@@ -537,9 +557,12 @@ async fn send_coordination_error(
     error: GatewayCoordinationError,
 ) -> bool {
     event_tx
-        .send(Err(shard_error(shard_id, Error::GatewayProtocol(format!(
-            "Gateway coordination failed while {operation}: {error}"
-        )))))
+        .send(Err(shard_error(
+            shard_id,
+            Error::GatewayProtocol(format!(
+                "Gateway coordination failed while {operation}: {error}"
+            )),
+        )))
         .await
         .is_ok()
 }

@@ -167,7 +167,9 @@ where
         }
 
         if self.protocol_failed {
-            return Err(VoiceError::Protocol("DAVE control state failed; restart voice session".into()));
+            return Err(VoiceError::Protocol(
+                "DAVE control state failed; restart voice session".into(),
+            ));
         }
         // Set before any provider mutation or await. If this future is dropped
         // during command transmission, the session remains fail-closed.
@@ -234,7 +236,9 @@ where
     /// frame, including DAVE sender-ratchet processing when required.
     pub fn decrypt_rtp_packet(&mut self, packet: &[u8]) -> VoiceResult<VoiceReceivedOpus> {
         if self.protocol_failed {
-            return Err(VoiceError::Protocol("DAVE control state failed; restart voice session".into()));
+            return Err(VoiceError::Protocol(
+                "DAVE control state failed; restart voice session".into(),
+            ));
         }
         let decrypted = self.session.transport_crypto().decrypt_rtp(packet)?;
         let header = decode_audio_header(&decrypted.header)?;

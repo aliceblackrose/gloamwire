@@ -27,7 +27,9 @@ pub struct CacheConfig {
 }
 
 impl Default for CacheConfig {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CacheConfig {
@@ -201,7 +203,8 @@ impl Cache {
                             None => {
                                 // Discord may send an add for an existing member.
                                 // An incomplete snapshot cannot distinguish this.
-                                guild.approximate_member_count = guild.member_count.or(guild.approximate_member_count);
+                                guild.approximate_member_count =
+                                    guild.member_count.or(guild.approximate_member_count);
                                 guild.member_count = None;
                             }
                         }
@@ -211,7 +214,9 @@ impl Cache {
             }
             TypedDispatchEvent::GuildMemberUpdate(event) => self.merge_member_update(event),
             TypedDispatchEvent::GuildMemberRemove(event) => {
-                let prior = self.membership.insert((event.guild_id, event.user.id), false);
+                let prior = self
+                    .membership
+                    .insert((event.guild_id, event.user.id), false);
                 self.members.remove(&(event.guild_id, event.user.id));
                 self.remember_user(event.user.clone());
                 if let Some(guild) = self.guilds.get_mut(&event.guild_id) {
@@ -221,7 +226,9 @@ impl Cache {
                     guild
                         .voice_states
                         .retain(|state| state.user_id != event.user.id);
-                    if prior != Some(false) && let Some(member_count) = &mut guild.member_count {
+                    if prior != Some(false)
+                        && let Some(member_count) = &mut guild.member_count
+                    {
                         *member_count = member_count.saturating_sub(1);
                     }
                 }
@@ -460,7 +467,9 @@ impl Cache {
             self.user_order.push_back(id);
         }
         while self.users.len() > self.config.user_capacity {
-            let Some(oldest) = self.user_order.pop_front() else { break };
+            let Some(oldest) = self.user_order.pop_front() else {
+                break;
+            };
             if Some(oldest) == self.current_user_id {
                 self.user_order.push_back(oldest);
             } else {
@@ -477,19 +486,31 @@ impl Cache {
             }
             if let Ok(presence) = serde_json::from_value::<PresenceUpdate>(raw) {
                 self.merge_partial_user(&presence);
-                self.presences.insert((guild_id, presence.user.id), presence);
+                self.presences
+                    .insert((guild_id, presence.user.id), presence);
             }
         }
     }
 
     fn sync_threads(&mut self, event: &ThreadListSyncEvent) {
         let supplied: HashSet<_> = event.threads.iter().map(|thread| thread.id).collect();
-        let obsolete: Vec<_> = self.channels.values().filter(|channel| {
-            channel.guild_id == Some(event.guild_id) && is_thread(channel.kind)
-                && !channel.thread_metadata.as_ref().is_some_and(|metadata| metadata.archived)
-                && event.channel_ids.as_ref().is_none_or(|parents| channel.parent_id.is_some_and(|id| parents.contains(&id)))
-                && !supplied.contains(&channel.id)
-        }).map(|channel| channel.id).collect();
+        let obsolete: Vec<_> = self
+            .channels
+            .values()
+            .filter(|channel| {
+                channel.guild_id == Some(event.guild_id)
+                    && is_thread(channel.kind)
+                    && !channel
+                        .thread_metadata
+                        .as_ref()
+                        .is_some_and(|metadata| metadata.archived)
+                    && event.channel_ids.as_ref().is_none_or(|parents| {
+                        channel.parent_id.is_some_and(|id| parents.contains(&id))
+                    })
+                    && !supplied.contains(&channel.id)
+            })
+            .map(|channel| channel.id)
+            .collect();
         for id in obsolete {
             self.remove_channel(id);
         }
@@ -594,7 +615,8 @@ impl Cache {
             .retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
         self.members
             .retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
-        self.membership.retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
+        self.membership
+            .retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
         self.presences
             .retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
         self.voice_states
@@ -722,7 +744,9 @@ impl Cache {
                 member.flags = flags;
             }
             event.pending.apply_to(&mut member.pending);
-            event.communication_disabled_until.apply_to(&mut member.communication_disabled_until);
+            event
+                .communication_disabled_until
+                .apply_to(&mut member.communication_disabled_until);
             member.clone()
         };
 
@@ -862,13 +886,13 @@ impl Cache {
             }
         } else if let Some(username) = &partial.username {
             self.remember_user(User {
-                    id: partial.id,
-                    username: username.clone(),
-                    global_name: partial.global_name.clone(),
-                    discriminator: partial.discriminator.clone(),
-                    bot: partial.bot,
-                    avatar: partial.avatar.clone(),
-                });
+                id: partial.id,
+                username: username.clone(),
+                global_name: partial.global_name.clone(),
+                discriminator: partial.discriminator.clone(),
+                bot: partial.bot,
+                avatar: partial.avatar.clone(),
+            });
         }
     }
 }

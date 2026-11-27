@@ -25,7 +25,11 @@ pub enum GatewayCommand {
 }
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
-type Command = (GatewayCommand, tokio::time::Instant, oneshot::Sender<Result<()>>);
+type Command = (
+    GatewayCommand,
+    tokio::time::Instant,
+    oneshot::Sender<Result<()>>,
+);
 type QueuedEvent = crate::queue_budget::Budgeted<GatewayEvent>;
 
 /// Cloneable outbound handle; sending a command does not require the event receiver.
@@ -40,9 +44,18 @@ impl GatewayCommandSender {
         let deadline = tokio::time::Instant::now() + COMMAND_TIMEOUT;
         tokio::time::timeout_at(deadline, async {
             let (reply, response) = oneshot::channel();
-            self.0.send((command, deadline, reply)).await.map_err(|_| stopped())?;
+            self.0
+                .send((command, deadline, reply))
+                .await
+                .map_err(|_| stopped())?;
             response.await.map_err(|_| stopped())?
-        }).await.map_err(|_| Error::GatewayProtocol("Gateway command deadline exceeded; execution may already have started".into()))?
+        })
+        .await
+        .map_err(|_| {
+            Error::GatewayProtocol(
+                "Gateway command deadline exceeded; execution may already have started".into(),
+            )
+        })?
     }
 }
 
@@ -155,16 +168,17 @@ async fn run(
         };
         match input {
             Either::Left(event) => {
-                let queued = budget.wrap(event.estimated_bytes(), event)
-                    .ok_or_else(|| Error::GatewayProtocol("Gateway event byte budget exceeded".into()))?;
+                let queued = budget.wrap(event.estimated_bytes(), event).ok_or_else(|| {
+                    Error::GatewayProtocol("Gateway event byte budget exceeded".into())
+                })?;
                 match events.try_send(queued) {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Closed(_)) => break,
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    return Err(Error::GatewayProtocol(
-                        "Gateway driver event queue overflow".into(),
-                    ));
-                }
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        return Err(Error::GatewayProtocol(
+                            "Gateway driver event queue overflow".into(),
+                        ));
+                    }
                 }
             }
             Either::Right(Some((command, deadline, reply))) => {
@@ -175,25 +189,28 @@ async fn run(
                     let _ = reply.send(Err(Error::GatewayProtocol("Gateway is not READY".into())));
                     continue;
                 }
-                let result = tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + Duration::from_secs(5)), async {
-                    match command {
-                        GatewayCommand::UpdatePresence(update) => {
-                            connection.update_presence(&update).await
+                let result = tokio::time::timeout_at(
+                    deadline.min(tokio::time::Instant::now() + Duration::from_secs(5)),
+                    async {
+                        match command {
+                            GatewayCommand::UpdatePresence(update) => {
+                                connection.update_presence(&update).await
+                            }
+                            GatewayCommand::UpdateVoiceState(update) => {
+                                connection.update_voice_state(&update).await
+                            }
+                            GatewayCommand::RequestGuildMembers(request) => {
+                                connection.request_guild_members(&request).await
+                            }
+                            GatewayCommand::RequestSoundboardSounds(request) => {
+                                connection.request_soundboard_sounds(&request).await
+                            }
+                            GatewayCommand::RequestChannelInfo(request) => {
+                                connection.request_channel_info(&request).await
+                            }
                         }
-                        GatewayCommand::UpdateVoiceState(update) => {
-                            connection.update_voice_state(&update).await
-                        }
-                        GatewayCommand::RequestGuildMembers(request) => {
-                            connection.request_guild_members(&request).await
-                        }
-                        GatewayCommand::RequestSoundboardSounds(request) => {
-                            connection.request_soundboard_sounds(&request).await
-                        }
-                        GatewayCommand::RequestChannelInfo(request) => {
-                            connection.request_channel_info(&request).await
-                        }
-                    }
-                })
+                    },
+                )
                 .await;
                 match result {
                     Ok(result) => {

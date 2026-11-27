@@ -704,7 +704,8 @@ fn event_from_envelope(envelope: NormalizedEnvelope) -> VoiceResult<Option<Voice
 
 async fn write_message(socket: &mut VoiceSocket, message: Message) -> VoiceResult<()> {
     let timeout = Duration::from_secs(5);
-    tokio::time::timeout(timeout, socket.send(message)).await
+    tokio::time::timeout(timeout, socket.send(message))
+        .await
         .map_err(|_| VoiceError::Timeout(timeout))??;
     Ok(())
 }

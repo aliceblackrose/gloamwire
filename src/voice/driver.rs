@@ -30,7 +30,11 @@ pub enum VoiceCommand {
 }
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
-type Command = (VoiceCommand, tokio::time::Instant, oneshot::Sender<VoiceResult<()>>);
+type Command = (
+    VoiceCommand,
+    tokio::time::Instant,
+    oneshot::Sender<VoiceResult<()>>,
+);
 type QueuedEvent = crate::queue_budget::Budgeted<VoiceGatewayEvent>;
 
 /// Cloneable outbound voice handle.
@@ -45,9 +49,14 @@ impl VoiceCommandSender {
         let deadline = tokio::time::Instant::now() + COMMAND_TIMEOUT;
         tokio::time::timeout_at(deadline, async {
             let (reply, response) = oneshot::channel();
-            self.0.send((command, deadline, reply)).await.map_err(|_| stopped())?;
+            self.0
+                .send((command, deadline, reply))
+                .await
+                .map_err(|_| stopped())?;
             response.await.map_err(|_| stopped())?
-        }).await.map_err(|_| VoiceError::Timeout(COMMAND_TIMEOUT))?
+        })
+        .await
+        .map_err(|_| VoiceError::Timeout(COMMAND_TIMEOUT))?
     }
 }
 
@@ -197,8 +206,9 @@ async fn run<P: DaveProviderLifecycle + Send>(
                 tokio::time::timeout(timeout, session.apply_gateway_event(&event))
                     .await
                     .map_err(|_| VoiceError::Timeout(timeout))??;
-                let queued = budget.wrap(event.estimated_bytes(), event)
-                    .ok_or_else(|| VoiceError::Protocol("voice control byte budget exceeded".into()))?;
+                let queued = budget.wrap(event.estimated_bytes(), event).ok_or_else(|| {
+                    VoiceError::Protocol("voice control byte budget exceeded".into())
+                })?;
                 match events.try_send(queued) {
                     Ok(()) => {}
                     Err(mpsc::error::TrySendError::Closed(_)) => break,
@@ -223,16 +233,19 @@ async fn run<P: DaveProviderLifecycle + Send>(
                 if reply.is_closed() || tokio::time::Instant::now() >= deadline {
                     continue;
                 }
-                let result = tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + Duration::from_secs(5)), async {
-                    match command {
-                        VoiceCommand::SendOpus { payload, duration } => session
-                            .send_opus_frame(VoiceOpusFrame::new(&payload, duration)?)
-                            .await
-                            .map(|_| ()),
-                        VoiceCommand::SetSpeaking(flags) => session.set_speaking(flags).await,
-                        VoiceCommand::FinishSpeaking => session.finish_speaking().await,
-                    }
-                })
+                let result = tokio::time::timeout_at(
+                    deadline.min(tokio::time::Instant::now() + Duration::from_secs(5)),
+                    async {
+                        match command {
+                            VoiceCommand::SendOpus { payload, duration } => session
+                                .send_opus_frame(VoiceOpusFrame::new(&payload, duration)?)
+                                .await
+                                .map(|_| ()),
+                            VoiceCommand::SetSpeaking(flags) => session.set_speaking(flags).await,
+                            VoiceCommand::FinishSpeaking => session.finish_speaking().await,
+                        }
+                    },
+                )
                 .await;
                 match result {
                     Ok(result) => {

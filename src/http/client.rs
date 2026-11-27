@@ -394,15 +394,23 @@ impl RestClient {
             let now = tokio::time::Instant::now();
             // Do not retain bearer credentials or evict a limiter during an attempt.
             // 24h matches the maximum recorded cooldown.
-            limiters.retain(|_, entry| Arc::strong_count(&entry.limiter) > 1
-                || now.saturating_duration_since(entry.last_used) < Duration::from_secs(86_401));
+            limiters.retain(|_, entry| {
+                Arc::strong_count(&entry.limiter) > 1
+                    || now.saturating_duration_since(entry.last_used) < Duration::from_secs(86_401)
+            });
             let key = credential_fingerprint(authorization.as_bytes());
             if let Some(entry) = limiters.get_mut(&key) {
                 entry.last_used = now;
                 Arc::clone(&entry.limiter)
             } else if limiters.len() < 128 {
                 let limiter = Arc::new(RateLimiter::with_shared(self.shared_rate_limits.clone()));
-                limiters.insert(key, BearerLimiter { limiter: limiter.clone(), last_used: now });
+                limiters.insert(
+                    key,
+                    BearerLimiter {
+                        limiter: limiter.clone(),
+                        last_used: now,
+                    },
+                );
                 limiter
             } else {
                 Arc::clone(&self.bearer_overflow_limiter)
@@ -458,8 +466,15 @@ impl RestClient {
             let response_headers = response.headers().clone();
             // Commit header information before awaiting the body. For 429s
             // retain a provisional cooldown until the JSON retry hint arrives.
-            limiter.update(&route, status, &response_headers,
-                retry_after_header(&response_headers), false).await;
+            limiter
+                .update(
+                    &route,
+                    status,
+                    &response_headers,
+                    retry_after_header(&response_headers),
+                    false,
+                )
+                .await;
             let bytes = match crate::error::read_limited_body(response).await {
                 Ok(bytes) => bytes,
                 Err(error) => {
@@ -492,7 +507,9 @@ impl RestClient {
                     .is_some_and(|scope| scope == "global");
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                limiter.update(&route, status, &response_headers, retry_after, global).await;
+                limiter
+                    .update(&route, status, &response_headers, retry_after, global)
+                    .await;
             }
             drop(reservation);
 

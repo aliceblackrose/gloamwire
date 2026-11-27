@@ -284,10 +284,14 @@ impl GatewayConnection {
 
         self.ready = false;
         if let Some(socket) = self.socket.as_mut() {
-            write_message(socket, Message::Close(Some(CloseFrame {
-                code: CloseCode::Normal,
-                reason: "Gloamwire shutdown".into(),
-            }))).await?;
+            write_message(
+                socket,
+                Message::Close(Some(CloseFrame {
+                    code: CloseCode::Normal,
+                    reason: "Gloamwire shutdown".into(),
+                })),
+            )
+            .await?;
         }
         self.socket.take();
         self.shutdown = true;
@@ -808,7 +812,8 @@ where
 {
     let payload = encode_payload(encoding, payload)?;
     tokio::time::timeout(Duration::from_secs(5), rate_limiter.acquire(priority))
-        .await.map_err(|_| write_timeout())?;
+        .await
+        .map_err(|_| write_timeout())?;
     send_payload(socket, payload).await
 }
 
@@ -828,18 +833,25 @@ where
 }
 
 fn disconnected() -> Error {
-    Error::GatewayClosed { code: None, reason: "Gateway transport unavailable".into() }
+    Error::GatewayClosed {
+        code: None,
+        reason: "Gateway transport unavailable".into(),
+    }
 }
 
 fn write_timeout() -> Error {
     Error::WebSocket(tokio_tungstenite::tungstenite::Error::Io(
-        std::io::Error::new(std::io::ErrorKind::TimedOut, "Gateway write deadline exceeded"),
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "Gateway write deadline exceeded",
+        ),
     ))
 }
 
 async fn write_message(socket: &mut GatewaySocket, message: Message) -> Result<()> {
     tokio::time::timeout(Duration::from_secs(5), socket.send(message))
-        .await.map_err(|_| write_timeout())??;
+        .await
+        .map_err(|_| write_timeout())??;
     Ok(())
 }
 
