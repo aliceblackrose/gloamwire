@@ -248,7 +248,7 @@ impl fmt::Debug for OAuth2TokenResponse {
                 &self.refresh_token.as_ref().map(|_| "<redacted>"),
             )
             .field("scope", &self.scope)
-            .field("extra", &self.extra)
+            .field("extra_keys", &self.extra.keys().collect::<Vec<_>>())
             .finish()
     }
 }

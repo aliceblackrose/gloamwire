@@ -6,7 +6,7 @@ use crate::{
 };
 
 /// Main-Gateway `VOICE_SERVER_UPDATE` data required to establish voice.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 pub struct VoiceServerUpdate {
     pub token: String,
     pub guild_id: GuildId,
@@ -14,14 +14,36 @@ pub struct VoiceServerUpdate {
     pub endpoint: Option<String>,
 }
 
+impl std::fmt::Debug for VoiceServerUpdate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceServerUpdate")
+            .field("guild_id", &self.guild_id)
+            .field("endpoint", &self.endpoint)
+            .field("token", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
+}
+
 /// Complete set of main-Gateway values needed to identify to the Voice Gateway.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct VoiceConnectionInfo {
     pub guild_id: GuildId,
     pub user_id: UserId,
     pub session_id: String,
     pub token: String,
     pub endpoint: String,
+}
+
+impl std::fmt::Debug for VoiceConnectionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceConnectionInfo")
+            .field("guild_id", &self.guild_id)
+            .field("user_id", &self.user_id)
+            .field("endpoint", &self.endpoint)
+            .field("token", &"[REDACTED]")
+            .field("session_id", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Current result of feeding a main-Gateway dispatch into a voice rendezvous.

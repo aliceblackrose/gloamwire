@@ -9,6 +9,10 @@ use crate::error::{Error, Result};
 const ZLIB_SUFFIX: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 #[cfg(any(feature = "compression-zlib", feature = "compression-zstd"))]
 const DECODE_CHUNK_BYTES: usize = 16 * 1024;
+#[cfg(any(feature = "compression-zlib", feature = "compression-zstd"))]
+const MAX_DECODED_BYTES: usize = 32 * 1024 * 1024;
+#[cfg(feature = "compression-zlib")]
+const MAX_COMPRESSED_BYTES: usize = 16 * 1024 * 1024;
 
 /// Transport compression requested from Discord's Gateway.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -111,6 +115,11 @@ impl ZlibStreamDecoder {
     }
 
     fn decode(&mut self, bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+        if self.compressed.len().saturating_add(bytes.len()) > MAX_COMPRESSED_BYTES {
+            return Err(Error::GatewayCompression(
+                "compressed Gateway payload exceeded the size limit".to_owned(),
+            ));
+        }
         self.compressed.extend_from_slice(bytes);
         if !self.compressed.ends_with(&ZLIB_SUFFIX) {
             return Ok(None);
@@ -134,6 +143,11 @@ impl ZlibStreamDecoder {
 
             let consumed = (self.inflater.total_in() - input_before) as usize;
             let written = (self.inflater.total_out() - output_before) as usize;
+            if decoded.len().saturating_add(written) > MAX_DECODED_BYTES {
+                return Err(Error::GatewayCompression(
+                    "decoded Gateway payload exceeded the size limit".to_owned(),
+                ));
+            }
             decoded.extend_from_slice(&chunk[..written]);
             remaining = &remaining[consumed..];
 
@@ -173,6 +187,11 @@ impl ZstdStreamDecoder {
                 .run_on_buffers(remaining, &mut chunk)
                 .map_err(|error| Error::GatewayCompression(error.to_string()))?;
 
+            if decoded.len().saturating_add(status.bytes_written) > MAX_DECODED_BYTES {
+                return Err(Error::GatewayCompression(
+                    "decoded Gateway payload exceeded the size limit".to_owned(),
+                ));
+            }
             decoded.extend_from_slice(&chunk[..status.bytes_written]);
             remaining = &remaining[status.bytes_read..];
 

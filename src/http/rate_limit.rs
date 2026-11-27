@@ -141,12 +141,13 @@ impl RateLimiter {
 
         let bucket_key = bucket_hash
             .as_deref()
+            .or_else(|| state.route_buckets.get(&route_identity).map(String::as_str))
             .map(|hash| bucket_key(hash, route.major()))
             .unwrap_or_else(|| provisional_bucket_key(&route_identity, route.major()));
 
         if status == StatusCode::TOO_MANY_REQUESTS {
             let retry_after = retry_after.unwrap_or(Duration::from_secs(1));
-            let deadline = now + retry_after;
+            let deadline = now + retry_after.min(Duration::from_secs(86_400));
 
             #[cfg(feature = "tracing")]
             tracing::debug!(
@@ -158,15 +159,14 @@ impl RateLimiter {
             );
 
             if global || header_str(headers, "x-ratelimit-global").is_some() {
-                state.global_until = Some(deadline);
+                state.global_until = later(state.global_until, deadline);
             } else {
-                state.buckets.insert(
-                    bucket_key,
-                    BucketState {
-                        remaining: 0,
-                        reset_at: deadline,
-                    },
-                );
+                let bucket = state.buckets.entry(bucket_key).or_insert(BucketState {
+                    remaining: 0,
+                    reset_at: deadline,
+                });
+                bucket.remaining = 0;
+                bucket.reset_at = bucket.reset_at.max(deadline);
             }
             return;
         }
@@ -175,17 +175,24 @@ impl RateLimiter {
             .and_then(|value| value.parse::<u32>().ok());
         let reset_after = header_str(headers, "x-ratelimit-reset-after")
             .and_then(|value| value.parse::<f64>().ok())
-            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
-            .map(Duration::from_secs_f64);
+            .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
+            .map(|duration| duration.min(Duration::from_secs(86_400)));
 
         if let (Some(remaining), Some(reset_after)) = (remaining, reset_after) {
-            state.buckets.insert(
-                bucket_key,
-                BucketState {
+            let reset_at = now + reset_after;
+            let bucket = state.buckets.entry(bucket_key).or_insert(BucketState {
+                remaining,
+                reset_at,
+            });
+            if bucket.reset_at > now {
+                bucket.remaining = bucket.remaining.min(remaining);
+                bucket.reset_at = bucket.reset_at.max(reset_at);
+            } else {
+                *bucket = BucketState {
                     remaining,
-                    reset_at: now + reset_after,
-                },
-            );
+                    reset_at,
+                };
+            }
         }
     }
 }
@@ -240,6 +247,36 @@ mod tests {
         let started = tokio::time::Instant::now();
         limiter.acquire(&route).await;
         assert!(started.elapsed() >= Duration::from_millis(15));
+    }
+
+    #[tokio::test]
+    async fn stale_response_and_headerless_429_do_not_restore_capacity() {
+        let limiter = RateLimiter::default();
+        let route = Route::current_user();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ratelimit-bucket", "bucket".parse().unwrap());
+        headers.insert("x-ratelimit-remaining", "1".parse().unwrap());
+        headers.insert("x-ratelimit-reset-after", "10".parse().unwrap());
+        limiter
+            .update(&route, StatusCode::OK, &headers, None, false)
+            .await;
+        limiter
+            .update(
+                &route,
+                StatusCode::TOO_MANY_REQUESTS,
+                &HeaderMap::new(),
+                Some(Duration::from_secs(10)),
+                false,
+            )
+            .await;
+        limiter
+            .update(&route, StatusCode::OK, &headers, None, false)
+            .await;
+        let state = limiter.state.lock().await;
+        assert_eq!(
+            state.buckets[&bucket_key("bucket", route.major())].remaining,
+            0
+        );
     }
 
     proptest! {

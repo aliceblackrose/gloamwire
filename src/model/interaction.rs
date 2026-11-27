@@ -78,8 +78,8 @@ impl InteractionMessageData {
 
 /// Autocomplete choices returned by an interaction callback.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AutocompleteInteractionCallbackData {
-    #[serde(default)]
     pub choices: Vec<ApplicationCommandOptionChoice>,
 }
 
@@ -177,7 +177,7 @@ impl AuthorizingIntegrationOwners {
 /// `data` stays lossless because its shape depends on the interaction type.
 /// Typed accessors are available for command, message-component, and modal-submit
 /// interactions.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Interaction {
     pub id: InteractionId,
     pub application_id: ApplicationId,
@@ -216,6 +216,19 @@ pub struct Interaction {
     pub context: Option<InteractionContextType>,
     #[serde(default)]
     pub attachment_size_limit: Option<u64>,
+}
+
+impl std::fmt::Debug for Interaction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Interaction")
+            .field("id", &self.id)
+            .field("application_id", &self.application_id)
+            .field("kind", &self.kind)
+            .field("guild_id", &self.guild_id)
+            .field("channel_id", &self.channel_id)
+            .field("token", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 impl Interaction {

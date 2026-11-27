@@ -110,7 +110,7 @@ pub struct ChannelMention {
 /// Controls which mentions Discord parses from outgoing message content.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AllowedMentions {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub parse: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<RoleId>,

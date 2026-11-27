@@ -16,7 +16,7 @@ use super::{
 };
 
 const API_BASE_URL: &str = "https://discord.com/api/v10";
-const USER_AGENT: &str = "Gloamwire/0.1 (+https://github.com/cybellereaper/Gloamwire)";
+const USER_AGENT: &str = "Gloamwire/0.1 (+https://github.com/aliceblackrose/gloamwire)";
 const MAX_RATE_LIMIT_RETRIES: usize = 3;
 const DEFAULT_TRANSIENT_RETRIES: usize = 2;
 const DEFAULT_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
@@ -414,7 +414,30 @@ impl RestClient {
 
             let status = response.status();
             let response_headers = response.headers().clone();
-            let bytes = response.bytes().await?.to_vec();
+            let bytes = match response.bytes().await {
+                Ok(bytes) => bytes.to_vec(),
+                Err(error) => {
+                    self.rate_limiter
+                        .update(
+                            &route,
+                            status,
+                            &response_headers,
+                            retry_after_header(&response_headers),
+                            false,
+                        )
+                        .await;
+                    if route.is_retry_safe()
+                        && transient_retries < self.max_transient_retries
+                        && is_retryable_transport_error(&error)
+                    {
+                        let delay = retry_delay(self.retry_base_delay, transient_retries);
+                        transient_retries += 1;
+                        tokio::time::sleep(delay).await;
+                        continue;
+                    }
+                    return Err(error.into());
+                }
+            };
             let rate_limit = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 serde_json::from_slice::<RateLimitResponse>(&bytes).ok()
             } else {
@@ -533,7 +556,7 @@ fn retry_after_header(headers: &HeaderMap) -> Option<Duration> {
 }
 
 fn duration_from_seconds(seconds: f64) -> Option<Duration> {
-    (seconds.is_finite() && seconds >= 0.0).then(|| Duration::from_secs_f64(seconds))
+    Duration::try_from_secs_f64(seconds).ok()
 }
 
 #[derive(Debug, serde::Deserialize)]

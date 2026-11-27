@@ -347,10 +347,11 @@ impl VoiceGatewayConnection {
         .await?;
 
         let mut buffered = VecDeque::new();
+        let mut sequence = self.sequence;
         loop {
             match next_inbound(&mut socket).await? {
                 Inbound::Json(envelope) => {
-                    update_sequence(&mut self.sequence, envelope.sequence);
+                    update_sequence(&mut sequence, envelope.sequence);
                     if envelope.opcode == RESUMED_OPCODE {
                         break;
                     }
@@ -362,7 +363,7 @@ impl VoiceGatewayConnection {
                     }
                 }
                 Inbound::DaveBinary(event) => {
-                    update_sequence(&mut self.sequence, Some(event.sequence));
+                    update_sequence(&mut sequence, Some(event.sequence));
                     buffered.push_back(VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
                         opcode: event.opcode,
                         sequence: event.sequence,
@@ -377,6 +378,7 @@ impl VoiceGatewayConnection {
         self.heartbeat_acknowledged = true;
         self.last_heartbeat_sent = None;
         self.latency = None;
+        self.sequence = sequence;
         self.pending.extend(buffered);
         self.pending.push_back(VoiceGatewayEvent::Resumed);
         Ok(())

@@ -171,6 +171,9 @@ impl Cache {
                     guild
                         .members
                         .retain(|member| member_user_id(member) != Some(event.user.id));
+                    guild
+                        .voice_states
+                        .retain(|state| state.user_id != event.user.id);
                     if removed && let Some(member_count) = &mut guild.member_count {
                         *member_count = member_count.saturating_sub(1);
                     }
@@ -608,6 +611,15 @@ impl Cache {
         }
         if let Some(channel) = self.channels.get_mut(&message.channel_id) {
             channel.last_message_id = Some(message.id);
+            if let Some(guild_id) = channel.guild_id
+                && let Some(guild) = self.guilds.get_mut(&guild_id)
+            {
+                for cached in guild.channels.iter_mut().chain(guild.threads.iter_mut()) {
+                    if cached.id == message.channel_id {
+                        cached.last_message_id = Some(message.id);
+                    }
+                }
+            }
         }
 
         let capacity = self.config.message_capacity;
@@ -634,6 +646,13 @@ impl Cache {
         for channel in self.channels.values_mut() {
             if channel.last_message_id == Some(message_id) {
                 channel.last_message_id = None;
+            }
+        }
+        for guild in self.guilds.values_mut() {
+            for channel in guild.channels.iter_mut().chain(guild.threads.iter_mut()) {
+                if channel.last_message_id == Some(message_id) {
+                    channel.last_message_id = None;
+                }
             }
         }
         self.message_order.retain(|cached| *cached != message_id);

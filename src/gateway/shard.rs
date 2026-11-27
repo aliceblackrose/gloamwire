@@ -118,7 +118,11 @@ impl ShardManager {
                     "connecting Discord Gateway shard"
                 );
 
-                let mut gateway = match GatewayConnection::connect(config).await {
+                let connection = tokio::select! {
+                    result = GatewayConnection::connect(config) => result,
+                    _ = shutdown_rx.changed() => return,
+                };
+                let mut gateway = match connection {
                     Ok(gateway) => {
                         #[cfg(feature = "tracing")]
                         tracing::debug!(
@@ -215,6 +219,7 @@ impl ShardManager {
             "requesting Discord Gateway shard-manager shutdown"
         );
 
+        self.events.close();
         let _ = self.shutdown.send(true);
 
         while let Some(task) = self.tasks.pop() {

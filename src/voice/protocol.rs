@@ -75,12 +75,22 @@ impl VoiceReady {
 }
 
 /// Voice Gateway opcode 4 Session Description data.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 pub struct VoiceSessionDescription {
     pub mode: VoiceEncryptionMode,
     pub secret_key: [u8; 32],
     #[serde(default)]
     pub dave_protocol_version: u16,
+}
+
+impl std::fmt::Debug for VoiceSessionDescription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceSessionDescription")
+            .field("mode", &self.mode)
+            .field("secret_key", &"[REDACTED]")
+            .field("dave_protocol_version", &self.dave_protocol_version)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Voice Gateway speaking bitmask.

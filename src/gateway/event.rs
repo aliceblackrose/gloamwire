@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 /// A dispatch event delivered by Discord.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct DispatchEvent {
     /// Dispatch event name, such as `READY` or `MESSAGE_CREATE`.
     pub name: String,
@@ -9,6 +9,16 @@ pub struct DispatchEvent {
     pub sequence: u64,
     /// Event-specific JSON payload.
     pub data: Value,
+}
+
+impl std::fmt::Debug for DispatchEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DispatchEvent")
+            .field("name", &self.name)
+            .field("sequence", &self.sequence)
+            .field("data", &"[OMITTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 /// A meaningful event received from the Gateway connection.

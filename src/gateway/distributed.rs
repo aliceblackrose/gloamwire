@@ -228,6 +228,7 @@ where
     /// Gracefully stops owned shards, releases their leases, and waits for every
     /// local supervisor to exit.
     pub async fn shutdown(&mut self) -> Result<()> {
+        self.events.close();
         let _ = self.shutdown.send(true);
         while let Some(task) = self.tasks.pop() {
             task.await?;

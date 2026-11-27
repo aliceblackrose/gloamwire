@@ -169,7 +169,7 @@ pub enum Error {
 
     /// An HTTP transport error occurred.
     #[error(transparent)]
-    Http(#[from] reqwest::Error),
+    Http(#[source] reqwest::Error),
 
     /// Reading a file-backed upload failed.
     #[error(transparent)]
@@ -235,6 +235,12 @@ pub enum Error {
         /// Maximum accepted payload size.
         limit: usize,
     },
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Http(error.without_url())
+    }
 }
 
 #[cfg(test)]

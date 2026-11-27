@@ -315,7 +315,13 @@ impl GatewayConnection {
                         continue;
                     }
 
-                    self.send_heartbeat().await?;
+                    match self.send_heartbeat().await {
+                        Ok(()) => {}
+                        Err(Error::WebSocket(_)) => {
+                            self.reconnect(GatewayReconnectStrategy::Resume).await?;
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 envelope = next_envelope(&mut self.socket, &mut self.decoder, self.config.encoding) => {
                     let envelope = match envelope {
@@ -467,7 +473,7 @@ impl GatewayConnection {
         }
 
         let config = self.config.clone();
-        let session = match strategy {
+        let mut session = match strategy {
             GatewayReconnectStrategy::Resume => self.session.clone(),
             GatewayReconnectStrategy::Reidentify | GatewayReconnectStrategy::Stop => None,
         };
@@ -486,7 +492,26 @@ impl GatewayConnection {
                     self.rate_limiter = rate_limiter;
                     return Ok(());
                 }
-                Err(Error::WebSocket(_)) | Err(Error::GatewayClosed { .. }) => {
+                Err(Error::GatewayClosed { code, reason }) => {
+                    let recovery = code.map_or(
+                        GatewayReconnectStrategy::Resume,
+                        GatewayCloseCode::reconnect_strategy,
+                    );
+                    match recovery {
+                        GatewayReconnectStrategy::Stop => {
+                            return Err(Error::GatewayClosed { code, reason });
+                        }
+                        GatewayReconnectStrategy::Reidentify => {
+                            self.session = None;
+                            self.sequence = None;
+                            session = None;
+                        }
+                        GatewayReconnectStrategy::Resume => {}
+                    }
+                    tokio::time::sleep(reconnect_delay(attempt)).await;
+                    attempt = attempt.saturating_add(1);
+                }
+                Err(Error::WebSocket(_)) => {
                     tokio::time::sleep(reconnect_delay(attempt)).await;
                     attempt = attempt.saturating_add(1);
                 }
@@ -554,10 +579,24 @@ async fn open_and_handshake(
 ) -> Result<(GatewaySocket, GatewayDecoder, Interval)> {
     let base_url = session.map_or(config.url.as_str(), GatewaySession::resume_gateway_url);
     let url = gateway_url(base_url, config.encoding, config.compression);
-    let (mut socket, _) = connect_async(url).await?;
+    let timeout = Duration::from_secs(15);
+    let (mut socket, _) = tokio::time::timeout(timeout, connect_async(url))
+        .await
+        .map_err(|_| Error::GatewayClosed {
+            code: None,
+            reason: "Gateway connection timed out".to_owned(),
+        })??;
     let mut decoder = GatewayDecoder::new(config.compression)?;
 
-    let hello = next_envelope(&mut socket, &mut decoder, config.encoding).await?;
+    let hello = tokio::time::timeout(
+        timeout,
+        next_envelope(&mut socket, &mut decoder, config.encoding),
+    )
+    .await
+    .map_err(|_| Error::GatewayClosed {
+        code: None,
+        reason: "Gateway Hello timed out".to_owned(),
+    })??;
     if hello.op != 10 {
         return Err(Error::GatewayProtocol(format!(
             "expected Hello opcode 10, received {}",
