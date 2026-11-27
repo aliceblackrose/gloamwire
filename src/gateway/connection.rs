@@ -303,7 +303,10 @@ impl GatewayConnection {
     /// connections. Opcode 7 and opcode 9 are still surfaced after recovery so
     /// callers can observe lifecycle changes without having to perform them.
     pub async fn next_event(&mut self) -> Result<GatewayEvent> {
-        match self.next_event_or(std::future::pending::<std::convert::Infallible>()).await? {
+        match self
+            .next_event_or(std::future::pending::<std::convert::Infallible>())
+            .await?
+        {
             futures_util::future::Either::Left(event) => Ok(event),
             futures_util::future::Either::Right(never) => match never {},
         }

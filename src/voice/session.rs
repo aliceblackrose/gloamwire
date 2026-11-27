@@ -182,12 +182,15 @@ impl VoiceSession {
             return Ok(VoiceInput::Gateway(event));
         }
         let udp = &self.udp;
-        let input = self.gateway.next_event_or(async {
-            tokio::select! {
-                output = external => Either::Left(output),
-                received = udp.recv(buffer) => Either::Right(received),
-            }
-        }).await?;
+        let input = self
+            .gateway
+            .next_event_or(async {
+                tokio::select! {
+                    output = external => Either::Left(output),
+                    received = udp.recv(buffer) => Either::Right(received),
+                }
+            })
+            .await?;
         match input {
             Either::Left(event) => Ok(VoiceInput::Gateway(event)),
             Either::Right(Either::Left(output)) => Ok(VoiceInput::External(output)),

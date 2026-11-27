@@ -295,7 +295,10 @@ impl VoiceGatewayConnection {
 
     /// Returns the next meaningful Voice Gateway event while driving heartbeats.
     pub async fn next_event(&mut self) -> VoiceResult<VoiceGatewayEvent> {
-        match self.next_event_or(std::future::pending::<std::convert::Infallible>()).await? {
+        match self
+            .next_event_or(std::future::pending::<std::convert::Infallible>())
+            .await?
+        {
             futures_util::future::Either::Left(event) => Ok(event),
             futures_util::future::Either::Right(never) => match never {},
         }

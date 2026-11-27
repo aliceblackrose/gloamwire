@@ -34,10 +34,7 @@ impl GatewayCommandSender {
     /// Queues a command and awaits the actual write result.
     pub async fn send(&self, command: GatewayCommand) -> Result<()> {
         let (reply, response) = oneshot::channel();
-        self.0
-            .send((command, reply))
-            .await
-            .map_err(|_| stopped())?;
+        self.0.send((command, reply)).await.map_err(|_| stopped())?;
         response.await.map_err(|_| stopped())?
     }
 }
@@ -115,7 +112,9 @@ impl GatewayDriver {
                 }
                 Err(_) => {
                     task.abort();
-                    return Err(Error::GatewayProtocol("Gateway driver shutdown timed out".into()));
+                    return Err(Error::GatewayProtocol(
+                        "Gateway driver shutdown timed out".into(),
+                    ));
                 }
             }
         }
@@ -151,23 +150,40 @@ async fn run(
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Closed(_)) => break,
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    return Err(Error::GatewayProtocol("Gateway driver event queue overflow".into()));
+                    return Err(Error::GatewayProtocol(
+                        "Gateway driver event queue overflow".into(),
+                    ));
                 }
             },
             Either::Right(Some((command, reply))) => {
                 let result = tokio::time::timeout(Duration::from_secs(5), async {
                     match command {
-                        GatewayCommand::UpdatePresence(update) => connection.update_presence(&update).await,
-                        GatewayCommand::UpdateVoiceState(update) => connection.update_voice_state(&update).await,
-                        GatewayCommand::RequestGuildMembers(request) => connection.request_guild_members(&request).await,
-                        GatewayCommand::RequestSoundboardSounds(request) => connection.request_soundboard_sounds(&request).await,
-                        GatewayCommand::RequestChannelInfo(request) => connection.request_channel_info(&request).await,
+                        GatewayCommand::UpdatePresence(update) => {
+                            connection.update_presence(&update).await
+                        }
+                        GatewayCommand::UpdateVoiceState(update) => {
+                            connection.update_voice_state(&update).await
+                        }
+                        GatewayCommand::RequestGuildMembers(request) => {
+                            connection.request_guild_members(&request).await
+                        }
+                        GatewayCommand::RequestSoundboardSounds(request) => {
+                            connection.request_soundboard_sounds(&request).await
+                        }
+                        GatewayCommand::RequestChannelInfo(request) => {
+                            connection.request_channel_info(&request).await
+                        }
                     }
-                }).await;
+                })
+                .await;
                 match result {
-                    Ok(result) => { let _ = reply.send(result); }
+                    Ok(result) => {
+                        let _ = reply.send(result);
+                    }
                     Err(_) => {
-                        let _ = reply.send(Err(Error::GatewayProtocol("Gateway command timed out".into())));
+                        let _ = reply.send(Err(Error::GatewayProtocol(
+                            "Gateway command timed out".into(),
+                        )));
                         return Err(Error::GatewayProtocol("Gateway command timed out".into()));
                     }
                 }

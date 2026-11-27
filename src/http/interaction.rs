@@ -324,17 +324,35 @@ impl RestClient {
         query: &EditInteractionMessageQuery,
     ) -> Result<Message> {
         if files.is_empty() {
-            return self.request_json(
-                interaction_message_route(Method::PATCH, application_id, token, message, &query.suffix(), RetrySafety::Unsafe),
-                Some(edit),
-            ).await;
+            return self
+                .request_json(
+                    interaction_message_route(
+                        Method::PATCH,
+                        application_id,
+                        token,
+                        message,
+                        &query.suffix(),
+                        RetrySafety::Unsafe,
+                    ),
+                    Some(edit),
+                )
+                .await;
         }
         let mut request = edit.clone();
         if request.attachments.is_none() {
-            let current: Message = self.request_json::<Message, ()>(
-                interaction_message_route(Method::GET, application_id, token, message, "", RetrySafety::Safe),
-                None,
-            ).await?;
+            let current: Message = self
+                .request_json::<Message, ()>(
+                    interaction_message_route(
+                        Method::GET,
+                        application_id,
+                        token,
+                        message,
+                        "",
+                        RetrySafety::Safe,
+                    ),
+                    None,
+                )
+                .await?;
             request.attachments = Some(Some(current.attachments.iter().map(Into::into).collect()));
         }
         request

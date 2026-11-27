@@ -1,5 +1,8 @@
 use std::{
-    sync::{Arc, atomic::{AtomicU64, Ordering}},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -18,7 +21,10 @@ use super::{
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum VoiceCommand {
-    SendOpus { payload: Vec<u8>, duration: VoiceOpusFrameDuration },
+    SendOpus {
+        payload: Vec<u8>,
+        duration: VoiceOpusFrameDuration,
+    },
     SetSpeaking(VoiceSpeakingFlags),
     FinishSpeaking,
 }
@@ -69,8 +75,22 @@ impl VoiceDriver {
         let (audio_tx, audio) = mpsc::channel(128);
         let (stop, stop_rx) = watch::channel(false);
         let dropped = Arc::new(AtomicU64::new(0));
-        let task = tokio::spawn(run(session, command_rx, event_tx, audio_tx, Arc::clone(&dropped), stop_rx));
-        Self { commands: VoiceCommandSender(commands), events, audio: Some(audio), dropped, stop, task: Some(task) }
+        let task = tokio::spawn(run(
+            session,
+            command_rx,
+            event_tx,
+            audio_tx,
+            Arc::clone(&dropped),
+            stop_rx,
+        ));
+        Self {
+            commands: VoiceCommandSender(commands),
+            events,
+            audio: Some(audio),
+            dropped,
+            stop,
+            task: Some(task),
+        }
     }
 
     /// Returns an independently usable outbound handle.
@@ -89,7 +109,9 @@ impl VoiceDriver {
         match result {
             Ok(Ok(())) => None,
             Ok(Err(error)) => Some(Err(error)),
-            Err(error) => Some(Err(VoiceError::Protocol(format!("voice driver task failed: {error}")))),
+            Err(error) => Some(Err(VoiceError::Protocol(format!(
+                "voice driver task failed: {error}"
+            )))),
         }
     }
 
@@ -121,7 +143,9 @@ impl VoiceDriver {
             match tokio::time::timeout(Duration::from_secs(10), &mut *task).await {
                 Ok(result) => {
                     self.task.take();
-                    result.map_err(|error| VoiceError::Protocol(format!("voice driver task failed: {error}")))??;
+                    result.map_err(|error| {
+                        VoiceError::Protocol(format!("voice driver task failed: {error}"))
+                    })??;
                 }
                 Err(_) => {
                     task.abort();
@@ -163,35 +187,44 @@ async fn run<P: DaveProviderLifecycle + Send>(
         match input {
             VoiceInput::Gateway(event) => {
                 tokio::time::timeout(timeout, session.apply_gateway_event(&event))
-                    .await.map_err(|_| VoiceError::Timeout(timeout))??;
+                    .await
+                    .map_err(|_| VoiceError::Timeout(timeout))??;
                 match events.try_send(event) {
                     Ok(()) => {}
                     Err(mpsc::error::TrySendError::Closed(_)) => break,
-                    Err(mpsc::error::TrySendError::Full(_)) => return Err(VoiceError::Protocol("voice control event queue overflow".into())),
-                }
-            }
-            VoiceInput::Udp(received) => {
-                match session.decrypt_rtp_packet(&buffer[..received]) {
-                    Ok(frame) if !audio.is_closed() => {
-                        if audio.try_send(frame).is_err() {
-                            dropped.fetch_add(1, Ordering::Relaxed);
-                        }
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        return Err(VoiceError::Protocol(
+                            "voice control event queue overflow".into(),
+                        ));
                     }
-                    _ => { dropped.fetch_add(1, Ordering::Relaxed); }
                 }
             }
+            VoiceInput::Udp(received) => match session.decrypt_rtp_packet(&buffer[..received]) {
+                Ok(frame) if !audio.is_closed() => {
+                    if audio.try_send(frame).is_err() {
+                        dropped.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+                _ => {
+                    dropped.fetch_add(1, Ordering::Relaxed);
+                }
+            },
             VoiceInput::External(Some((command, reply))) => {
                 let result = tokio::time::timeout(timeout, async {
                     match command {
-                        VoiceCommand::SendOpus { payload, duration } => {
-                            session.send_opus_frame(VoiceOpusFrame::new(&payload, duration)?).await.map(|_| ())
-                        }
+                        VoiceCommand::SendOpus { payload, duration } => session
+                            .send_opus_frame(VoiceOpusFrame::new(&payload, duration)?)
+                            .await
+                            .map(|_| ()),
                         VoiceCommand::SetSpeaking(flags) => session.set_speaking(flags).await,
                         VoiceCommand::FinishSpeaking => session.finish_speaking().await,
                     }
-                }).await;
+                })
+                .await;
                 match result {
-                    Ok(result) => { let _ = reply.send(result); }
+                    Ok(result) => {
+                        let _ = reply.send(result);
+                    }
                     Err(_) => {
                         let _ = reply.send(Err(VoiceError::Timeout(timeout)));
                         return Err(VoiceError::Timeout(timeout));

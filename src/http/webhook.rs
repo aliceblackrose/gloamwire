@@ -466,16 +466,22 @@ impl RestClient {
         query: &EditWebhookMessageQuery,
     ) -> Result<Message> {
         if files.is_empty() {
-            return self.edit_webhook_message(webhook_id, token, message_id, edit, query).await;
+            return self
+                .edit_webhook_message(webhook_id, token, message_id, edit, query)
+                .await;
         }
         let mut request = edit.clone();
         if request.attachments.is_none() {
-            let current = self.get_webhook_message(
-                webhook_id,
-                token,
-                message_id,
-                &WebhookMessageQuery { thread_id: query.thread_id },
-            ).await?;
+            let current = self
+                .get_webhook_message(
+                    webhook_id,
+                    token,
+                    message_id,
+                    &WebhookMessageQuery {
+                        thread_id: query.thread_id,
+                    },
+                )
+                .await?;
             request.attachments = Some(Some(current.attachments.iter().map(Into::into).collect()));
         }
         request

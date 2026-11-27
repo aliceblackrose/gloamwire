@@ -148,7 +148,12 @@ async fn managed_gateway_heartbeats_before_application_polls_events() {
         .with_url(format!("ws://{address}"));
     let mut driver = GatewayDriver::connect(config).await.expect("driver");
     timeout(Duration::from_secs(3), observed)
-        .await.expect("heartbeat deadline").expect("heartbeat seen");
+        .await
+        .expect("heartbeat deadline")
+        .expect("heartbeat seen");
     driver.shutdown().await.expect("shutdown");
-    timeout(Duration::from_secs(3), server).await.expect("server deadline").expect("server");
+    timeout(Duration::from_secs(3), server)
+        .await
+        .expect("server deadline")
+        .expect("server");
 }
