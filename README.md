@@ -118,6 +118,75 @@ loop {
 
 `GatewayConnection::next_event` must be continuously polled because it drives heartbeats and recoverable reconnects.
 
+## Message buttons
+
+Construct buttons with the existing `Component` model and place them in an
+action row. Interactive styles (primary, secondary, success, and danger)
+send a message-component interaction with the specified custom ID.
+
+```rust
+use gloamwire::model::{Component, CreateMessage, InteractiveButtonStyle};
+
+let message = CreateMessage {
+    content: Some("Continue?".into()),
+    components: vec![Component::action_row([
+        Component::button(InteractiveButtonStyle::Success, "confirm").with_label("Confirm"),
+        Component::button(InteractiveButtonStyle::Danger, "cancel").with_label("Cancel"),
+        Component::link_button("https://example.com").with_label("Help"),
+    ])],
+    ..CreateMessage::default()
+};
+```
+
+The same components can be used in message edits, interaction responses,
+followups, and webhook messages. Use `with_emoji` for an emoji-only or
+label-and-emoji button, `with_disabled(true)` to disable a button, and
+`Component::premium_button(sku_id)` for a purchase button. Link and premium
+buttons do not dispatch click interactions. Premium buttons must not have
+custom labels or emojis. For ordinary messages, each action row may contain
+up to five buttons; keep interactive custom IDs unique within the message
+and use at most five rows. Discord enforces component field and layout limits.
+
+Handle an incoming `TypedDispatchEvent::InteractionCreate(interaction)` with
+the button-specific accessor and acknowledge the interaction promptly:
+
+```rust,no_run
+use gloamwire::{
+    RestClient,
+    http::CreateInteractionResponseQuery,
+    model::{Interaction, InteractionMessageData, InteractionResponse},
+};
+
+async fn handle_button(
+    client: &RestClient,
+    interaction: &Interaction,
+) -> gloamwire::Result<()> {
+    if let Some(button) = interaction.button_data()? {
+        let content = match button.custom_id.as_str() {
+            "confirm" => "Confirmed!",
+            "cancel" => "Cancelled!",
+            _ => return Ok(()),
+        };
+        let response = InteractionResponse::message(InteractionMessageData::content(content));
+        client
+            .create_interaction_response(
+                interaction.id,
+                interaction.token.expose(),
+                &response,
+                &CreateInteractionResponseQuery::default(),
+            )
+            .await?;
+    }
+    Ok(())
+}
+```
+
+Acknowledge interactions within three seconds. For an in-place update, use
+the existing `InteractionCallbackType::UPDATE_MESSAGE` callback with message
+data; use `DEFERRED_UPDATE_MESSAGE` to acknowledge first and edit later.
+Applications remain responsible for routing custom IDs and authorizing
+actions for the user who clicked.
+
 ## Voice transport and DAVE
 
 **Security and migration notice (2026-11-27):** Gloamwire 1.0.1 removes the bundled `dave-davey` feature, `DaveyProvider`, and `DaveVoiceSession::connect_davey`. The previous backend (`davey 0.2.0`) pulled in nine RustSec vulnerabilities (RUSTSEC-2026-0387, -0209, -0211, -0124, -0330, -0331, -0212, -0208, -0207), including two with no fixed release in the affected crate family. Updating the other direct dependencies did not resolve these advisories. The old implementation and its backend-specific tests remain in Git history at [30aba01](https://github.com/aliceblackrose/gloamwire/tree/30aba01404e5b8a9a0fcd4d994e25b47cbf6c5fd); do not deploy that backend until its dependencies are remediated. This is a breaking change to the unreleased feature, not a patch to the vulnerable upstream libraries. No advisories are ignored and CI audits the complete remaining dependency graph.
