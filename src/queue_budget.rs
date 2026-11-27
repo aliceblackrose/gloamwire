@@ -64,3 +64,32 @@ mod tests {
         assert!(budget.wrap(1, 2).is_some());
     }
 }
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::Budget;
+
+    #[tokio::test]
+    async fn aborting_owner_releases_entire_queue_budget() {
+        let budget = Budget::default();
+        let held = budget.wrap(32 * 1024 * 1024, ()).unwrap();
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _held = held;
+            ready.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started.await.unwrap();
+        assert!(budget.wrap(1, ()).is_none());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(budget.wrap(32 * 1024 * 1024, ()).is_some());
+    }
+
+    #[test]
+    fn oversized_charge_does_not_truncate_or_consume_budget() {
+        let budget = Budget::default();
+        assert!(budget.wrap(usize::MAX, ()).is_none());
+        assert!(budget.wrap(32 * 1024 * 1024, ()).is_some());
+    }
+}

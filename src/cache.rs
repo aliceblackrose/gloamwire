@@ -1483,3 +1483,44 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod adversarial_properties {
+    use super::*;
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    proptest! {
+        #[test]
+        fn channel_flood_is_bounded_and_invalidation_is_sticky(
+            ids in prop::collection::vec(1_u64..64, 0..128),
+            cap in 0_usize..16,
+        ) {
+            let limits = CacheLimits { channels: cap, ..CacheLimits::default() };
+            let mut cache = Cache::new(CacheConfig::new().limits(limits));
+            let mut expected = HashSet::new();
+            let mut invalid = false;
+            for id in ids {
+                let channel = serde_json::from_value(json!({
+                    "id": id.to_string(),
+                    "type": 0
+                })).unwrap();
+                cache.update(&TypedDispatchEvent::ChannelCreate(channel));
+                if !invalid {
+                    expected.insert(id);
+                    invalid = expected.len() > cap;
+                }
+                prop_assert_eq!(cache.is_invalidated(), invalid);
+                if invalid {
+                    prop_assert!(cache.channels.is_empty());
+                    prop_assert!(cache.guilds.is_empty());
+                    prop_assert!(cache.membership.is_empty());
+                } else {
+                    prop_assert_eq!(cache.channels.len(), expected.len());
+                }
+            }
+            cache.clear();
+            prop_assert!(!cache.is_invalidated());
+        }
+    }
+}

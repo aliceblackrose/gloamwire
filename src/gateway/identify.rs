@@ -149,3 +149,25 @@ mod tests {
         assert!(limiter.acquire(0).await.is_err());
     }
 }
+
+#[cfg(test)]
+mod adversarial_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelled_identify_waiter_does_not_consume_quota() {
+        let limiter = GatewayIdentifyLimiter::new(&SessionStartLimit {
+            total: 10,
+            remaining: 10,
+            reset_after: 60_000,
+            max_concurrency: 1,
+        });
+        limiter.acquire(0).await.unwrap();
+        let waiting = limiter.clone();
+        let task = tokio::spawn(async move { waiting.acquire(1).await });
+        tokio::task::yield_now().await;
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert_eq!(limiter.state.lock().await.remaining, 9);
+    }
+}

@@ -270,6 +270,35 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "compression-zlib")]
+    #[test]
+    fn zlib_expansion_beyond_budget_is_rejected() {
+        let payload = vec![0; super::MAX_DECODED_BYTES + 1];
+        let mut compressor = Compress::new(Compression::fast(), true);
+        let compressed = compress_zlib_message(&mut compressor, &payload);
+        let mut decoder = GatewayDecoder::new(GatewayCompression::ZlibStream).unwrap();
+        assert!(decoder.decode(&compressed).is_err());
+    }
+
+    #[cfg(feature = "compression-zstd")]
+    #[test]
+    fn zstd_expansion_beyond_budget_is_rejected() {
+        let payload = vec![0; super::MAX_DECODED_BYTES + 1];
+        let compressed = zstd::stream::encode_all(Cursor::new(payload), 1).unwrap();
+        let mut decoder = GatewayDecoder::new(GatewayCompression::ZstdStream).unwrap();
+        assert!(decoder.decode(&compressed).is_err());
+    }
+
+    #[cfg(feature = "compression-zlib")]
+    #[test]
+    fn fragmented_zlib_input_cannot_exceed_compressed_budget() {
+        let mut decoder = GatewayDecoder::new(GatewayCompression::ZlibStream).unwrap();
+        let half = vec![1; super::MAX_COMPRESSED_BYTES / 2];
+        assert!(decoder.decode(&half).unwrap().is_none());
+        assert!(decoder.decode(&half).unwrap().is_none());
+        assert!(decoder.decode(&[1]).is_err());
+    }
+
     #[cfg(not(feature = "compression-zlib"))]
     #[test]
     fn zlib_stream_reports_disabled_feature() {

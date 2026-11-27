@@ -539,3 +539,35 @@ mod tests {
         assert!(key_package.json_data().is_none());
     }
 }
+
+#[cfg(test)]
+mod membership_properties {
+    use super::*;
+    use proptest::prelude::*;
+    use std::collections::HashSet;
+
+    proptest! {
+        #[test]
+        fn rejected_participant_batches_are_atomic(
+            batches in prop::collection::vec(prop::collection::vec(1_u64..64, 0..24), 0..32)
+        ) {
+            let mut participants = DaveParticipantSet::default();
+            let mut expected = HashSet::new();
+            for batch in batches {
+                let ids: Vec<_> = batch.into_iter().map(UserId::new).collect();
+                let proposed: HashSet<_> = expected.iter().copied().chain(ids.iter().copied()).collect();
+                let result = participants.try_apply(
+                    &DaveProtocolEvent::ClientsConnect { user_ids: ids },
+                    16,
+                );
+                if proposed.len() <= 16 {
+                    prop_assert!(result.is_ok());
+                    expected = proposed;
+                } else {
+                    prop_assert!(result.is_err());
+                }
+                prop_assert_eq!(participants.iter().collect::<HashSet<_>>(), expected.clone());
+            }
+        }
+    }
+}

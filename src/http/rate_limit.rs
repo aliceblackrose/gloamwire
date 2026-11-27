@@ -616,3 +616,68 @@ mod bounded_state_tests {
         assert_eq!(shared.cooldown("untracked", now), Some(deadline));
     }
 }
+
+#[cfg(test)]
+mod adversarial_tests {
+    use super::*;
+    use crate::model::ChannelId;
+
+    #[tokio::test]
+    async fn cancelled_gate_waiter_does_not_strand_resource() {
+        let limiter = Arc::new(RateLimiter::default());
+        let route = Route::current_user();
+        let held = limiter.reserve(&route).await;
+        let waiting = Arc::clone(&limiter);
+        let task = tokio::spawn(async move {
+            let _guard = waiting.reserve(&Route::current_user()).await;
+        });
+        tokio::task::yield_now().await;
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        drop(held);
+        let guard = tokio::time::timeout(Duration::from_secs(2), limiter.reserve(&route))
+            .await
+            .expect("cancelled waiter must release its position");
+        drop(guard);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn simultaneous_global_admissions_respect_window_capacity() {
+        let limiter = Arc::new(RateLimiter::default());
+        let barrier = Arc::new(tokio::sync::Barrier::new(81));
+        let mut tasks = Vec::new();
+        for _ in 0..80 {
+            let limiter = Arc::clone(&limiter);
+            let barrier = Arc::clone(&barrier);
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                limiter.try_acquire(&Route::current_user()).is_none()
+            }));
+        }
+        barrier.wait().await;
+        let mut admitted = 0;
+        for task in tasks {
+            admitted += usize::from(task.await.unwrap());
+        }
+        assert_eq!(admitted, GLOBAL_REQUEST_LIMIT);
+    }
+
+    #[test]
+    fn distinct_resource_429_flood_preserves_bounded_state_and_cooldown() {
+        let limiter = RateLimiter::default();
+        for id in 1..=(MAX_BUCKETS as u64 + 1) {
+            limiter.update(
+                &Route::create_message(ChannelId::new(id)),
+                StatusCode::TOO_MANY_REQUESTS,
+                &HeaderMap::new(),
+                Some(Duration::from_secs(60)),
+                false,
+            );
+        }
+        let state = limiter.state.lock().unwrap();
+        assert_eq!(state.buckets.len(), MAX_BUCKETS);
+        assert!(state.global_until.is_some());
+        drop(state);
+        assert!(limiter.try_acquire(&Route::current_user()).is_some());
+    }
+}

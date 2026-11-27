@@ -436,3 +436,28 @@ mod tests {
         assert_eq!(decode_audio_header(&bytes).expect("header"), header);
     }
 }
+
+#[cfg(test)]
+mod replay_properties {
+    use proptest::prelude::*;
+    use std::collections::HashSet;
+
+    use super::ReplayWindow;
+
+    proptest! {
+        #[test]
+        fn replay_window_matches_reference_model(
+            nonces in prop::collection::vec(prop_oneof![0_u32..512, any::<u32>()], 0..512)
+        ) {
+            let mut window = ReplayWindow::default();
+            let mut seen = HashSet::new();
+            let mut highest = 0_u32;
+            for nonce in nonces {
+                highest = highest.max(nonce);
+                seen.retain(|old| highest - *old < 128);
+                let expected = highest - nonce < 128 && seen.insert(nonce);
+                prop_assert_eq!(window.accept(nonce), expected);
+            }
+        }
+    }
+}

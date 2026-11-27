@@ -557,3 +557,38 @@ mod tests {
         assert!(crypto.decrypt_rtp(&packet).is_err());
     }
 }
+
+#[cfg(test)]
+mod adversarial_properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn aead_authenticates_every_packet_region(
+            payload in prop::collection::vec(any::<u8>(), 1..512),
+            sequence in any::<u16>(),
+            timestamp in any::<u32>(),
+            ssrc in any::<u32>(),
+            offset in any::<usize>(),
+            aes in any::<bool>(),
+        ) {
+            let mode = VoiceEncryptionMode::from(if aes {
+                VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE
+            } else {
+                VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE
+            });
+            // Synthetic test key only.
+            let mut sender = VoiceTransportCrypto::new_with_fresh_key(mode.clone(), [42; 32]).unwrap();
+            let receiver = VoiceTransportDecryptor::new(mode, [42; 32]).unwrap();
+            let header = VoiceRtpHeader { sequence, timestamp, ssrc };
+            let packet = sender.encrypt_audio(header, &payload).unwrap();
+            let decoded = receiver.decrypt_rtp(&packet).unwrap();
+            prop_assert_eq!(decoded.media, payload);
+            let index = offset % packet.len();
+            let mut tampered = packet;
+            tampered[index] ^= 1;
+            prop_assert!(receiver.decrypt_rtp(&tampered).is_err());
+        }
+    }
+}
