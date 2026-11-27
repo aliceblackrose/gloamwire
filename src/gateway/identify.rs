@@ -110,3 +110,34 @@ impl GatewayIdentifyCoordinator for GatewayIdentifyLimiter {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn first_reset_does_not_reuse_remaining_window_duration() {
+        let limiter = GatewayIdentifyLimiter::new(&SessionStartLimit {
+            total: 1,
+            remaining: 0,
+            reset_after: 0,
+            max_concurrency: u32::MAX,
+        });
+        limiter.acquire(0).await.expect("first reset");
+        let state = limiter.state.lock().await;
+        assert_eq!(state.remaining, 0);
+        assert!(state.reset_at.saturating_duration_since(Instant::now()) > Duration::from_secs(86_390));
+        assert_eq!(state.next_bucket_allowed.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn zero_total_quota_fails_without_busy_loop() {
+        let limiter = GatewayIdentifyLimiter::new(&SessionStartLimit {
+            total: 0,
+            remaining: 0,
+            reset_after: 0,
+            max_concurrency: 1,
+        });
+        assert!(limiter.acquire(0).await.is_err());
+    }
+}

@@ -190,3 +190,20 @@ fn unavailable_guild_and_initial_presence_are_supported() {
         data:json!({"id":"1","name":"guild","owner_id":"2","presences":[{"user":{"id":"2"},"status":"online"}]}) }).expect("available");
     assert!(cache.presence(GuildId::new(1), UserId::new(2)).is_some());
 }
+
+#[test]
+fn presence_updates_keep_embedded_guild_snapshot_consistent() {
+    use gloamwire::model::UserId;
+    let mut cache = Cache::default();
+    let events = [
+        ("GUILD_CREATE", json!({"id":"1","name":"guild","owner_id":"2","presences":[{"user":{"id":"2"},"status":"online"}]})),
+        ("PRESENCE_UPDATE", json!({"guild_id":"1","user":{"id":"2"},"status":"idle"})),
+    ];
+    for (index, (name, data)) in events.into_iter().enumerate() {
+        cache.update_dispatch(&DispatchEvent { name: name.into(), sequence: index as u64 + 1, data }).expect("dispatch");
+    }
+    let guild = cache.guild(GuildId::new(1)).unwrap();
+    assert_eq!(guild.presences.len(), 1);
+    assert_eq!(guild.presences[0]["status"], "idle");
+    assert_eq!(cache.presence(GuildId::new(1), UserId::new(2)).unwrap().status.0, "idle");
+}
