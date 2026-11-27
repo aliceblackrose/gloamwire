@@ -237,7 +237,7 @@ fn channel_removal_cascades_to_threads_and_guild_reseed_discards_stale_messages(
         ),
         (
             "MESSAGE_CREATE",
-            json!({"id":"50","guild_id":"1","channel_id":"20","author":{"id":"2","username":"user"}}),
+            json!({"id":"50","guild_id":"1","channel_id":"20","content":"cached message","author":{"id":"2","username":"user"}}),
         ),
         ("CHANNEL_DELETE", json!({"id":"10","type":0,"guild_id":"1"})),
         (
@@ -253,8 +253,15 @@ fn channel_removal_cascades_to_threads_and_guild_reseed_discards_stale_messages(
                 data,
             })
             .unwrap();
+        if i == 0 {
+            assert!(cache.channel(ChannelId::new(11)).is_some());
+        }
+        if i == 1 {
+            assert!(cache.message(MessageId::new(50)).is_some());
+        }
         if i == 2 {
             assert!(cache.channel(ChannelId::new(11)).is_none());
+            assert!(cache.message(MessageId::new(50)).is_some());
         }
     }
     assert!(cache.message(MessageId::new(50)).is_none());
@@ -284,7 +291,7 @@ fn guild_delete_removes_messages_without_explicit_guild_id() {
         ),
         (
             "MESSAGE_CREATE",
-            json!({"id":"50","channel_id":"10","author":{"id":"2","username":"user"}}),
+            json!({"id":"50","channel_id":"10","content":"cached message","author":{"id":"2","username":"user"}}),
         ),
         ("GUILD_DELETE", json!({"id":"1","unavailable":false})),
     ];
@@ -296,6 +303,9 @@ fn guild_delete_removes_messages_without_explicit_guild_id() {
                 data,
             })
             .unwrap();
+        if i == 1 {
+            assert!(cache.message(MessageId::new(50)).is_some());
+        }
     }
     assert!(cache.message(MessageId::new(50)).is_none());
 }
