@@ -171,6 +171,10 @@ pub enum Error {
     #[error(transparent)]
     Http(reqwest::Error),
 
+    /// An HTTP response exceeded the bounded body collection policy.
+    #[error("HTTP response exceeded the {limit}-byte body limit")]
+    ResponseTooLarge { limit: usize },
+
     /// Reading a file-backed upload failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -235,6 +239,23 @@ pub enum Error {
         /// Maximum accepted payload size.
         limit: usize,
     },
+}
+
+/// Bounds response collection even when the peer omits Content-Length.
+pub(crate) async fn read_limited_body(mut response: reqwest::Response) -> Result<Vec<u8>> {
+    let limit = if response.status().is_success() {
+        32 * 1024 * 1024
+    } else {
+        64 * 1024
+    };
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len().saturating_add(chunk.len()) > limit {
+            return Err(Error::ResponseTooLarge { limit });
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 impl From<reqwest::Error> for Error {

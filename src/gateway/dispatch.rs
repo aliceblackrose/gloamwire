@@ -55,6 +55,7 @@ pub enum TypedDispatchEvent {
     InviteCreate(InviteCreateEvent),
     InviteDelete(InviteDeleteEvent),
     MessageCreate(Box<Message>),
+    MessageUpdate(MessageUpdateEvent),
     MessageDelete(MessageDeleteEvent),
     MessageDeleteBulk(MessageDeleteBulkEvent),
     MessageReactionAdd(MessageReactionAddEvent),
@@ -236,6 +237,35 @@ pub struct InviteDeleteEvent {
     #[serde(default)]
     pub guild_id: Option<GuildId>,
     pub code: String,
+}
+
+/// A partial `MESSAGE_UPDATE` dispatch. Fields absent from the payload
+/// remain unchanged; explicit nulls and empty arrays are preserved.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MessageUpdateEvent {
+    pub id: MessageId,
+    pub channel_id: ChannelId,
+    #[serde(flatten)]
+    pub fields: serde_json::Map<String, Value>,
+}
+
+impl MessageUpdateEvent {
+    /// Applies this patch atomically to an existing message.
+    pub fn apply(&self, message: &Message) -> serde_json::Result<Message> {
+        if self.id != message.id || self.channel_id != message.channel_id {
+            return Err(serde::de::Error::custom("message update identity mismatch"));
+        }
+        let mut value = serde_json::to_value(message)?;
+        let fields = value.as_object_mut().ok_or_else(|| {
+            <serde_json::Error as serde::de::Error>::custom("message is not an object")
+        })?;
+        for (key, value) in &self.fields {
+            if key != "id" && key != "channel_id" {
+                fields.insert(key.clone(), value.clone());
+            }
+        }
+        serde_json::from_value(value)
+    }
 }
 
 /// A `MESSAGE_DELETE` dispatch.
@@ -421,6 +451,7 @@ impl DispatchEvent {
             "MESSAGE_CREATE" => {
                 TypedDispatchEvent::MessageCreate(Box::new(serde_json::from_value(data)?))
             }
+            "MESSAGE_UPDATE" => TypedDispatchEvent::MessageUpdate(serde_json::from_value(data)?),
             "MESSAGE_DELETE" => TypedDispatchEvent::MessageDelete(serde_json::from_value(data)?),
             "MESSAGE_DELETE_BULK" => {
                 TypedDispatchEvent::MessageDeleteBulk(serde_json::from_value(data)?)

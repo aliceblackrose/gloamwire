@@ -420,7 +420,7 @@ impl OAuth2Client {
         T: DeserializeOwned,
     {
         let status = response.status();
-        let bytes = response.bytes().await?;
+        let bytes = crate::error::read_limited_body(response).await?;
 
         if status.is_success() {
             return Ok(serde_json::from_slice(&bytes)?);
@@ -435,7 +435,7 @@ impl OAuth2Client {
             return Ok(());
         }
 
-        let bytes = response.bytes().await?;
+        let bytes = crate::error::read_limited_body(response).await?;
         Err(oauth2_response_error(status, &bytes))
     }
 }

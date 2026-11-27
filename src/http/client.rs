@@ -440,8 +440,8 @@ impl RestClient {
 
             let status = response.status();
             let response_headers = response.headers().clone();
-            let bytes = match response.bytes().await {
-                Ok(bytes) => bytes.to_vec(),
+            let bytes = match crate::error::read_limited_body(response).await {
+                Ok(bytes) => bytes,
                 Err(error) => {
                     limiter
                         .update(
@@ -454,14 +454,14 @@ impl RestClient {
                         .await;
                     if route.is_retry_safe()
                         && transient_retries < self.max_transient_retries
-                        && is_retryable_transport_error(&error)
+                        && matches!(&error, Error::Http(error) if is_retryable_transport_error(error))
                     {
                         let delay = retry_delay(self.retry_base_delay, transient_retries);
                         transient_retries += 1;
                         tokio::time::sleep(delay).await;
                         continue;
                     }
-                    return Err(error.into());
+                    return Err(error);
                 }
             };
             let rate_limit = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {

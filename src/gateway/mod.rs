@@ -28,7 +28,7 @@ pub use dispatch::{
     GuildRoleEvent, GuildScheduledEventUserEvent, InviteCreateEvent, InviteDeleteEvent,
     MessageDeleteBulkEvent, MessageDeleteEvent, MessagePollVoteEvent, MessageReactionAddEvent,
     MessageReactionRemoveAllEvent, MessageReactionRemoveEmojiEvent, MessageReactionRemoveEvent,
-    ReadyApplication, ReadyEvent, TypedDispatchEvent, WebhooksUpdateEvent,
+    MessageUpdateEvent, ReadyApplication, ReadyEvent, TypedDispatchEvent, WebhooksUpdateEvent,
 };
 pub use distributed::{DistributedShardConfig, DistributedShardManager};
 pub use encoding::GatewayEncoding;

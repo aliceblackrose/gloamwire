@@ -8,7 +8,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     Result,
-    gateway::{DispatchEvent, GatewayEvent, GuildMemberUpdateEvent, TypedDispatchEvent},
+    gateway::{
+        DispatchEvent, GatewayEvent, GuildMemberUpdateEvent, ShardCount, ShardEvent, ShardId,
+        TypedDispatchEvent, shard_for_guild,
+    },
     model::{
         Channel, ChannelId, ChannelType, Guild, GuildId, GuildMember, GuildMemberFlags,
         GuildScheduledEvent, Message, MessageId, PresenceUpdate, Role, RoleId, ScheduledEventId,
@@ -64,6 +67,7 @@ pub struct Cache {
     scheduled_events: HashMap<ScheduledEventId, GuildScheduledEvent>,
     messages: HashMap<MessageId, Message>,
     message_order: VecDeque<MessageId>,
+    shard_sequences: HashMap<ShardId, u64>,
 }
 
 impl Default for Cache {
@@ -90,6 +94,7 @@ impl Cache {
             scheduled_events: HashMap::new(),
             messages: HashMap::new(),
             message_order: VecDeque::new(),
+            shard_sequences: HashMap::new(),
         }
     }
 
@@ -113,6 +118,7 @@ impl Cache {
         self.scheduled_events.clear();
         self.messages.clear();
         self.message_order.clear();
+        self.shard_sequences.clear();
     }
 
     /// Applies one already-typed Gateway dispatch to the cache.
@@ -147,14 +153,8 @@ impl Cache {
                 self.remove_channel(channel.id);
             }
             TypedDispatchEvent::GuildMemberAdd(event) => {
-                let inserted = event
-                    .member
-                    .user
-                    .as_ref()
-                    .is_some_and(|user| !self.members.contains_key(&(event.guild_id, user.id)));
                 self.upsert_member(event.guild_id, &event.member);
-                if inserted
-                    && let Some(guild) = self.guilds.get_mut(&event.guild_id)
+                if let Some(guild) = self.guilds.get_mut(&event.guild_id)
                     && let Some(member_count) = &mut guild.member_count
                 {
                     *member_count = member_count.saturating_add(1);
@@ -162,10 +162,7 @@ impl Cache {
             }
             TypedDispatchEvent::GuildMemberUpdate(event) => self.merge_member_update(event),
             TypedDispatchEvent::GuildMemberRemove(event) => {
-                let removed = self
-                    .members
-                    .remove(&(event.guild_id, event.user.id))
-                    .is_some();
+                self.members.remove(&(event.guild_id, event.user.id));
                 self.users.insert(event.user.id, event.user.clone());
                 if let Some(guild) = self.guilds.get_mut(&event.guild_id) {
                     guild
@@ -174,7 +171,7 @@ impl Cache {
                     guild
                         .voice_states
                         .retain(|state| state.user_id != event.user.id);
-                    if removed && let Some(member_count) = &mut guild.member_count {
+                    if let Some(member_count) = &mut guild.member_count {
                         *member_count = member_count.saturating_sub(1);
                     }
                 }
@@ -184,6 +181,16 @@ impl Cache {
             TypedDispatchEvent::GuildMembersChunk(event) => {
                 for member in &event.members {
                     self.upsert_member(event.guild_id, member);
+                }
+                for raw in &event.presences {
+                    let mut raw = raw.clone();
+                    if let Some(object) = raw.as_object_mut() {
+                        object.insert("guild_id".into(), serde_json::json!(event.guild_id));
+                    }
+                    if let Ok(presence) = serde_json::from_value::<PresenceUpdate>(raw) {
+                        self.merge_partial_user(&presence);
+                        self.presences.insert((event.guild_id, presence.user.id), presence);
+                    }
                 }
             }
             TypedDispatchEvent::GuildRoleCreate(event)
@@ -209,6 +216,13 @@ impl Cache {
                 }
             }
             TypedDispatchEvent::MessageCreate(message) => self.cache_message(message),
+            TypedDispatchEvent::MessageUpdate(event) => {
+                if let Some(existing) = self.messages.get_mut(&event.id)
+                    && let Ok(updated) = event.apply(existing)
+                {
+                    *existing = updated;
+                }
+            }
             TypedDispatchEvent::MessageDelete(event) => self.remove_message(event.id),
             TypedDispatchEvent::MessageDeleteBulk(event) => {
                 for message_id in &event.ids {
@@ -234,8 +248,73 @@ impl Cache {
     /// Parses a raw dispatch, applies it to the cache, and returns the typed event.
     pub fn update_dispatch(&mut self, dispatch: &DispatchEvent) -> Result<TypedDispatchEvent> {
         let event = dispatch.typed()?;
-        self.update(&event);
+        self.apply_checked(&event)?;
         Ok(event)
+    }
+
+    fn apply_checked(&mut self, event: &TypedDispatchEvent) -> Result<()> {
+        if let TypedDispatchEvent::MessageUpdate(patch) = event {
+            if let Some(existing) = self.messages.get_mut(&patch.id) {
+                *existing = patch.apply(existing)?;
+            }
+        } else {
+            self.update(event);
+        }
+        Ok(())
+    }
+
+    /// Applies a dispatch from a shared multi-shard event stream. READY clears
+    /// only the issuing shard, and repeated sequence numbers are not applied.
+    /// Use the same shard count for the lifetime of this cache.
+    pub fn update_shard_event(
+        &mut self,
+        event: &ShardEvent,
+        shard_count: ShardCount,
+    ) -> Result<Option<TypedDispatchEvent>> {
+        let GatewayEvent::Dispatch(dispatch) = &event.event else {
+            return Ok(None);
+        };
+        let typed = dispatch.typed()?;
+        if let TypedDispatchEvent::Ready(ready) = &typed {
+            let guilds: HashSet<_> = self
+                .guilds
+                .keys()
+                .chain(self.unavailable_guilds.iter())
+                .copied()
+                .filter(|id| shard_for_guild(*id, shard_count) == event.shard_id)
+                .collect();
+            for guild in guilds {
+                self.remove_guild(guild);
+            }
+            if event.shard_id.get() == 0 {
+                let channels: Vec<_> = self.channels.values()
+                    .filter(|channel| channel.guild_id.is_none())
+                    .map(|channel| channel.id)
+                    .collect();
+                for channel in channels {
+                    self.remove_channel(channel);
+                }
+                let messages: Vec<_> = self.messages.values()
+                    .filter(|message| message.guild_id.is_none())
+                    .map(|message| message.id)
+                    .collect();
+                for message in messages {
+                    self.remove_message(message);
+                }
+            }
+            self.current_user_id = Some(ready.user.id);
+            self.users.insert(ready.user.id, ready.user.clone());
+            self.unavailable_guilds.extend(ready.guilds.iter().map(|guild| guild.id));
+        } else {
+            if self.shard_sequences.get(&event.shard_id)
+                .is_some_and(|sequence| *sequence >= dispatch.sequence)
+            {
+                return Ok(None);
+            }
+            self.apply_checked(&typed)?;
+        }
+        self.shard_sequences.insert(event.shard_id, dispatch.sequence);
+        Ok(Some(typed))
     }
 
     /// Applies a Gateway event when it is a dispatch and returns its typed form.
@@ -379,7 +458,9 @@ impl Cache {
         updated.unavailable = Some(false);
 
         if let Some(existing) = self.guilds.get(&guild.id) {
-            updated.roles = existing.roles.clone();
+            // GUILD_UPDATE includes the guild role collection, but not
+            // Gateway-only child collections or member counts.
+            updated.member_count = guild.member_count.or(existing.member_count);
             updated.channels = existing.channels.clone();
             updated.threads = existing.threads.clone();
             updated.members = existing.members.clone();
@@ -387,6 +468,10 @@ impl Cache {
             updated.guild_scheduled_events = existing.guild_scheduled_events.clone();
         }
 
+        self.roles.retain(|(guild_id, _), _| *guild_id != guild.id);
+        for role in &updated.roles {
+            self.roles.insert((guild.id, role.id), role.clone());
+        }
         self.guilds.insert(guild.id, updated);
     }
 
