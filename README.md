@@ -128,6 +128,9 @@ loop {
 
 ## Voice transport and DAVE
 
+**Security release blocker (2026-11-27):** The optional `dave-davey` backend currently resolves `davey 0.2.0` with transitive cryptographic dependencies flagged by RustSec. The full dependency audit reports nine vulnerabilities (RUSTSEC-2026-0387, -0209, -0211, -0124, -0330, -0331, -0212, -0208, -0207). Two advisories have no fixed release in the affected crate family. Do not deploy this backend in security-sensitive production environments until a compatible upstream remediation has been verified with a clean audit and interoperability tests. The provider-neutral voice interface remains available for independently vetted providers. These advisories concern the resolved dependency graph; runtime reachability of every affected code path is not established. CI intentionally retains the failing security gate without advisory exemptions.
+
+
 Enable `voice` to access the low-level Voice Gateway v8, UDP discovery, RTP sequencing, Opus boundaries, and transport-encryption primitives:
 
 ```rust,no_run

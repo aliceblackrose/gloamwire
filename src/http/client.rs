@@ -555,10 +555,10 @@ impl RestClient {
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 limiter.update(&route, status, &response_headers, retry_after, global);
             }
-            if let Some(guard) = ambiguous {
-                if rate_limit.is_some() {
-                    guard.classified();
-                }
+            if let Some(guard) = ambiguous
+                && rate_limit.is_some()
+            {
+                guard.classified();
             }
             drop(reservation);
 

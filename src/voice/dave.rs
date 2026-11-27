@@ -125,7 +125,7 @@ impl DaveProtocolEvent {
                         epoch: data.epoch,
                     })
                 }
-                DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE => Err(
+                opcode if (DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE).contains(&opcode) => Err(
                     VoiceError::Protocol("invalid inbound DAVE JSON opcode or framing".into()),
                 ),
                 _ => Ok(Self::Unknown(event.clone())),
@@ -161,7 +161,7 @@ impl DaveProtocolEvent {
                         welcome,
                     })
                 }
-                DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE => Err(
+                opcode if (DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE).contains(&opcode) => Err(
                     VoiceError::Protocol("invalid inbound DAVE binary opcode or framing".into()),
                 ),
                 _ => Ok(Self::Unknown(event.clone())),
