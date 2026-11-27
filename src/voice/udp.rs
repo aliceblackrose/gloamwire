@@ -66,10 +66,18 @@ impl VoiceUdpSocket {
         request[..2].copy_from_slice(&DISCOVERY_REQUEST_TYPE.to_be_bytes());
         request[2..4].copy_from_slice(&DISCOVERY_PAYLOAD_BYTES.to_be_bytes());
         request[4..8].copy_from_slice(&self.ssrc.to_be_bytes());
-        self.socket.send(&request).await?;
-
         let mut response = [0_u8; DISCOVERY_PACKET_BYTES];
-        let received = self.socket.recv(&mut response).await?;
+        let timeout = std::time::Duration::from_secs(3);
+        let mut received = None;
+        for _ in 0..3 {
+            self.socket.send(&request).await?;
+            if let Ok(result) = tokio::time::timeout(timeout, self.socket.recv(&mut response)).await
+            {
+                received = Some(result?);
+                break;
+            }
+        }
+        let received = received.ok_or(VoiceError::Timeout(timeout * 3))?;
         if received != DISCOVERY_PACKET_BYTES {
             return Err(VoiceError::InvalidDiscoveryResponse(format!(
                 "expected {DISCOVERY_PACKET_BYTES} bytes, received {received}"

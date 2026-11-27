@@ -52,7 +52,7 @@ impl SearchGuildMembersQuery {
 }
 
 /// Parameters for adding an OAuth2-authorized user to a guild.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct AddGuildMember {
     pub access_token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,6 +63,14 @@ pub struct AddGuildMember {
     pub mute: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deaf: Option<bool>,
+}
+
+impl std::fmt::Debug for AddGuildMember {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddGuildMember")
+            .field("access_token", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Parameters for updating another guild member.

@@ -123,10 +123,18 @@ pub struct FollowedChannel {
 }
 
 /// Credentials used to add a recipient to a group DM.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Clone, PartialEq, Eq, Serialize)]
 pub struct GroupDmAddRecipient {
     pub access_token: String,
     pub nick: String,
+}
+
+impl std::fmt::Debug for GroupDmAddRecipient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GroupDmAddRecipient")
+            .field("access_token", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Parameters for creating a thread from an existing message.

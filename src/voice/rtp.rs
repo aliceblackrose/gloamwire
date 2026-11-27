@@ -31,7 +31,10 @@ impl VoiceRtpHeader {
     /// Decodes a fixed Discord audio RTP header.
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() < RTP_HEADER_BYTES || bytes[0] != 0x80 {
+        if bytes.len() < RTP_HEADER_BYTES
+            || bytes[0] != 0x80
+            || bytes[1] & 0x7f != DISCORD_OPUS_PAYLOAD_TYPE
+        {
             return None;
         }
 

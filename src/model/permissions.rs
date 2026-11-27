@@ -170,6 +170,9 @@ pub fn compute_base_permissions(
 }
 
 /// Applies channel overwrites according to Discord's overwrite hierarchy.
+/// This returns the raw overwrite bitset, not a complete authorization
+/// decision: callers must separately account for VIEW_CHANNEL, implicit
+/// send/connect restrictions, thread inheritance, and member timeouts.
 #[must_use]
 pub fn compute_channel_permissions(
     guild_id: GuildId,

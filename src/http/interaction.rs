@@ -323,7 +323,38 @@ impl RestClient {
         files: &[UploadFile],
         query: &EditInteractionMessageQuery,
     ) -> Result<Message> {
+        if files.is_empty() {
+            return self
+                .request_json(
+                    interaction_message_route(
+                        Method::PATCH,
+                        application_id,
+                        token,
+                        message,
+                        &query.suffix(),
+                        RetrySafety::Unsafe,
+                    ),
+                    Some(edit),
+                )
+                .await;
+        }
         let mut request = edit.clone();
+        if request.attachments.is_none() {
+            let current: Message = self
+                .request_json::<Message, ()>(
+                    interaction_message_route(
+                        Method::GET,
+                        application_id,
+                        token,
+                        message,
+                        "",
+                        RetrySafety::Safe,
+                    ),
+                    None,
+                )
+                .await?;
+            request.attachments = Some(Some(current.attachments.iter().map(Into::into).collect()));
+        }
         request
             .attachments
             .get_or_insert_with(|| Some(Vec::new()))
@@ -363,6 +394,7 @@ fn interaction_callback_route(
         Some(interaction_id.to_string()),
         safety,
     )
+    .token_authenticated(token, true)
 }
 
 fn interaction_webhook_route(
@@ -383,6 +415,7 @@ fn interaction_webhook_route(
         Some(application_id.to_string()),
         safety,
     )
+    .token_authenticated(token, true)
 }
 
 fn interaction_message_route(

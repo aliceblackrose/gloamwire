@@ -75,12 +75,22 @@ impl VoiceReady {
 }
 
 /// Voice Gateway opcode 4 Session Description data.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Deserialize)]
 pub struct VoiceSessionDescription {
     pub mode: VoiceEncryptionMode,
     pub secret_key: [u8; 32],
     #[serde(default)]
     pub dave_protocol_version: u16,
+}
+
+impl std::fmt::Debug for VoiceSessionDescription {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceSessionDescription")
+            .field("mode", &self.mode)
+            .field("secret_key", &"[REDACTED]")
+            .field("dave_protocol_version", &self.dave_protocol_version)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Voice Gateway speaking bitmask.
@@ -149,9 +159,38 @@ pub enum VoiceGatewayEvent {
     },
 }
 
+impl VoiceGatewayEvent {
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        match self {
+            Self::ClientsConnect(data)
+            | Self::ClientDisconnect(data)
+            | Self::Unknown { data, .. } => crate::queue_budget::json_bytes(data),
+            Self::Dave(DaveGatewayEvent::Binary { payload, .. }) => {
+                payload.capacity().saturating_add(128)
+            }
+            Self::Dave(DaveGatewayEvent::Json { data, .. }) => {
+                crate::queue_budget::json_bytes(data)
+            }
+            _ => 256,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{VoiceEncryptionMode, VoiceError};
+
+    #[test]
+    fn session_description_debug_redacts_transport_key() {
+        let description = super::VoiceSessionDescription {
+            mode: VoiceEncryptionMode::from("test"),
+            secret_key: [123; 32],
+            dave_protocol_version: 0,
+        };
+        let debug = format!("{description:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("123"));
+    }
 
     #[test]
     fn prefers_aes_when_available() {

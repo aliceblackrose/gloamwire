@@ -5,8 +5,8 @@ use crate::model::{
     ApplicationId, AuditLogEntry, AutoModerationAction, AutoModerationRule, AutoModerationRuleId,
     AutoModerationTriggerType, Channel, ChannelId, Entitlement, Guild, GuildId, GuildMember,
     GuildMemberFlags, GuildScheduledEvent, Interaction, InviteTargetType, Message, MessageId,
-    PartialEmoji, PresenceUpdate, ReactionType, Role, RoleId, ScheduledEventId, Snowflake,
-    Subscription, UnavailableGuild, User, UserId, VoiceState,
+    PartialEmoji, Patch, PresenceUpdate, ReactionType, Role, RoleId, ScheduledEventId, Snowflake,
+    Subscription, ThreadMember, UnavailableGuild, User, UserId, VoiceState,
 };
 
 use super::DispatchEvent;
@@ -31,6 +31,7 @@ pub enum TypedDispatchEvent {
     SubscriptionUpdate(Subscription),
     SubscriptionDelete(Subscription),
     GuildCreate(Guild),
+    GuildUnavailable(UnavailableGuild),
     GuildUpdate(Guild),
     GuildDelete(UnavailableGuild),
     GuildAuditLogEntryCreate(GuildAuditLogEntryCreateEvent),
@@ -45,6 +46,7 @@ pub enum TypedDispatchEvent {
     ThreadCreate(Channel),
     ThreadUpdate(Channel),
     ThreadDelete(Channel),
+    ThreadListSync(ThreadListSyncEvent),
     GuildMemberAdd(GuildMemberAddEvent),
     GuildMemberUpdate(GuildMemberUpdateEvent),
     GuildMemberRemove(GuildMemberRemoveEvent),
@@ -55,6 +57,7 @@ pub enum TypedDispatchEvent {
     InviteCreate(InviteCreateEvent),
     InviteDelete(InviteDeleteEvent),
     MessageCreate(Box<Message>),
+    MessageUpdate(MessageUpdateEvent),
     MessageDelete(MessageDeleteEvent),
     MessageDeleteBulk(MessageDeleteBulkEvent),
     MessageReactionAdd(MessageReactionAddEvent),
@@ -72,7 +75,7 @@ pub enum TypedDispatchEvent {
 }
 
 /// Data delivered by Discord's `READY` dispatch.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, PartialEq, Deserialize)]
 pub struct ReadyEvent {
     pub v: u8,
     pub user: User,
@@ -83,6 +86,19 @@ pub struct ReadyEvent {
     #[serde(default)]
     pub shard: Option<[u32; 2]>,
     pub application: ReadyApplication,
+}
+
+impl std::fmt::Debug for ReadyEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReadyEvent")
+            .field("v", &self.v)
+            .field("user", &self.user)
+            .field("guilds", &self.guilds)
+            .field("session_id", &"[REDACTED]")
+            .field("shard", &self.shard)
+            .field("application", &self.application)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The partial application object included in `READY`.
@@ -142,28 +158,39 @@ pub struct GuildMemberAddEvent {
 pub struct GuildMemberUpdateEvent {
     pub guild_id: GuildId,
     #[serde(default)]
-    pub roles: Vec<RoleId>,
+    pub roles: Option<Vec<RoleId>>,
     pub user: User,
     #[serde(default)]
-    pub nick: Option<String>,
+    pub nick: Patch<String>,
     #[serde(default)]
-    pub avatar: Option<String>,
+    pub avatar: Patch<String>,
     #[serde(default)]
-    pub banner: Option<String>,
+    pub banner: Patch<String>,
     #[serde(default)]
-    pub joined_at: Option<String>,
+    pub joined_at: Patch<String>,
     #[serde(default)]
-    pub premium_since: Option<String>,
+    pub premium_since: Patch<String>,
     #[serde(default)]
     pub deaf: Option<bool>,
     #[serde(default)]
     pub mute: Option<bool>,
     #[serde(default)]
-    pub pending: Option<bool>,
+    pub pending: Patch<bool>,
     #[serde(default)]
-    pub communication_disabled_until: Option<String>,
+    pub communication_disabled_until: Patch<String>,
     #[serde(default)]
     pub flags: Option<GuildMemberFlags>,
+}
+
+/// Active thread synchronization for all or selected parent channels.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ThreadListSyncEvent {
+    pub guild_id: GuildId,
+    #[serde(default)]
+    pub channel_ids: Option<Vec<ChannelId>>,
+    pub threads: Vec<Channel>,
+    #[serde(default)]
+    pub members: Vec<ThreadMember>,
 }
 
 /// A `GUILD_MEMBER_REMOVE` dispatch.
@@ -236,6 +263,35 @@ pub struct InviteDeleteEvent {
     #[serde(default)]
     pub guild_id: Option<GuildId>,
     pub code: String,
+}
+
+/// A partial `MESSAGE_UPDATE` dispatch. Fields absent from the payload
+/// remain unchanged; explicit nulls and empty arrays are preserved.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MessageUpdateEvent {
+    pub id: MessageId,
+    pub channel_id: ChannelId,
+    #[serde(flatten)]
+    pub fields: serde_json::Map<String, Value>,
+}
+
+impl MessageUpdateEvent {
+    /// Applies this patch atomically to an existing message.
+    pub fn apply(&self, message: &Message) -> serde_json::Result<Message> {
+        if self.id != message.id || self.channel_id != message.channel_id {
+            return Err(serde::de::Error::custom("message update identity mismatch"));
+        }
+        let mut value = serde_json::to_value(message)?;
+        let fields = value.as_object_mut().ok_or_else(|| {
+            <serde_json::Error as serde::de::Error>::custom("message is not an object")
+        })?;
+        for (key, value) in &self.fields {
+            if key != "id" && key != "channel_id" {
+                fields.insert(key.clone(), value.clone());
+            }
+        }
+        serde_json::from_value(value)
+    }
 }
 
 /// A `MESSAGE_DELETE` dispatch.
@@ -370,6 +426,9 @@ impl DispatchEvent {
             "SUBSCRIPTION_DELETE" => {
                 TypedDispatchEvent::SubscriptionDelete(serde_json::from_value(data)?)
             }
+            "GUILD_CREATE" if data.get("unavailable").and_then(Value::as_bool) == Some(true) => {
+                TypedDispatchEvent::GuildUnavailable(serde_json::from_value(data)?)
+            }
             "GUILD_CREATE" => TypedDispatchEvent::GuildCreate(serde_json::from_value(data)?),
             "GUILD_UPDATE" => TypedDispatchEvent::GuildUpdate(serde_json::from_value(data)?),
             "GUILD_DELETE" => TypedDispatchEvent::GuildDelete(serde_json::from_value(data)?),
@@ -397,6 +456,7 @@ impl DispatchEvent {
             "THREAD_CREATE" => TypedDispatchEvent::ThreadCreate(serde_json::from_value(data)?),
             "THREAD_UPDATE" => TypedDispatchEvent::ThreadUpdate(serde_json::from_value(data)?),
             "THREAD_DELETE" => TypedDispatchEvent::ThreadDelete(serde_json::from_value(data)?),
+            "THREAD_LIST_SYNC" => TypedDispatchEvent::ThreadListSync(serde_json::from_value(data)?),
             "GUILD_MEMBER_ADD" => TypedDispatchEvent::GuildMemberAdd(serde_json::from_value(data)?),
             "GUILD_MEMBER_UPDATE" => {
                 TypedDispatchEvent::GuildMemberUpdate(serde_json::from_value(data)?)
@@ -421,6 +481,7 @@ impl DispatchEvent {
             "MESSAGE_CREATE" => {
                 TypedDispatchEvent::MessageCreate(Box::new(serde_json::from_value(data)?))
             }
+            "MESSAGE_UPDATE" => TypedDispatchEvent::MessageUpdate(serde_json::from_value(data)?),
             "MESSAGE_DELETE" => TypedDispatchEvent::MessageDelete(serde_json::from_value(data)?),
             "MESSAGE_DELETE_BULK" => {
                 TypedDispatchEvent::MessageDeleteBulk(serde_json::from_value(data)?)

@@ -42,7 +42,7 @@ pub struct WebhookSourceChannel {
 }
 
 /// A Discord webhook.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Webhook {
     pub id: WebhookId,
     #[serde(rename = "type")]
@@ -67,6 +67,19 @@ pub struct Webhook {
     pub source_channel: Option<WebhookSourceChannel>,
     #[serde(default)]
     pub url: Option<String>,
+}
+
+impl std::fmt::Debug for Webhook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Webhook")
+            .field("id", &self.id)
+            .field("kind", &self.kind)
+            .field("guild_id", &self.guild_id)
+            .field("channel_id", &self.channel_id)
+            .field("token", &"[REDACTED]")
+            .field("url", &"[REDACTED]")
+            .finish_non_exhaustive()
+    }
 }
 
 #[cfg(test)]

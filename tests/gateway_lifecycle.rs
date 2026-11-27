@@ -118,3 +118,42 @@ async fn read_client_payload(socket: &mut WebSocketStream<TcpStream>) -> Value {
         }
     }
 }
+
+#[tokio::test]
+async fn managed_gateway_heartbeats_before_application_polls_events() {
+    use gloamwire::gateway::GatewayDriver;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let address = listener.local_addr().expect("address");
+    let (heartbeat_seen, observed) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("connection");
+        let mut socket = accept_async(stream).await.expect("WebSocket");
+        send_fixture(&mut socket, r#"{"op":10,"d":{"heartbeat_interval":100}}"#).await;
+        assert_eq!(read_client_payload(&mut socket).await["op"], 2);
+        let heartbeat = read_client_payload(&mut socket).await;
+        assert_eq!(heartbeat["op"], 1);
+        send_fixture(&mut socket, r#"{"op":11,"d":null}"#).await;
+        heartbeat_seen.send(()).expect("observer");
+        while let Some(Ok(message)) = socket.next().await {
+            if message.is_close() {
+                break;
+            }
+            if message.is_text() {
+                send_fixture(&mut socket, r#"{"op":11,"d":null}"#).await;
+            }
+        }
+    });
+    let config = GatewayConfig::new("fixture-token", GatewayIntents::empty())
+        .with_url(format!("ws://{address}"));
+    let mut driver = GatewayDriver::connect(config).await.expect("driver");
+    timeout(Duration::from_secs(3), observed)
+        .await
+        .expect("heartbeat deadline")
+        .expect("heartbeat seen");
+    driver.shutdown().await.expect("shutdown");
+    timeout(Duration::from_secs(3), server)
+        .await
+        .expect("server deadline")
+        .expect("server");
+}

@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 use super::{
     VoiceCloseCode, VoiceEncryptionMode, VoiceGatewayConfig, VoiceGatewayConnection,
@@ -57,16 +57,42 @@ impl VoiceSession {
         let mut gateway = VoiceGatewayConnection::connect(config).await?;
         let mode = gateway.ready().preferred_encryption_mode()?;
         let udp = VoiceUdpSocket::connect(gateway.ready()).await?;
-        let discovery = udp.discover().await?;
-        gateway.select_protocol(&discovery, &mode).await?;
-
         let mut pending = VecDeque::new();
-        let description = loop {
-            match gateway.next_event().await? {
-                VoiceGatewayEvent::SessionDescription(description) => break description,
-                event => pending.push_back(event),
+        let discovery = {
+            let discovery = udp.discover();
+            tokio::pin!(discovery);
+            loop {
+                match gateway.next_event_or(&mut discovery).await? {
+                    futures_util::future::Either::Right(result) => break result?,
+                    futures_util::future::Either::Left(event) => {
+                        if pending.len() >= 32 {
+                            return Err(super::VoiceError::Protocol(
+                                "voice discovery event buffer exceeded".into(),
+                            ));
+                        }
+                        pending.push_back(event);
+                    }
+                }
             }
         };
+        gateway.select_protocol(&discovery, &mode).await?;
+
+        let timeout = Duration::from_secs(20);
+        let description = tokio::time::timeout(timeout, async {
+            loop {
+                if pending.len() >= 32 {
+                    return Err(super::VoiceError::Protocol(
+                        "voice session event buffer exceeded".into(),
+                    ));
+                }
+                match gateway.next_event().await? {
+                    VoiceGatewayEvent::SessionDescription(description) => break Ok(description),
+                    event => pending.push_back(event),
+                }
+            }
+        })
+        .await
+        .map_err(|_| super::VoiceError::Timeout(timeout))??;
 
         if description.mode != mode {
             return Err(super::VoiceError::Protocol(format!(
@@ -146,6 +172,32 @@ impl VoiceSession {
         self.gateway.next_event().await
     }
 
+    pub(super) async fn next_input<F: std::future::Future>(
+        &mut self,
+        external: F,
+        buffer: &mut [u8],
+    ) -> VoiceResult<VoiceInput<F::Output>> {
+        use futures_util::future::Either;
+        if let Some(event) = self.pending.pop_front() {
+            return Ok(VoiceInput::Gateway(event));
+        }
+        let udp = &self.udp;
+        let input = self
+            .gateway
+            .next_event_or(async {
+                tokio::select! {
+                    output = external => Either::Left(output),
+                    received = udp.recv(buffer) => Either::Right(received),
+                }
+            })
+            .await?;
+        match input {
+            Either::Left(event) => Ok(VoiceInput::Gateway(event)),
+            Either::Right(Either::Left(output)) => Ok(VoiceInput::External(output)),
+            Either::Right(Either::Right(received)) => Ok(VoiceInput::Udp(received?)),
+        }
+    }
+
     /// Applies the reconnect policy for a Voice Gateway close.
     ///
     /// A missing close code is treated as resumable. Restart-required close
@@ -174,6 +226,12 @@ impl VoiceSession {
     pub async fn shutdown(&mut self) -> VoiceResult<()> {
         self.gateway.shutdown().await
     }
+}
+
+pub(super) enum VoiceInput<T> {
+    Gateway(VoiceGatewayEvent),
+    External(T),
+    Udp(usize),
 }
 
 #[cfg(test)]

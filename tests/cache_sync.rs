@@ -63,3 +63,166 @@ fn message_delete_clears_last_message_without_body_retention() {
     );
     assert!(cache.guild(GuildId::new(1)).is_some());
 }
+
+#[test]
+fn partial_message_update_preserves_omitted_fields_and_clears_explicit_values() {
+    let mut cache = Cache::new(gloamwire::CacheConfig::new().message_capacity(4));
+    cache
+        .update_dispatch(&DispatchEvent {
+            name: "MESSAGE_CREATE".into(),
+            sequence: 1,
+            data: json!({
+                "id": "50", "channel_id": "10",
+                "author": {"id": "2", "username": "user"},
+                "content": "old", "edited_timestamp": "previous", "pinned": true
+            }),
+        })
+        .expect("message create");
+    cache
+        .update_dispatch(&DispatchEvent {
+            name: "MESSAGE_UPDATE".into(),
+            sequence: 2,
+            data: json!({
+                "id": "50", "channel_id": "10",
+                "content": "new", "edited_timestamp": null
+            }),
+        })
+        .expect("message update");
+    let message = cache.message(MessageId::new(50)).expect("cached message");
+    assert_eq!(message.content, "new");
+    assert!(message.pinned);
+    assert!(message.edited_timestamp.is_none());
+}
+
+#[test]
+fn ready_from_other_shard_preserves_cached_guild() {
+    use gloamwire::gateway::{GatewayEvent, ShardCount, ShardEvent, ShardId};
+    let mut cache = Cache::default();
+    let count = ShardCount::new(2).expect("shard count");
+    cache
+        .update_shard_event(
+            &ShardEvent {
+                shard_id: ShardId::new(0),
+                event: GatewayEvent::Dispatch(DispatchEvent {
+                    name: "GUILD_CREATE".into(),
+                    sequence: 1,
+                    data: json!({"id": "1", "name": "guild", "owner_id": "2"}),
+                }),
+            },
+            count,
+        )
+        .expect("guild create");
+    cache
+        .update_shard_event(
+            &ShardEvent {
+                shard_id: ShardId::new(1),
+                event: GatewayEvent::Dispatch(DispatchEvent {
+                    name: "READY".into(),
+                    sequence: 1,
+                    data: json!({
+                        "v": 10, "user": {"id": "2", "username": "bot"},
+                        "guilds": [], "session_id": "session",
+                        "resume_gateway_url": "wss://gateway.discord.gg",
+                        "application": {"id": "2", "flags": 0}
+                    }),
+                }),
+            },
+            count,
+        )
+        .expect("ready");
+    assert!(cache.guild(GuildId::new(1)).is_some());
+}
+
+#[test]
+fn member_update_preserves_omitted_timeout_and_clears_explicit_null() {
+    use gloamwire::model::UserId;
+    let mut cache = Cache::default();
+    let dispatch = |name: &str, data: serde_json::Value| DispatchEvent {
+        name: name.into(),
+        sequence: 1,
+        data,
+    };
+    cache.update_dispatch(&dispatch("GUILD_CREATE", json!({
+        "id":"1","name":"guild","owner_id":"2","member_count":1,
+        "members":[{"user":{"id":"2","username":"user"},"communication_disabled_until":"future"}]
+    }))).expect("guild");
+    cache
+        .update_dispatch(&dispatch(
+            "GUILD_MEMBER_UPDATE",
+            json!({
+                "guild_id":"1","user":{"id":"2","username":"user"},"nick":"new"
+            }),
+        ))
+        .expect("update");
+    assert_eq!(
+        cache
+            .member(GuildId::new(1), UserId::new(2))
+            .unwrap()
+            .communication_disabled_until
+            .as_deref(),
+        Some("future")
+    );
+    cache.update_dispatch(&dispatch("GUILD_MEMBER_UPDATE", json!({
+        "guild_id":"1","user":{"id":"2","username":"user"},"communication_disabled_until":null
+    }))).expect("clear");
+    assert!(
+        cache
+            .member(GuildId::new(1), UserId::new(2))
+            .unwrap()
+            .communication_disabled_until
+            .is_none()
+    );
+}
+
+#[test]
+fn unavailable_guild_and_initial_presence_are_supported() {
+    use gloamwire::model::UserId;
+    let mut cache = Cache::default();
+    cache
+        .update_dispatch(&DispatchEvent {
+            name: "GUILD_CREATE".into(),
+            sequence: 1,
+            data: json!({"id":"1","unavailable":true}),
+        })
+        .expect("unavailable");
+    assert!(cache.is_guild_unavailable(GuildId::new(1)));
+    cache.update_dispatch(&DispatchEvent { name:"GUILD_CREATE".into(), sequence:2,
+        data:json!({"id":"1","name":"guild","owner_id":"2","presences":[{"user":{"id":"2"},"status":"online"}]}) }).expect("available");
+    assert!(cache.presence(GuildId::new(1), UserId::new(2)).is_some());
+}
+
+#[test]
+fn presence_updates_keep_embedded_guild_snapshot_consistent() {
+    use gloamwire::model::UserId;
+    let mut cache = Cache::default();
+    let events = [
+        (
+            "GUILD_CREATE",
+            json!({"id":"1","name":"guild","owner_id":"2","presences":[{"user":{"id":"2"},"status":"online"}]}),
+        ),
+        (
+            "PRESENCE_UPDATE",
+            json!({"guild_id":"1","user":{"id":"2"},"status":"idle"}),
+        ),
+    ];
+    for (index, (name, data)) in events.into_iter().enumerate() {
+        cache
+            .update_dispatch(&DispatchEvent {
+                name: name.into(),
+                sequence: index as u64 + 1,
+                data,
+            })
+            .expect("dispatch");
+    }
+    let guild = cache.guild(GuildId::new(1)).unwrap();
+    assert_eq!(guild.presences.len(), 1);
+    assert_eq!(guild.presences[0]["status"], "idle");
+    assert_eq!(
+        cache
+            .presence(GuildId::new(1), UserId::new(2))
+            .unwrap()
+            .status
+            .0,
+        "idle"
+    );
+}

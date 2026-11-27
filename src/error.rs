@@ -169,7 +169,11 @@ pub enum Error {
 
     /// An HTTP transport error occurred.
     #[error(transparent)]
-    Http(#[from] reqwest::Error),
+    Http(reqwest::Error),
+
+    /// An HTTP response exceeded the bounded body collection policy.
+    #[error("HTTP response exceeded the {limit}-byte body limit")]
+    ResponseTooLarge { limit: usize },
 
     /// Reading a file-backed upload failed.
     #[error(transparent)]
@@ -182,6 +186,14 @@ pub enum Error {
     /// A WebSocket transport error occurred.
     #[error(transparent)]
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
+
+    /// An identified shard failed; the underlying error remains available.
+    #[error("Gateway shard {shard_id} failed: {source}")]
+    Shard {
+        shard_id: u32,
+        #[source]
+        source: Box<Error>,
+    },
 
     /// A managed asynchronous shard task failed.
     #[error(transparent)]
@@ -235,6 +247,29 @@ pub enum Error {
         /// Maximum accepted payload size.
         limit: usize,
     },
+}
+
+/// Bounds response collection even when the peer omits Content-Length.
+pub(crate) async fn read_limited_body(mut response: reqwest::Response) -> Result<Vec<u8>> {
+    let limit = if response.status().is_success() {
+        32 * 1024 * 1024
+    } else {
+        64 * 1024
+    };
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len().saturating_add(chunk.len()) > limit {
+            return Err(Error::ResponseTooLarge { limit });
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+impl From<reqwest::Error> for Error {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Http(error.without_url())
+    }
 }
 
 #[cfg(test)]

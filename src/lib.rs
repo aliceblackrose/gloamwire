@@ -25,6 +25,10 @@ pub mod http;
 pub mod model;
 #[cfg(feature = "transport")]
 pub mod oauth2;
+#[cfg(feature = "transport")]
+mod queue_budget;
+#[cfg(feature = "transport")]
+mod secret;
 #[cfg(feature = "voice")]
 pub mod voice;
 

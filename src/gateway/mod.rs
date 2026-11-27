@@ -6,6 +6,7 @@ mod connection;
 mod coordination;
 mod dispatch;
 mod distributed;
+mod driver;
 mod encoding;
 mod event;
 mod identify;
@@ -20,7 +21,7 @@ pub use compression::GatewayCompression;
 pub use connection::{GatewayConfig, GatewayConnection};
 pub use coordination::{
     DistributedShardCoordinator, GatewayCoordinationError, GatewayCoordinationFuture,
-    GatewayCoordinationResult, GatewayIdentifyCoordinator,
+    GatewayCoordinationResult, GatewayIdentifyCoordinator, ShardLease,
 };
 pub use dispatch::{
     AutoModerationActionExecutionEvent, GuildAuditLogEntryCreateEvent, GuildMemberAddEvent,
@@ -28,9 +29,13 @@ pub use dispatch::{
     GuildRoleEvent, GuildScheduledEventUserEvent, InviteCreateEvent, InviteDeleteEvent,
     MessageDeleteBulkEvent, MessageDeleteEvent, MessagePollVoteEvent, MessageReactionAddEvent,
     MessageReactionRemoveAllEvent, MessageReactionRemoveEmojiEvent, MessageReactionRemoveEvent,
-    ReadyApplication, ReadyEvent, TypedDispatchEvent, WebhooksUpdateEvent,
+    MessageUpdateEvent, ReadyApplication, ReadyEvent, ThreadListSyncEvent, TypedDispatchEvent,
+    WebhooksUpdateEvent,
 };
-pub use distributed::{DistributedShardConfig, DistributedShardManager};
+pub use distributed::{
+    DistributedShardConfig, DistributedShardEvent, DistributedShardManager, LeaseIdentity,
+};
+pub use driver::{GatewayCommand, GatewayCommandSender, GatewayDriver};
 pub use encoding::GatewayEncoding;
 pub use event::{DispatchEvent, GatewayEvent};
 pub use intents::GatewayIntents;

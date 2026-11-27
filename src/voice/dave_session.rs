@@ -40,6 +40,8 @@ pub struct DaveVoiceSession<P> {
     participants: DaveParticipantSet,
     ssrc_users: HashMap<u32, UserId>,
     sequencer: VoiceRtpSequencer,
+    protocol_failed: bool,
+    replay: HashMap<u32, ReplayWindow>,
 }
 
 impl<P> std::fmt::Debug for DaveVoiceSession<P>
@@ -79,6 +81,8 @@ where
             participants: DaveParticipantSet::default(),
             ssrc_users: HashMap::new(),
             sequencer,
+            protocol_failed: false,
+            replay: HashMap::new(),
         })
     }
 
@@ -137,7 +141,10 @@ where
     /// are sent before this method returns the original event to the caller.
     pub async fn next_event(&mut self) -> VoiceResult<VoiceGatewayEvent> {
         let event = self.session.next_event().await?;
-        self.apply_gateway_event(&event).await?;
+        if let Err(error) = self.apply_gateway_event(&event).await {
+            self.protocol_failed = true;
+            return Err(error);
+        }
         Ok(event)
     }
 
@@ -149,42 +156,50 @@ where
             self.ssrc_users.insert(speaking.ssrc, user_id);
         }
 
-        let Some(dave_event) = DaveProtocolEvent::from_gateway_event(event)? else {
+        let parsed = DaveProtocolEvent::from_gateway_event(event);
+        if parsed.is_err() {
+            self.protocol_failed = true;
+        }
+        let Some(dave_event) = parsed? else {
             return Ok(());
         };
 
         if let DaveProtocolEvent::ClientDisconnect { user_id } = &dave_event {
+            // Replay windows are keyed to this transport key, not membership.
+            // Retain tombstones until the entire session/key is replaced.
             self.ssrc_users.retain(|_, mapped| mapped != user_id);
         }
 
+        if self.protocol_failed {
+            return Err(VoiceError::Protocol(
+                "DAVE control state failed; restart voice session".into(),
+            ));
+        }
+        // Set before any provider mutation or await. If this future is dropped
+        // during command transmission, the session remains fail-closed.
+        self.protocol_failed = true;
         self.participants.apply(&dave_event);
-        let commands = match self
+        // The provider owns MLS recovery and knows the pending epoch version.
+        // Reconfiguring from the active version can downgrade an upgrade.
+        let commands = self
             .provider
             .handle_gateway_event(&dave_event, &self.participants)
-        {
-            Ok(commands) => commands,
-            Err(error) => {
-                if let Some(transition_id) = recovery_transition_id(&dave_event) {
-                    let mut commands =
-                        vec![DaveGatewayCommand::InvalidCommitWelcome { transition_id }];
-                    let version = self.provider.active_protocol_version();
-                    commands.extend(
-                        self.provider
-                            .configure_protocol_version(version)
-                            .map_err(provider_error)?,
-                    );
-                    send_commands(&mut self.session, commands).await?;
-                    return Ok(());
-                }
-                return Err(provider_error(error));
-            }
-        };
-        send_commands(&mut self.session, commands).await
+            .map_err(provider_error)?;
+        let result = send_commands(&mut self.session, commands).await;
+        if result.is_ok() {
+            self.protocol_failed = false;
+        }
+        result
     }
 
     /// Sends one complete encoded Opus frame through DAVE, RTP, transport AEAD,
     /// and the connected UDP socket.
     pub async fn send_opus_frame(&mut self, frame: VoiceOpusFrame<'_>) -> VoiceResult<usize> {
+        if self.protocol_failed {
+            return Err(VoiceError::Protocol(
+                "DAVE control state failed; restart voice session".into(),
+            ));
+        }
         let media = if frame.payload() == OPUS_SILENCE_FRAME {
             frame.payload().to_vec()
         } else {
@@ -205,9 +220,29 @@ where
     /// Decrypts one already-received Discord UDP packet into an encoded Opus
     /// frame, including DAVE sender-ratchet processing when required.
     pub fn decrypt_rtp_packet(&mut self, packet: &[u8]) -> VoiceResult<VoiceReceivedOpus> {
+        if self.protocol_failed {
+            return Err(VoiceError::Protocol(
+                "DAVE control state failed; restart voice session".into(),
+            ));
+        }
         let decrypted = self.session.transport_crypto().decrypt_rtp(packet)?;
         let header = decode_audio_header(&decrypted.header)?;
         let sender = self.ssrc_users.get(&header.ssrc).copied();
+        if !self.replay.contains_key(&header.ssrc) && self.replay.len() >= 4096 {
+            return Err(VoiceError::Protocol(
+                "voice replay-window capacity exceeded".into(),
+            ));
+        }
+        if !self
+            .replay
+            .entry(header.ssrc)
+            .or_default()
+            .accept(decrypted.nonce)
+        {
+            return Err(VoiceError::InvalidRtpPacket(
+                "duplicate or stale RTP nonce".into(),
+            ));
+        }
 
         let payload = if decrypted.media == OPUS_SILENCE_FRAME {
             decrypted.media
@@ -273,14 +308,6 @@ fn provider_error(error: DaveProviderError) -> VoiceError {
     VoiceError::Protocol(format!("DAVE provider error: {error}"))
 }
 
-fn recovery_transition_id(event: &DaveProtocolEvent) -> Option<u16> {
-    match event {
-        DaveProtocolEvent::AnnounceCommit { transition_id, .. }
-        | DaveProtocolEvent::Welcome { transition_id, .. } => Some(*transition_id),
-        _ => None,
-    }
-}
-
 async fn send_commands(
     session: &mut VoiceSession,
     commands: Vec<DaveGatewayCommand>,
@@ -291,8 +318,44 @@ async fn send_commands(
     Ok(())
 }
 
+/// A bounded sliding window accepts authenticated out-of-order RTP packets.
+#[derive(Default)]
+struct ReplayWindow {
+    highest: Option<u32>,
+    seen: u128,
+}
+
+impl ReplayWindow {
+    fn accept(&mut self, nonce: u32) -> bool {
+        let Some(highest) = self.highest else {
+            self.highest = Some(nonce);
+            self.seen = 1;
+            return true;
+        };
+        if nonce > highest {
+            let delta = nonce - highest;
+            self.seen = self.seen.checked_shl(delta).unwrap_or(0) | 1;
+            self.highest = Some(nonce);
+            true
+        } else {
+            let delta = highest - nonce;
+            let Some(bit) = 1_u128.checked_shl(delta) else {
+                return false;
+            };
+            if self.seen & bit != 0 {
+                return false;
+            }
+            self.seen |= bit;
+            true
+        }
+    }
+}
+
 fn decode_audio_header(bytes: &[u8]) -> VoiceResult<VoiceRtpHeader> {
-    if bytes.len() < RTP_HEADER_BYTES || bytes[0] >> 6 != 2 {
+    if bytes.len() < RTP_HEADER_BYTES
+        || bytes[0] >> 6 != 2
+        || bytes[1] & 0x7f != super::DISCORD_OPUS_PAYLOAD_TYPE
+    {
         return Err(VoiceError::InvalidRtpPacket(
             "decrypted packet did not contain a valid RTP v2 audio header".to_owned(),
         ));
@@ -308,6 +371,17 @@ fn decode_audio_header(bytes: &[u8]) -> VoiceResult<VoiceRtpHeader> {
 mod tests {
     use super::decode_audio_header;
     use crate::voice::VoiceRtpHeader;
+
+    #[test]
+    fn replay_window_accepts_reordering_but_rejects_duplicates() {
+        let mut window = super::ReplayWindow::default();
+        assert!(window.accept(100));
+        assert!(window.accept(102));
+        assert!(window.accept(101));
+        assert!(!window.accept(101));
+        assert!(window.accept(300));
+        assert!(!window.accept(102));
+    }
 
     #[test]
     fn receive_header_accepts_rtp_extension_bit() {

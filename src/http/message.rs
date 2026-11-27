@@ -449,6 +449,9 @@ impl RestClient {
     }
 
     /// Edits a message and appends multipart file uploads.
+    ///
+    /// If attachments are omitted, fetches existing attachment IDs first. This
+    /// is not atomic with other edits; supply attachments explicitly for concurrent edits.
     pub async fn edit_message_with_files(
         &self,
         channel_id: ChannelId,
@@ -456,7 +459,14 @@ impl RestClient {
         edit: &EditMessage,
         files: &[UploadFile],
     ) -> Result<Message> {
+        if files.is_empty() {
+            return self.edit_message(channel_id, message_id, edit).await;
+        }
         let mut request = edit.clone();
+        if request.attachments.is_none() {
+            let current = self.get_message(channel_id, message_id).await?;
+            request.attachments = Some(current.attachments.iter().map(Into::into).collect());
+        }
         request
             .attachments
             .get_or_insert_default()

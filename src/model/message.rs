@@ -110,7 +110,7 @@ pub struct ChannelMention {
 /// Controls which mentions Discord parses from outgoing message content.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AllowedMentions {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub parse: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<RoleId>,
@@ -349,6 +349,13 @@ mod tests {
         MessageReferenceType, MessageType, SharedClientTheme,
     };
     use crate::model::{AttachmentId, ComponentType, PollLayoutType};
+
+    #[test]
+    fn allowed_mentions_keeps_explicit_empty_parse_array() {
+        let mentions = super::AllowedMentions::default();
+        let value = serde_json::to_value(mentions).expect("mentions");
+        assert_eq!(value, serde_json::json!({"parse": []}));
+    }
 
     #[test]
     fn message_collections_default_when_omitted() {

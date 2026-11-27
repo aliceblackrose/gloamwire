@@ -5,7 +5,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{RestClient, error::Result, model::GuildId};
+use crate::{Error, RestClient, error::Result, model::GuildId};
 
 use super::{GatewayConfig, GatewayConnection, GatewayEvent, GatewayIntents};
 
@@ -67,7 +67,7 @@ pub struct ShardEvent {
 #[derive(Debug)]
 pub struct ShardManager {
     shard_count: ShardCount,
-    events: mpsc::Receiver<Result<ShardEvent>>,
+    events: mpsc::Receiver<Result<crate::queue_budget::Budgeted<ShardEvent>>>,
     shutdown: watch::Sender<bool>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -92,6 +92,7 @@ impl ShardManager {
     #[must_use]
     pub fn spawn(base_config: GatewayConfig, shard_count: ShardCount) -> Self {
         let (event_tx, events) = mpsc::channel(256);
+        let budget = crate::queue_budget::Budget::default();
         let (shutdown, _) = watch::channel(false);
         let mut tasks = Vec::with_capacity(shard_count.get() as usize);
 
@@ -108,6 +109,7 @@ impl ShardManager {
                 .clone()
                 .with_shard(raw_shard_id, shard_count.get());
             let event_tx = event_tx.clone();
+            let budget = budget.clone();
             let mut shutdown_rx = shutdown.subscribe();
 
             tasks.push(tokio::spawn(async move {
@@ -118,7 +120,11 @@ impl ShardManager {
                     "connecting Discord Gateway shard"
                 );
 
-                let mut gateway = match GatewayConnection::connect(config).await {
+                let connection = tokio::select! {
+                    result = GatewayConnection::connect(config) => result,
+                    _ = shutdown_rx.changed() => return,
+                };
+                let mut gateway = match connection {
                     Ok(gateway) => {
                         #[cfg(feature = "tracing")]
                         tracing::debug!(
@@ -135,7 +141,7 @@ impl ShardManager {
                             shard_id = raw_shard_id,
                             "Discord Gateway shard connection failed"
                         );
-                        let _ = event_tx.send(Err(error)).await;
+                        let _ = event_tx.send(Err(shard_error(shard_id, error))).await;
                         return;
                     }
                 };
@@ -157,15 +163,27 @@ impl ShardManager {
                         event = gateway.next_event() => {
                             match event {
                                 Ok(event) => {
-                                    if event_tx.send(Ok(ShardEvent { shard_id, event })).await.is_err() {
-                                        #[cfg(feature = "tracing")]
-                                        tracing::debug!(
-                                            target: "gloamwire::gateway",
-                                            shard_id = raw_shard_id,
-                                            "Gateway shard event receiver dropped"
-                                        );
+                                    let Some(queued) = budget.wrap(event.estimated_bytes(), ShardEvent { shard_id, event }) else {
                                         let _ = gateway.shutdown().await;
+                                        drop(gateway);
+                                        let _ = event_tx.send(Err(shard_error(shard_id, Error::GatewayProtocol("shard event byte budget exceeded".into())))).await;
                                         break;
+                                    };
+                                    match event_tx.try_send(Ok(queued)) {
+                                        Ok(()) => {}
+                                        Err(error) => {
+                                            let full = matches!(error, mpsc::error::TrySendError::Full(_));
+                                            let _ = gateway.shutdown().await;
+                                            drop(gateway);
+                                            if full {
+                                                let error = Error::GatewayProtocol(format!(
+                                                    "shard {} event queue overflow; connection stopped",
+                                                    shard_id.get()
+                                                ));
+                                                let _ = event_tx.send(Err(shard_error(shard_id, error))).await;
+                                            }
+                                            break;
+                                        }
                                     }
                                 }
                                 Err(error) => {
@@ -175,7 +193,8 @@ impl ShardManager {
                                         shard_id = raw_shard_id,
                                         "Discord Gateway shard stopped with an error"
                                     );
-                                    let _ = event_tx.send(Err(error)).await;
+                                    drop(gateway);
+                                    let _ = event_tx.send(Err(shard_error(shard_id, error))).await;
                                     break;
                                 }
                             }
@@ -203,7 +222,10 @@ impl ShardManager {
 
     /// Receives the next event from any managed shard.
     pub async fn next_event(&mut self) -> Option<Result<ShardEvent>> {
-        self.events.recv().await
+        self.events
+            .recv()
+            .await
+            .map(|event| event.map(crate::queue_budget::Budgeted::into_inner))
     }
 
     /// Requests graceful shutdown of every shard and waits for their tasks to exit.
@@ -215,13 +237,31 @@ impl ShardManager {
             "requesting Discord Gateway shard-manager shutdown"
         );
 
+        self.events.close();
         let _ = self.shutdown.send(true);
 
-        while let Some(task) = self.tasks.pop() {
-            task.await?;
+        while let Some(task) = self.tasks.last_mut() {
+            let result = task.await;
+            self.tasks.pop();
+            result?;
         }
 
         Ok(())
+    }
+}
+
+pub(super) fn shard_error(shard_id: ShardId, source: Error) -> Error {
+    Error::Shard {
+        shard_id: shard_id.get(),
+        source: Box::new(source),
+    }
+}
+
+impl Drop for ShardManager {
+    fn drop(&mut self) {
+        for task in &self.tasks {
+            task.abort();
+        }
     }
 }
 
