@@ -14,6 +14,7 @@ mod dave;
 mod dave_davey;
 mod dave_lifecycle;
 mod dave_session;
+mod driver;
 mod error;
 mod gateway;
 mod opus;
@@ -36,6 +37,7 @@ pub use dave::{
 pub use dave_davey::DaveyProvider;
 pub use dave_lifecycle::DaveProviderLifecycle;
 pub use dave_session::{DaveVoiceSession, VoiceReceivedOpus};
+pub use driver::{VoiceCommand, VoiceCommandSender, VoiceDriver};
 pub use error::{VoiceError, VoiceResult};
 pub use gateway::{VoiceGatewayConfig, VoiceGatewayConnection};
 pub use opus::{

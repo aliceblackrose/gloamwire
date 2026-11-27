@@ -295,17 +295,30 @@ impl VoiceGatewayConnection {
 
     /// Returns the next meaningful Voice Gateway event while driving heartbeats.
     pub async fn next_event(&mut self) -> VoiceResult<VoiceGatewayEvent> {
+        match self.next_event_or(std::future::pending::<std::convert::Infallible>()).await? {
+            futures_util::future::Either::Left(event) => Ok(event),
+            futures_util::future::Either::Right(never) => match never {},
+        }
+    }
+
+    pub(super) async fn next_event_or<F: std::future::Future>(
+        &mut self,
+        external: F,
+    ) -> VoiceResult<futures_util::future::Either<VoiceGatewayEvent, F::Output>> {
+        use futures_util::future::Either;
+        tokio::pin!(external);
         if self.shutdown {
             return Err(VoiceError::Protocol(
                 "Voice Gateway connection has been shut down".to_owned(),
             ));
         }
         if let Some(event) = self.pending.pop_front() {
-            return Ok(event);
+            return Ok(Either::Left(event));
         }
 
         loop {
             tokio::select! {
+                output = &mut external => return Ok(Either::Right(output)),
                 _ = self.heartbeat.tick() => {
                     if !self.heartbeat_acknowledged {
                         return Err(VoiceError::HeartbeatNotAcknowledged);
@@ -319,22 +332,22 @@ impl VoiceGatewayConnection {
                             if envelope.opcode == HEARTBEAT_ACK_OPCODE {
                                 self.heartbeat_acknowledged = true;
                                 self.latency = self.last_heartbeat_sent.take().map(|sent| sent.elapsed());
-                                return Ok(VoiceGatewayEvent::HeartbeatAck);
+                                return Ok(Either::Left(VoiceGatewayEvent::HeartbeatAck));
                             }
                             if envelope.opcode == HELLO_OPCODE {
                                 continue;
                             }
                             if let Some(event) = event_from_envelope(envelope)? {
-                                return Ok(event);
+                                return Ok(Either::Left(event));
                             }
                         }
                         Inbound::DaveBinary(event) => {
                             update_sequence(&mut self.sequence, Some(event.sequence));
-                            return Ok(VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
+                            return Ok(Either::Left(VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
                                 opcode: event.opcode,
                                 sequence: event.sequence,
                                 payload: event.payload,
-                            }));
+                            })));
                         }
                     }
                 }

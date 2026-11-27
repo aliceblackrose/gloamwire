@@ -303,6 +303,18 @@ impl GatewayConnection {
     /// connections. Opcode 7 and opcode 9 are still surfaced after recovery so
     /// callers can observe lifecycle changes without having to perform them.
     pub async fn next_event(&mut self) -> Result<GatewayEvent> {
+        match self.next_event_or(std::future::pending::<std::convert::Infallible>()).await? {
+            futures_util::future::Either::Left(event) => Ok(event),
+            futures_util::future::Either::Right(never) => match never {},
+        }
+    }
+
+    pub(super) async fn next_event_or<F: std::future::Future>(
+        &mut self,
+        external: F,
+    ) -> Result<futures_util::future::Either<GatewayEvent, F::Output>> {
+        use futures_util::future::Either;
+        tokio::pin!(external);
         if self.shutdown {
             return Err(Error::GatewayClosed {
                 code: Some(GatewayCloseCode::Normal),
@@ -312,6 +324,7 @@ impl GatewayConnection {
 
         loop {
             tokio::select! {
+                output = &mut external => return Ok(Either::Right(output)),
                 _ = self.heartbeat.tick() => {
                     if !self.heartbeat_acknowledged {
                         self.reconnect(GatewayReconnectStrategy::Resume).await?;
@@ -352,7 +365,7 @@ impl GatewayConnection {
                     }
 
                     match envelope.op {
-                        0 => return self.dispatch(envelope),
+                        0 => return self.dispatch(envelope).map(Either::Left),
                         1 => {
                             match self.send_heartbeat().await {
                                 Ok(()) => {}
@@ -364,7 +377,7 @@ impl GatewayConnection {
                         }
                         7 => {
                             self.reconnect(GatewayReconnectStrategy::Resume).await?;
-                            return Ok(GatewayEvent::Reconnect);
+                            return Ok(Either::Left(GatewayEvent::Reconnect));
                         }
                         9 => {
                             let resumable = serde_json::from_value::<bool>(envelope.d)?;
@@ -374,18 +387,18 @@ impl GatewayConnection {
                                 GatewayReconnectStrategy::Reidentify
                             };
                             self.reconnect(strategy).await?;
-                            return Ok(GatewayEvent::InvalidSession { resumable });
+                            return Ok(Either::Left(GatewayEvent::InvalidSession { resumable }));
                         }
                         11 => {
                             self.heartbeat_acknowledged = true;
                             self.latency = self.last_heartbeat_sent.take().map(|sent| sent.elapsed());
-                            return Ok(GatewayEvent::HeartbeatAck);
+                            return Ok(Either::Left(GatewayEvent::HeartbeatAck));
                         }
                         opcode => {
-                            return Ok(GatewayEvent::Unknown {
+                            return Ok(Either::Left(GatewayEvent::Unknown {
                                 opcode,
                                 data: envelope.d,
-                            });
+                            }));
                         }
                     }
                 }

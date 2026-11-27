@@ -170,6 +170,29 @@ impl VoiceSession {
         self.gateway.next_event().await
     }
 
+    pub(super) async fn next_input<F: std::future::Future>(
+        &mut self,
+        external: F,
+        buffer: &mut [u8],
+    ) -> VoiceResult<VoiceInput<F::Output>> {
+        use futures_util::future::Either;
+        if let Some(event) = self.pending.pop_front() {
+            return Ok(VoiceInput::Gateway(event));
+        }
+        let udp = &self.udp;
+        let input = self.gateway.next_event_or(async {
+            tokio::select! {
+                output = external => Either::Left(output),
+                received = udp.recv(buffer) => Either::Right(received),
+            }
+        }).await?;
+        match input {
+            Either::Left(event) => Ok(VoiceInput::Gateway(event)),
+            Either::Right(Either::Left(output)) => Ok(VoiceInput::External(output)),
+            Either::Right(Either::Right(received)) => Ok(VoiceInput::Udp(received?)),
+        }
+    }
+
     /// Applies the reconnect policy for a Voice Gateway close.
     ///
     /// A missing close code is treated as resumable. Restart-required close
@@ -198,6 +221,12 @@ impl VoiceSession {
     pub async fn shutdown(&mut self) -> VoiceResult<()> {
         self.gateway.shutdown().await
     }
+}
+
+pub(super) enum VoiceInput<T> {
+    Gateway(VoiceGatewayEvent),
+    External(T),
+    Udp(usize),
 }
 
 #[cfg(test)]

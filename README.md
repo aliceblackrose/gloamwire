@@ -226,3 +226,10 @@ Gloamwire aims to remain a library rather than a framework. Public APIs should e
 ## License
 
 MIT
+### Independently driven connections
+
+`GatewayDriver::connect(config)` runs Gateway receive, heartbeat and recovery processing in a Tokio task. Its cloneable `commands()` handle sends typed `GatewayCommand` operations without borrowing the event receiver. Consume `next_event()` continuously; the driver stops with an explicit error on event queue overflow. The low-level `GatewayConnection` remains available for applications that drive it directly.
+
+For voice, transfer a negotiated `DaveVoiceSession` to `VoiceDriver::spawn(session)`. The driver independently processes Gateway heartbeats, DAVE transitions, UDP reception and outbound `VoiceCommand` operations. Control queue overflow stops the session; incoming audio uses a bounded best-effort queue, with drops available via `dropped_audio_packets()`. A terminal control error requires a fresh session. The low-level voice API remains available.
+
+When using a shared cache with a shard manager, feed each `ShardEvent` into `Cache::update_shard_event(&event, shard_count)` rather than calling the single-shard `update_gateway_event` API. This isolates READY invalidation and sequence deduplication per shard.

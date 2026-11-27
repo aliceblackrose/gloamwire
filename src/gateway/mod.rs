@@ -6,6 +6,7 @@ mod connection;
 mod coordination;
 mod dispatch;
 mod distributed;
+mod driver;
 mod encoding;
 mod event;
 mod identify;
@@ -31,6 +32,7 @@ pub use dispatch::{
     MessageUpdateEvent, ReadyApplication, ReadyEvent, TypedDispatchEvent, WebhooksUpdateEvent,
 };
 pub use distributed::{DistributedShardConfig, DistributedShardManager};
+pub use driver::{GatewayCommand, GatewayCommandSender, GatewayDriver};
 pub use encoding::GatewayEncoding;
 pub use event::{DispatchEvent, GatewayEvent};
 pub use intents::GatewayIntents;
