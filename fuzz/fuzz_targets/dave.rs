@@ -3,7 +3,9 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    use gloamwire::voice::{DaveGatewayEvent, DaveParticipantSet, DaveProtocolEvent, VoiceGatewayEvent};
+    use gloamwire::voice::{
+        DaveGatewayEvent, DaveParticipantSet, DaveProtocolEvent, VoiceGatewayEvent,
+    };
 
     let Some((&opcode, payload)) = data.split_first() else {
         return;

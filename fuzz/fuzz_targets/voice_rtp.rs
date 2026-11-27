@@ -11,6 +11,9 @@ fuzz_target!(|data: &[u8]| {
         [0; 32],
     )
     .unwrap();
-    let split = data.first().map_or(0, |value| usize::from(*value)).min(data.len());
+    let split = data
+        .first()
+        .map_or(0, |value| usize::from(*value))
+        .min(data.len());
     let _ = crypto.encrypt_rtp(&data[..split], &data[split..]);
 });

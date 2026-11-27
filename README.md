@@ -283,3 +283,11 @@ uniqueness or certify external DAVE/MLS implementations.
 Default debug formatting omits raw voice/DAVE payloads, encoded or decrypted
 audio, upload contents and paths, and OAuth2 state/redirect values. Explicit
 access and serialization can still reveal sensitive data.
+
+### Adversarial testing
+
+The separate [fuzz package](fuzz/README.md) runs eight production-path parser
+harnesses under libFuzzer and AddressSanitizer. Regular tests include
+property-based security invariants, compression expansion limits, and
+async cancellation and concurrency regressions. See the fuzz README for
+local execution and crash reproduction.

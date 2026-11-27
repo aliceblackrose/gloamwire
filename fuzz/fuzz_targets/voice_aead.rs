@@ -3,7 +3,9 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    use gloamwire::voice::{VoiceEncryptionMode, VoiceRtpHeader, VoiceTransportCrypto, VoiceTransportDecryptor};
+    use gloamwire::voice::{
+        VoiceEncryptionMode, VoiceRtpHeader, VoiceTransportCrypto, VoiceTransportDecryptor,
+    };
 
     for name in [
         VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE,
@@ -15,7 +17,11 @@ fuzz_target!(|data: &[u8]| {
         let _ = receiver.decrypt_rtp(data);
         if data.len() <= 8192 {
             let mut sender = VoiceTransportCrypto::new_with_fresh_key(mode, [0; 32]).unwrap();
-            let header = VoiceRtpHeader { sequence: 1, timestamp: 2, ssrc: 3 };
+            let header = VoiceRtpHeader {
+                sequence: 1,
+                timestamp: 2,
+                ssrc: 3,
+            };
             let packet = sender.encrypt_audio(header, data).unwrap();
             let decoded = receiver.decrypt_rtp(&packet).unwrap();
             assert_eq!(decoded.media, data);

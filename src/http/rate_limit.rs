@@ -641,7 +641,7 @@ mod adversarial_tests {
         drop(guard);
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[tokio::test(start_paused = true)]
     async fn simultaneous_global_admissions_respect_window_capacity() {
         let limiter = Arc::new(RateLimiter::default());
         let barrier = Arc::new(tokio::sync::Barrier::new(81));
@@ -657,9 +657,36 @@ mod adversarial_tests {
         barrier.wait().await;
         let mut admitted = 0;
         for task in tasks {
-            admitted += usize::from(task.await.unwrap());
+            if task.await.unwrap() {
+                admitted += 1;
+            }
         }
         assert_eq!(admitted, GLOBAL_REQUEST_LIMIT);
+    }
+
+    #[test]
+    fn concurrent_cooldown_updates_never_shorten_deadline() {
+        let limiter = RateLimiter::default();
+        let barrier = std::sync::Barrier::new(8);
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            for seconds in 1..=8 {
+                let limiter = &limiter;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    limiter.update(
+                        &Route::current_user(),
+                        StatusCode::TOO_MANY_REQUESTS,
+                        &HeaderMap::new(),
+                        Some(Duration::from_secs(seconds)),
+                        true,
+                    );
+                });
+            }
+        });
+        let state = limiter.state.lock().unwrap();
+        assert!(state.global_until.unwrap() >= started + Duration::from_secs(8));
     }
 
     #[test]

@@ -154,7 +154,7 @@ mod tests {
 mod adversarial_tests {
     use super::*;
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn cancelled_identify_waiter_does_not_consume_quota() {
         let limiter = GatewayIdentifyLimiter::new(&SessionStartLimit {
             total: 10,

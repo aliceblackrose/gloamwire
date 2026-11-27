@@ -1,0 +1,61 @@
+name: Security fuzzing
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '43 3 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install pinned nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly-2026-11-20 --profile minimal --component rustfmt
+          cargo +nightly-2026-11-20 install cargo-fuzz --version 0.12.0 --locked
+      - name: Check fuzz harness formatting
+        run: cargo +nightly-2026-11-20 fmt --manifest-path fuzz/Cargo.toml -- --check
+      - name: Seed synthetic corpus
+        run: python3 fuzz/seed_corpus.py
+      - name: Run ASan fuzz targets with bounded budgets
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          seconds=20
+          if [[ "$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            seconds=120
+          fi
+          failed=0
+          for target in gateway_json gateway_etf gateway_zlib gateway_zstd voice_rtp voice_aead dave rest_error; do
+            echo "::group::Fuzz $target"
+            if ! cargo +nightly-2026-11-20 fuzz run "$target" -- \
+              -max_total_time="$seconds" -timeout=10 -rss_limit_mb=4096 -max_len=65536; then
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+      - name: Preserve crash inputs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-crash-inputs
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
