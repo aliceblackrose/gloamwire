@@ -234,7 +234,9 @@ impl Cache {
                 }
                 self.presences.remove(&(event.guild_id, event.user.id));
                 if let Some(guild) = self.guilds.get_mut(&event.guild_id) {
-                    guild.presences.retain(|raw| presence_user_id(raw) != Some(event.user.id));
+                    guild
+                        .presences
+                        .retain(|raw| presence_user_id(raw) != Some(event.user.id));
                 }
                 self.voice_states.remove(&(event.guild_id, event.user.id));
             }
@@ -330,13 +332,21 @@ impl Cache {
                 .keys()
                 .chain(self.unavailable_guilds.iter())
                 .copied()
-                .chain(self.channels.values().filter_map(|channel| channel.guild_id))
+                .chain(
+                    self.channels
+                        .values()
+                        .filter_map(|channel| channel.guild_id),
+                )
                 .chain(self.members.keys().map(|(guild, _)| *guild))
                 .chain(self.presences.keys().map(|(guild, _)| *guild))
                 .chain(self.roles.keys().map(|(guild, _)| *guild))
                 .chain(self.voice_states.keys().map(|(guild, _)| *guild))
                 .chain(self.scheduled_events.values().map(|event| event.guild_id))
-                .chain(self.messages.values().filter_map(|message| message.guild_id))
+                .chain(
+                    self.messages
+                        .values()
+                        .filter_map(|message| message.guild_id),
+                )
                 .filter(|id| shard_for_guild(*id, shard_count) == event.shard_id)
                 .collect();
             for guild in guilds {
@@ -488,11 +498,14 @@ impl Cache {
 
     fn upsert_presence(&mut self, presence: &PresenceUpdate) {
         self.merge_partial_user(presence);
-        self.presences.insert((presence.guild_id, presence.user.id), presence.clone());
+        self.presences
+            .insert((presence.guild_id, presence.user.id), presence.clone());
         if let Some(guild) = self.guilds.get_mut(&presence.guild_id)
             && let Ok(raw) = serde_json::to_value(presence)
         {
-            guild.presences.retain(|entry| presence_user_id(entry) != Some(presence.user.id));
+            guild
+                .presences
+                .retain(|entry| presence_user_id(entry) != Some(presence.user.id));
             guild.presences.push(raw);
         }
     }
@@ -534,7 +547,11 @@ impl Cache {
         for thread in &event.threads {
             let mut thread = thread.clone();
             thread.guild_id = Some(event.guild_id);
-            if let Some(member) = event.members.iter().find(|member| member.id == Some(thread.id)) {
+            if let Some(member) = event
+                .members
+                .iter()
+                .find(|member| member.id == Some(thread.id))
+            {
                 thread.member = Some(member.clone());
             }
             self.upsert_channel(&thread);
@@ -599,8 +616,12 @@ impl Cache {
             // GUILD_UPDATE includes the guild role collection, but not
             // Gateway-only child collections or member counts.
             updated.member_count = guild.member_count.or(existing.member_count);
-            updated.approximate_member_count = guild.approximate_member_count.or(existing.approximate_member_count);
-            updated.approximate_presence_count = guild.approximate_presence_count.or(existing.approximate_presence_count);
+            updated.approximate_member_count = guild
+                .approximate_member_count
+                .or(existing.approximate_member_count);
+            updated.approximate_presence_count = guild
+                .approximate_presence_count
+                .or(existing.approximate_presence_count);
             updated.channels = existing.channels.clone();
             updated.threads = existing.threads.clone();
             updated.members = existing.members.clone();

@@ -60,15 +60,23 @@ impl GatewayIdentifyLimiter {
                 if state.remaining == 0 {
                     Some(state.reset_at)
                 } else {
-                    state.next_bucket_allowed.retain(|_, deadline| *deadline > now);
+                    state
+                        .next_bucket_allowed
+                        .retain(|_, deadline| *deadline > now);
                     let bucket = shard_id % state.max_concurrency;
-                    let next_allowed = state.next_bucket_allowed.get(&bucket).copied().unwrap_or(now);
+                    let next_allowed = state
+                        .next_bucket_allowed
+                        .get(&bucket)
+                        .copied()
+                        .unwrap_or(now);
 
                     if next_allowed > now {
                         Some(next_allowed)
                     } else {
                         state.remaining -= 1;
-                        state.next_bucket_allowed.insert(bucket, now + IDENTIFY_BUCKET_WINDOW);
+                        state
+                            .next_bucket_allowed
+                            .insert(bucket, now + IDENTIFY_BUCKET_WINDOW);
 
                         #[cfg(feature = "tracing")]
                         tracing::trace!(
@@ -105,9 +113,7 @@ impl GatewayIdentifyLimiter {
 
 impl GatewayIdentifyCoordinator for GatewayIdentifyLimiter {
     fn acquire_identify(&self, shard_id: ShardId) -> GatewayCoordinationFuture<'_, ()> {
-        Box::pin(async move {
-            self.acquire(shard_id.get()).await
-        })
+        Box::pin(async move { self.acquire(shard_id.get()).await })
     }
 }
 
@@ -126,7 +132,9 @@ mod tests {
         limiter.acquire(0).await.expect("first reset");
         let state = limiter.state.lock().await;
         assert_eq!(state.remaining, 0);
-        assert!(state.reset_at.saturating_duration_since(Instant::now()) > Duration::from_secs(86_390));
+        assert!(
+            state.reset_at.saturating_duration_since(Instant::now()) > Duration::from_secs(86_390)
+        );
         assert_eq!(state.next_bucket_allowed.len(), 1);
     }
 

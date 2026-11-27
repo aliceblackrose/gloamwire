@@ -308,7 +308,15 @@ mod tests {
         let route = Route::current_user();
         let mut headers = HeaderMap::new();
         headers.insert("x-ratelimit-scope", "global".parse().unwrap());
-        limiter.update(&route, StatusCode::TOO_MANY_REQUESTS, &headers, Some(Duration::from_secs(5)), false).await;
+        limiter
+            .update(
+                &route,
+                StatusCode::TOO_MANY_REQUESTS,
+                &headers,
+                Some(Duration::from_secs(5)),
+                false,
+            )
+            .await;
         assert!(limiter.try_acquire(&Route::gateway_bot()).await.is_some());
         assert!(limiter.state.lock().await.global_until.is_some());
     }

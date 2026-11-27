@@ -181,7 +181,8 @@ where
         self.participants.apply(&dave_event);
         // The provider owns MLS recovery and knows the pending epoch version.
         // Reconfiguring from the active version can downgrade an upgrade.
-        let commands = self.provider
+        let commands = self
+            .provider
             .handle_gateway_event(&dave_event, &self.participants)
             .map_err(provider_error)?;
         let result = send_commands(&mut self.session, commands).await;

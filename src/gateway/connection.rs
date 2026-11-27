@@ -211,7 +211,9 @@ impl GatewayConnection {
         if let Some([id, count]) = config.shard
             && (count == 0 || id >= count)
         {
-            return Err(Error::GatewayProtocol("invalid Gateway shard ID/count".into()));
+            return Err(Error::GatewayProtocol(
+                "invalid Gateway shard ID/count".into(),
+            ));
         }
         let rate_limiter = Arc::new(GatewayRateLimiter::default());
         let (socket, decoder, heartbeat, last_heartbeat_sent) =
