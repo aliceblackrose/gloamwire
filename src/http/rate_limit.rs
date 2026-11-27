@@ -81,6 +81,7 @@ enum RateLimitBucketKey {
 struct BucketState {
     remaining: u32,
     reset_at: Instant,
+    cooldown_until: Option<Instant>,
 }
 
 impl RateLimiter {
@@ -151,11 +152,13 @@ impl RateLimiter {
             .map(|hash| bucket_key(hash, route.major()))
             .unwrap_or_else(|| provisional_bucket_key(&route_identity, route.major()));
 
-        if let Some(bucket) = state.buckets.get(&bucket_key)
-            && bucket.remaining == 0
-            && bucket.reset_at > now
-        {
-            wait_until = later(wait_until, bucket.reset_at);
+        if let Some(bucket) = state.buckets.get(&bucket_key) {
+            if bucket.remaining == 0 && bucket.reset_at > now {
+                wait_until = later(wait_until, bucket.reset_at);
+            }
+            if let Some(deadline) = bucket.cooldown_until.filter(|deadline| *deadline > now) {
+                wait_until = later(wait_until, deadline);
+            }
         }
 
         if wait_until.is_none() {
@@ -177,7 +180,7 @@ impl RateLimiter {
     pub(crate) fn has_live_cooldown(&self, now: Instant) -> bool {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         state.global_until.is_some_and(|until| until > now)
-            || state.buckets.values().any(|bucket| bucket.reset_at > now)
+            || state.buckets.values().any(|bucket| bucket.reset_at > now || bucket.cooldown_until.is_some_and(|until| until > now))
     }
 
     pub(crate) fn update(
@@ -202,10 +205,23 @@ impl RateLimiter {
             "updated Discord REST rate-limit state"
         );
 
+        let previous_key = state.route_buckets.get(&route_identity)
+            .map(|hash| bucket_key(hash, route.major()))
+            .unwrap_or_else(|| provisional_bucket_key(&route_identity, route.major()));
         if let Some(hash) = &bucket_hash {
-            state
-                .route_buckets
-                .insert(route_identity.clone(), hash.clone());
+            let next_key = bucket_key(hash, route.major());
+            if previous_key != next_key
+                && let Some(previous) = state.buckets.get(&previous_key).copied()
+                && (previous.reset_at > now || previous.cooldown_until.is_some_and(|until| until > now))
+            {
+                let next = state.buckets.entry(next_key).or_insert(previous);
+                next.remaining = next.remaining.min(previous.remaining);
+                next.reset_at = next.reset_at.max(previous.reset_at);
+                if let Some(until) = previous.cooldown_until {
+                    next.cooldown_until = later(next.cooldown_until, until);
+                }
+            }
+            state.route_buckets.insert(route_identity.clone(), hash.clone());
         }
 
         let bucket_key = bucket_hash
@@ -239,9 +255,11 @@ impl RateLimiter {
                 let bucket = state.buckets.entry(bucket_key).or_insert(BucketState {
                     remaining: 0,
                     reset_at: deadline,
+                    cooldown_until: Some(deadline),
                 });
                 bucket.remaining = 0;
                 bucket.reset_at = bucket.reset_at.max(deadline);
+                bucket.cooldown_until = later(bucket.cooldown_until, deadline);
             }
             return;
         }
@@ -258,15 +276,16 @@ impl RateLimiter {
             let bucket = state.buckets.entry(bucket_key).or_insert(BucketState {
                 remaining,
                 reset_at,
+                cooldown_until: None,
             });
-            if bucket.remaining == 0 && bucket.reset_at > now {
-                // Preserve a live 429 cooldown. Single-flight reservations
-                // prevent older successful responses from racing newer ones.
+            if bucket.cooldown_until.is_some_and(|until| until > now) {
+                // A response must not erase a separately recorded 429 deadline.
                 bucket.reset_at = bucket.reset_at.max(reset_at);
             } else {
                 *bucket = BucketState {
                     remaining,
                     reset_at,
+                    cooldown_until: None,
                 };
             }
         }
@@ -304,6 +323,24 @@ mod tests {
 
     use super::{RateLimiter, bucket_key, provisional_bucket_key};
     use crate::http::route::Route;
+
+    #[test]
+    fn bucket_remapping_preserves_cooldown_but_success_restores_ordinary_capacity() {
+        let limiter = RateLimiter::default();
+        let route = Route::current_user();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ratelimit-bucket", "old".parse().unwrap());
+        headers.insert("x-ratelimit-remaining", "1".parse().unwrap());
+        headers.insert("x-ratelimit-reset-after", "10".parse().unwrap());
+        limiter.update(&route, StatusCode::OK, &headers, None, false);
+        assert!(limiter.try_acquire(&route).is_none());
+        limiter.update(&route, StatusCode::OK, &headers, None, false);
+        assert!(limiter.try_acquire(&route).is_none());
+        limiter.update(&route, StatusCode::TOO_MANY_REQUESTS, &headers, Some(Duration::from_secs(10)), false);
+        headers.insert("x-ratelimit-bucket", "new".parse().unwrap());
+        limiter.update(&route, StatusCode::OK, &headers, None, false);
+        assert!(limiter.try_acquire(&route).is_some());
+    }
 
     #[test]
     fn active_cooldown_prevents_limiter_eviction() {

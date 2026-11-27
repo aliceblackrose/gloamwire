@@ -306,7 +306,12 @@ impl OAuth2Client {
     /// Creates an OAuth2 client for a Discord application.
     pub fn new(client_id: ApplicationId, client_secret: impl Into<String>) -> Result<Self> {
         Ok(Self {
-            http: reqwest::Client::builder().user_agent(USER_AGENT).build()?,
+            http: reqwest::Client::builder()
+                .user_agent(USER_AGENT)
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(std::time::Duration::from_secs(60))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()?,
             client_id,
             client_secret: crate::secret::SecretString::new(client_secret.into()),
             api_base_url: API_BASE_URL.to_owned(),

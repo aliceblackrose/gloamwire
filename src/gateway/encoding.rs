@@ -13,6 +13,8 @@ pub enum GatewayEncoding {
     #[default]
     Json,
     /// Binary Erlang External Term Format Gateway payloads.
+    /// Internally compressed ETF terms and non-JSON terms are rejected; use
+    /// Gateway transport compression instead.
     Etf,
 }
 
@@ -45,6 +47,7 @@ impl GatewayEncoding {
         match self {
             Self::Json => Ok(serde_json::from_slice(bytes)?),
             Self::Etf => {
+                validate_etf(bytes)?;
                 let term = erltf::decode(bytes)
                     .map_err(|error| Error::GatewayEncoding(error.to_string()))?;
                 Ok(serde_json::from_value(term_to_json(term)?)?)
@@ -77,6 +80,97 @@ impl EncodedGatewayPayload {
             Self::Binary(bytes) => bytes.len(),
         }
     }
+}
+
+// Validate the JSON-compatible ETF subset before erltf performs recursive
+// parsing or trusts any collection lengths. No allocation depends on wire counts.
+const MAX_ETF_DEPTH: usize = 64;
+const MAX_ETF_NODES: usize = 250_000;
+const MAX_ETF_BYTES: usize = 32 * 1024 * 1024;
+
+fn invalid_etf() -> Error {
+    Error::GatewayEncoding("invalid or unsupported ETF structure, or resource limit exceeded".into())
+}
+
+fn validate_etf(bytes: &[u8]) -> Result<()> {
+    if bytes.len() > MAX_ETF_BYTES || bytes.first() != Some(&131) {
+        return Err(invalid_etf());
+    }
+    let mut input = &bytes[1..];
+    let mut nodes = MAX_ETF_NODES;
+    validate_etf_term(&mut input, &mut nodes, 0)?;
+    if !input.is_empty() {
+        return Err(invalid_etf());
+    }
+    Ok(())
+}
+
+fn take_etf<'a>(input: &mut &'a [u8], count: usize) -> Result<&'a [u8]> {
+    let (head, tail) = input.split_at_checked(count).ok_or_else(invalid_etf)?;
+    *input = tail;
+    Ok(head)
+}
+
+fn etf_count(input: &mut &[u8], width: usize) -> Result<usize> {
+    let mut count = 0_usize;
+    for &byte in take_etf(input, width)? {
+        count = count.checked_mul(256).and_then(|n| n.checked_add(usize::from(byte))).ok_or_else(invalid_etf)?;
+    }
+    Ok(count)
+}
+
+fn validate_etf_term(input: &mut &[u8], nodes: &mut usize, depth: usize) -> Result<()> {
+    if depth > MAX_ETF_DEPTH || *nodes == 0 {
+        return Err(invalid_etf());
+    }
+    *nodes -= 1;
+    let tag = take_etf(input, 1)?[0];
+    match tag {
+        70 => { take_etf(input, 8)?; } // NEW_FLOAT_EXT
+        97 => { take_etf(input, 1)?; } // SMALL_INTEGER_EXT
+        98 => { take_etf(input, 4)?; } // INTEGER_EXT
+        99 => { take_etf(input, 31)?; } // FLOAT_EXT
+        100 | 118 | 107 => { // atoms and STRING_EXT
+            let count = etf_count(input, 2)?;
+            take_etf(input, count)?;
+        }
+        115 | 119 => {
+            let count = etf_count(input, 1)?;
+            take_etf(input, count)?;
+        }
+        109 => {
+            let count = etf_count(input, 4)?;
+            take_etf(input, count)?;
+        }
+        110 | 111 => {
+            let count = etf_count(input, if tag == 110 { 1 } else { 4 })?;
+            if count > 8 || take_etf(input, 1)?[0] > 1 {
+                return Err(invalid_etf());
+            }
+            take_etf(input, count)?;
+        }
+        106 => {} // NIL_EXT
+        104 | 105 | 108 | 116 => {
+            let count = etf_count(input, if tag == 104 { 1 } else { 4 })?;
+            let children = if tag == 116 { count.checked_mul(2).ok_or_else(invalid_etf)? } else { count };
+            // Every child requires at least a tag byte.
+            if children > *nodes || children > input.len() {
+                return Err(invalid_etf());
+            }
+            for _ in 0..children {
+                validate_etf_term(input, nodes, depth + 1)?;
+            }
+            if tag == 108 {
+                // Only proper lists can be represented as JSON arrays.
+                if take_etf(input, 1)?[0] != 106 {
+                    return Err(invalid_etf());
+                }
+            }
+        }
+        // Includes COMPRESSED, distribution terms, functions, pids and references.
+        _ => return Err(invalid_etf()),
+    }
+    Ok(())
 }
 
 fn term_to_json(term: OwnedTerm) -> Result<Value> {
@@ -178,6 +272,20 @@ mod tests {
     struct Envelope {
         op: u8,
         d: Value,
+    }
+
+    #[test]
+    fn etf_preflight_rejects_excessive_depth_and_declared_lengths() {
+        let mut nested = vec![131];
+        for _ in 0..65 {
+            nested.extend([104, 1]);
+        }
+        nested.push(106);
+        assert!(GatewayEncoding::Etf.decode_bytes::<Value>(&nested).is_err());
+        assert!(GatewayEncoding::Etf.decode_bytes::<Value>(&[131, 108, 255, 255, 255, 255, 106]).is_err());
+        assert!(GatewayEncoding::Etf.decode_bytes::<Value>(&[131, 80, 0, 0, 0, 1]).is_err());
+        assert!(GatewayEncoding::Etf.decode_bytes::<Value>(&[131, 106, 106]).is_err());
+        assert!(GatewayEncoding::Etf.decode_bytes::<Value>(&[131, 104, 1, 80, 0, 0, 0, 1]).is_err());
     }
 
     #[test]

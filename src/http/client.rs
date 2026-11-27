@@ -106,6 +106,7 @@ impl RestClientBuilder {
         // A stalled request holds a resource reservation; provide finite defaults.
         let mut builder = reqwest::Client::builder()
             .user_agent(USER_AGENT)
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(10));
 
