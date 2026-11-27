@@ -125,7 +125,7 @@ impl DaveProtocolEvent {
                         epoch: data.epoch,
                     })
                 }
-                opcode if (DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE).contains(&opcode) => Err(
+                opcode if is_known_dave_opcode(opcode) => Err(
                     VoiceError::Protocol("invalid inbound DAVE JSON opcode or framing".into()),
                 ),
                 _ => Ok(Self::Unknown(event.clone())),
@@ -161,13 +161,17 @@ impl DaveProtocolEvent {
                         welcome,
                     })
                 }
-                opcode if (DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE).contains(&opcode) => Err(
+                opcode if is_known_dave_opcode(opcode) => Err(
                     VoiceError::Protocol("invalid inbound DAVE binary opcode or framing".into()),
                 ),
                 _ => Ok(Self::Unknown(event.clone())),
             },
         }
     }
+}
+
+fn is_known_dave_opcode(opcode: u8) -> bool {
+    (DAVE_PREPARE_TRANSITION_OPCODE..=DAVE_INVALID_COMMIT_WELCOME_OPCODE).contains(&opcode)
 }
 
 fn transition_payload(payload: &[u8], opcode: u8) -> VoiceResult<(u16, Vec<u8>)> {
