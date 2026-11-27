@@ -58,9 +58,10 @@ impl VoiceSession {
     /// Establishes the Voice Gateway, UDP discovery path, Select Protocol, and
     /// Session Description transport cryptography in the required order.
     pub async fn connect(config: VoiceGatewayConfig) -> VoiceResult<Self> {
+        let udp_policy = config.udp_destination_policy();
         let mut gateway = VoiceGatewayConnection::connect(config).await?;
         let mode = gateway.ready().preferred_encryption_mode()?;
-        let udp = VoiceUdpSocket::connect(gateway.ready()).await?;
+        let udp = VoiceUdpSocket::connect_with_policy(gateway.ready(), udp_policy).await?;
         let mut pending = VecDeque::new();
         let discovery = {
             let discovery = udp.discover();
@@ -106,7 +107,7 @@ impl VoiceSession {
             )));
         }
 
-        let transport_crypto = VoiceTransportCrypto::from_session_description(&description)?;
+        let transport_crypto = VoiceTransportCrypto::from_fresh_session_description(&description)?;
 
         Ok(Self {
             gateway,
@@ -163,12 +164,6 @@ impl VoiceSession {
     #[must_use]
     pub const fn transport_crypto(&self) -> &VoiceTransportCrypto {
         &self.transport_crypto
-    }
-
-    /// Returns mutable RTP transport cryptography state for outbound nonces.
-    #[must_use]
-    pub(super) const fn transport_crypto_mut(&mut self) -> &mut VoiceTransportCrypto {
-        &mut self.transport_crypto
     }
 
     /// Encrypts media using the session-owned outbound nonce state.
@@ -281,7 +276,7 @@ impl VoiceSession {
                     }
                     let was_ready = self.media_ready;
                     self.media_ready = false;
-                    let crypto = VoiceTransportCrypto::from_session_description(description)?;
+                    let crypto = VoiceTransportCrypto::from_fresh_session_description(description)?;
                     self.retired_keys.push(self.description.secret_key);
                     self.transport_crypto = crypto;
                     self.description = description.clone();
@@ -564,7 +559,8 @@ mod tests {
             token: "fixture-token".into(),
             endpoint: format!("ws://{websocket_addr}"),
         })
-        .with_insecure_loopback(true);
+        .with_insecure_loopback(true)
+        .with_udp_destination_policy(crate::voice::VoiceUdpDestinationPolicy::AllowPrivate);
         let mut session = within("VoiceSession::connect", VoiceSession::connect(config))
             .await
             .expect("voice session");
@@ -628,7 +624,6 @@ mod tests {
         // Repeated descriptions must not reset the outgoing nonce.
         let mut sequencer = crate::voice::VoiceRtpSequencer::new(SSRC);
         session
-            .transport_crypto_mut()
             .encrypt_audio(sequencer.next_header(), &[1])
             .expect("first packet");
         let original = session.session_description().clone();

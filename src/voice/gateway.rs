@@ -24,7 +24,8 @@ use crate::model::{GuildId, UserId};
 use super::{
     DaveGatewayEvent, VOICE_GATEWAY_VERSION, VoiceCloseCode, VoiceConnectionInfo,
     VoiceEncryptionMode, VoiceError, VoiceGatewayEvent, VoiceReady, VoiceResult,
-    VoiceSessionDescription, VoiceSpeakingEvent, VoiceSpeakingFlags, VoiceUdpDiscovery,
+    VoiceSessionDescription, VoiceSpeakingEvent, VoiceSpeakingFlags, VoiceUdpDestinationPolicy,
+    VoiceUdpDiscovery,
 };
 
 type VoiceSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -60,6 +61,7 @@ pub struct VoiceGatewayConfig {
     allow_insecure_loopback: bool,
     allow_custom_origin: bool,
     participant_limit: usize,
+    udp_destination_policy: VoiceUdpDestinationPolicy,
 }
 
 impl std::fmt::Debug for VoiceGatewayConfig {
@@ -91,6 +93,7 @@ impl VoiceGatewayConfig {
             allow_insecure_loopback: false,
             allow_custom_origin: false,
             participant_limit: 4096,
+            udp_destination_policy: VoiceUdpDestinationPolicy::PublicOnly,
         }
     }
 
@@ -126,6 +129,17 @@ impl VoiceGatewayConfig {
     pub const fn with_insecure_loopback(mut self, allow: bool) -> Self {
         self.allow_insecure_loopback = allow;
         self
+    }
+
+    /// Overrides the default public-only numeric UDP destination policy.
+    #[must_use]
+    pub const fn with_udp_destination_policy(mut self, policy: VoiceUdpDestinationPolicy) -> Self {
+        self.udp_destination_policy = policy;
+        self
+    }
+
+    pub(super) const fn udp_destination_policy(&self) -> VoiceUdpDestinationPolicy {
+        self.udp_destination_policy
     }
 
     /// Bounds the managed MLS participant set.

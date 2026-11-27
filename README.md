@@ -144,7 +144,7 @@ gateway.select_protocol(&discovery, &mode).await?;
 #     secret_key: [0; 32],
 #     dave_protocol_version: 0,
 # };
-let transport_crypto = VoiceTransportCrypto::from_session_description(&description)?;
+let transport_crypto = VoiceTransportCrypto::from_fresh_session_description(&description)?;
 # let _ = transport_crypto;
 # Ok(())
 # }

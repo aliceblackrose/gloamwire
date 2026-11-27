@@ -242,7 +242,6 @@ where
             .next_header_with_timestamp_step(frame.duration().timestamp_step());
         let packet = self
             .session
-            .transport_crypto_mut()
             .encrypt_audio(header, &media)?;
         self.session.udp().send(&packet).await
     }

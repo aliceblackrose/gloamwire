@@ -1,6 +1,6 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
-use tokio::net::{UdpSocket, lookup_host};
+use tokio::net::UdpSocket;
 
 use super::{VoiceError, VoiceReady, VoiceResult};
 
@@ -14,6 +14,58 @@ const DISCOVERY_RESPONSE_TYPE: u16 = 2;
 pub struct VoiceUdpDiscovery {
     pub address: String,
     pub port: u16,
+}
+
+/// Policy for the numeric UDP destination supplied by Voice Ready.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum VoiceUdpDestinationPolicy {
+    /// Require a public unicast address. Reject special-use ranges.
+    #[default]
+    PublicOnly,
+    /// Also permit private, unique-local and loopback addresses for trusted
+    /// infrastructure or fixtures. Never use this for untrusted voice servers.
+    AllowPrivate,
+}
+
+impl VoiceUdpDestinationPolicy {
+    fn permits(self, address: IpAddr) -> bool {
+        match address {
+            IpAddr::V4(ip) => self.permits_v4(ip),
+            IpAddr::V6(ip) => self.permits_v6(ip),
+        }
+    }
+
+    fn permits_v4(self, ip: Ipv4Addr) -> bool {
+        if ip.is_private() || ip.is_loopback() {
+            return self == Self::AllowPrivate;
+        }
+        let [a, b, c, _] = ip.octets();
+        !(a == 0
+            || a >= 224
+            || (a == 100 && (64..=127).contains(&b))
+            || (a == 169 && b == 254)
+            || (a == 192 && b == 0 && (c == 0 || c == 2))
+            || (a == 192 && b == 88 && c == 99)
+            || (a == 198 && (b == 18 || b == 19))
+            || (a == 198 && b == 51 && c == 100)
+            || (a == 203 && b == 0 && c == 113))
+    }
+
+    fn permits_v6(self, ip: Ipv6Addr) -> bool {
+        if let Some(mapped) = ip.to_ipv4_mapped() {
+            return self.permits_v4(mapped);
+        }
+        if ip.is_loopback() || ip.is_unique_local() {
+            return self == Self::AllowPrivate;
+        }
+        let [a, b, ..] = ip.segments();
+        // Allow global unicast, excluding IETF special-purpose, documentation
+        // and transition ranges that can encode unexpected IPv4 destinations.
+        (0x2000..=0x3fff).contains(&a)
+            && !(a == 0x2001 && (b < 0x0200 || b == 0x0db8))
+            && a != 0x2002
+            && a != 0x3fff
+    }
 }
 
 /// Connected UDP socket for Discord voice transport.
@@ -34,17 +86,26 @@ impl std::fmt::Debug for VoiceUdpSocket {
 }
 
 impl VoiceUdpSocket {
-    /// Opens and connects a UDP socket to the server advertised by Voice Ready.
+    /// Connects only to a public numeric unicast address advertised by Voice Ready.
     pub async fn connect(ready: &VoiceReady) -> VoiceResult<Self> {
-        let remote = lookup_host((ready.ip.as_str(), ready.port))
-            .await?
-            .next()
-            .ok_or_else(|| {
-                VoiceError::Protocol(format!(
-                    "Voice Ready address {}:{} did not resolve",
-                    ready.ip, ready.port
-                ))
-            })?;
+        Self::connect_with_policy(ready, VoiceUdpDestinationPolicy::PublicOnly).await
+    }
+
+    /// Connects using an explicitly selected destination policy. Hostnames are
+    /// rejected, avoiding DNS rebinding and unexpected resolver activity.
+    pub async fn connect_with_policy(
+        ready: &VoiceReady,
+        policy: VoiceUdpDestinationPolicy,
+    ) -> VoiceResult<Self> {
+        let ip = ready.ip.parse::<IpAddr>().map_err(|_| {
+            VoiceError::Protocol("Voice Ready requires a numeric UDP address".into())
+        })?;
+        if ready.port == 0 || !policy.permits(ip) {
+            return Err(VoiceError::Protocol(
+                "Voice Ready UDP destination rejected by policy".into(),
+            ));
+        }
+        let remote = SocketAddr::new(ip, ready.port);
         let bind = if remote.is_ipv4() {
             "0.0.0.0:0"
         } else {
@@ -165,5 +226,46 @@ mod tests {
         assert_eq!(DISCOVERY_PACKET_BYTES, 74);
         assert_eq!(DISCOVERY_PAYLOAD_BYTES, 70);
         assert_eq!(DISCOVERY_RESPONSE_TYPE, 2);
+    }
+}
+
+#[cfg(test)]
+mod destination_tests {
+    use super::*;
+
+    #[test]
+    fn public_policy_rejects_local_and_special_use_addresses() {
+        let policy = VoiceUdpDestinationPolicy::PublicOnly;
+        for ip in [
+            "0.0.0.0",
+            "127.0.0.1",
+            "10.0.0.1",
+            "100.64.0.1",
+            "169.254.169.254",
+            "192.0.2.1",
+            "224.0.0.1",
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "fc00::1",
+            "fe80::1",
+            "2001:db8::1",
+            "2002:7f00:1::",
+            "ff02::1",
+        ] {
+            assert!(!policy.permits(ip.parse().unwrap()), "{ip}");
+        }
+        assert!(policy.permits("8.8.8.8".parse().unwrap()));
+        assert!(policy.permits("2606:4700::1111".parse().unwrap()));
+    }
+
+    #[test]
+    fn private_policy_is_explicit_and_still_rejects_link_local() {
+        let policy = VoiceUdpDestinationPolicy::AllowPrivate;
+        assert!(policy.permits("127.0.0.1".parse().unwrap()));
+        assert!(policy.permits("10.0.0.1".parse().unwrap()));
+        assert!(policy.permits("::1".parse().unwrap()));
+        assert!(!policy.permits("169.254.169.254".parse().unwrap()));
+        assert!(!policy.permits("ff02::1".parse().unwrap()));
     }
 }
