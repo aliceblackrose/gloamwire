@@ -382,6 +382,19 @@ pub struct ModalSubmitInteractionData {
     pub resolved: Option<InteractionResolvedData>,
 }
 
+impl ModalSubmitInteractionData {
+    /// Finds a submitted input by custom ID in a label or legacy action row.
+    ///
+    /// A missing input returns `None`; an existing input may have an empty
+    /// selection or no scalar value.
+    #[must_use]
+    pub fn component(&self, custom_id: &str) -> Option<&Component> {
+        self.components
+            .iter()
+            .find_map(|component| component.find_custom_id(custom_id))
+    }
+}
+
 /// Objects resolved from IDs submitted in an interaction.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InteractionResolvedData {
@@ -409,6 +422,34 @@ mod tests {
     use crate::model::{
         ApplicationIntegrationType, ComponentType, ComponentValue, InteractionContextType,
     };
+
+    #[test]
+    fn modal_lookup_preserves_false_empty_and_unselected_values() {
+        use super::ModalSubmitInteractionData;
+        use serde_json::json;
+
+        let data: ModalSubmitInteractionData = serde_json::from_value(json!({
+            "custom_id": "form",
+            "components": [
+                {"type":18,"component":{"type":23,"custom_id":"confirm","value":false}},
+                {"type":18,"component":{"type":21,"custom_id":"radio","value":null}},
+                {"type":18,"component":{"type":22,"custom_id":"group","values":[]}},
+                {"type":1,"components":[{"type":4,"custom_id":"text","value":"hello"}]}
+            ]
+        }))
+        .expect("modal");
+        assert_eq!(
+            data.component("confirm").expect("checkbox").value,
+            Some(ComponentValue::Boolean(false))
+        );
+        assert!(data.component("radio").expect("radio").value.is_none());
+        assert!(data.component("group").expect("group").values.is_empty());
+        assert_eq!(
+            data.component("text").expect("text").value,
+            Some(ComponentValue::String("hello".into()))
+        );
+        assert!(data.component("missing").is_none());
+    }
 
     #[test]
     fn rejects_callback_type_data_mismatches() {

@@ -110,6 +110,20 @@ pub struct ComponentOption {
     pub default: Option<bool>,
 }
 
+impl ComponentOption {
+    /// Creates an option with no description, emoji or initial selection.
+    #[must_use]
+    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            value: value.into(),
+            description: None,
+            emoji: None,
+            default: None,
+        }
+    }
+}
+
 /// User-provided or API-returned scalar component value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -134,6 +148,21 @@ pub struct UnfurledMediaItem {
     pub extra: BTreeMap<String, Value>,
 }
 
+impl UnfurledMediaItem {
+    /// Creates a request media reference from a URL or attachment reference.
+    #[must_use]
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            proxy_url: None,
+            height: None,
+            width: None,
+            content_type: None,
+            extra: BTreeMap::new(),
+        }
+    }
+}
+
 /// One item in a media-gallery component.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaGalleryItem {
@@ -142,6 +171,18 @@ pub struct MediaGalleryItem {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spoiler: Option<bool>,
+}
+
+impl MediaGalleryItem {
+    /// Creates a gallery item without alt text or spoiler settings.
+    #[must_use]
+    pub fn new(media: UnfurledMediaItem) -> Self {
+        Self {
+            media,
+            description: None,
+            spoiler: None,
+        }
+    }
 }
 
 /// A Discord message or modal component.
@@ -228,7 +269,12 @@ pub struct Component {
 }
 
 impl Component {
-    fn new(kind: ComponentType) -> Self {
+    /// Creates an empty component, including future component types.
+    ///
+    /// Set the fields required by its type before sending. The convenience
+    /// constructors do not validate Discord's layout or field limits.
+    #[must_use]
+    pub fn new(kind: ComponentType) -> Self {
         Self {
             kind,
             id: None,
@@ -321,6 +367,293 @@ impl Component {
         }
     }
 
+    /// Creates a string select menu. Place it in a message action row or modal label.
+    #[must_use]
+    pub fn string_select(
+        custom_id: impl Into<String>,
+        options: impl IntoIterator<Item = ComponentOption>,
+    ) -> Self {
+        Self {
+            custom_id: Some(custom_id.into()),
+            options: options.into_iter().collect(),
+            ..Self::new(ComponentType::STRING_SELECT)
+        }
+    }
+
+    /// Creates an auto-populated user select menu.
+    #[must_use]
+    pub fn user_select(custom_id: impl Into<String>) -> Self {
+        Self {
+            custom_id: Some(custom_id.into()),
+            ..Self::new(ComponentType::USER_SELECT)
+        }
+    }
+
+    /// Creates an auto-populated role select menu.
+    #[must_use]
+    pub fn role_select(custom_id: impl Into<String>) -> Self {
+        Self {
+            custom_id: Some(custom_id.into()),
+            ..Self::new(ComponentType::ROLE_SELECT)
+        }
+    }
+
+    /// Creates an auto-populated mentionable select menu.
+    #[must_use]
+    pub fn mentionable_select(custom_id: impl Into<String>) -> Self {
+        Self {
+            custom_id: Some(custom_id.into()),
+            ..Self::new(ComponentType::MENTIONABLE_SELECT)
+        }
+    }
+
+    /// Creates an auto-populated channel select menu.
+    #[must_use]
+    pub fn channel_select(custom_id: impl Into<String>) -> Self {
+        Self {
+            custom_id: Some(custom_id.into()),
+            ..Self::new(ComponentType::CHANNEL_SELECT)
+        }
+    }
+
+    /// Creates a modal text input; wrap it in a label.
+    #[must_use]
+    pub fn text_input(style: ComponentStyle, custom_id: impl Into<String>) -> Self {
+        Self {
+            style: Some(style),
+            custom_id: Some(custom_id.into()),
+            ..Self::new(ComponentType::TEXT_INPUT)
+        }
+    }
+
+    /// Creates a message section with text displays and a button or thumbnail accessory.
+    #[must_use]
+    pub fn section(components: impl IntoIterator<Item = Component>, accessory: Component) -> Self {
+        Self {
+            components: components.into_iter().collect(),
+            accessory: Some(Box::new(accessory)),
+            ..Self::new(ComponentType::SECTION)
+        }
+    }
+
+    /// Creates a Markdown text display for a Components V2 message or modal.
+    #[must_use]
+    pub fn text_display(content: impl Into<String>) -> Self {
+        Self {
+            content: Some(content.into()),
+            ..Self::new(ComponentType::TEXT_DISPLAY)
+        }
+    }
+
+    /// Creates an image thumbnail for a section accessory.
+    #[must_use]
+    pub fn thumbnail(media: UnfurledMediaItem) -> Self {
+        Self {
+            media: Some(media),
+            ..Self::new(ComponentType::THUMBNAIL)
+        }
+    }
+
+    /// Creates a message media gallery from one to ten items.
+    #[must_use]
+    pub fn media_gallery(items: impl IntoIterator<Item = MediaGalleryItem>) -> Self {
+        Self {
+            items: items.into_iter().collect(),
+            ..Self::new(ComponentType::MEDIA_GALLERY)
+        }
+    }
+
+    /// Displays an uploaded file. The filename must match a multipart attachment.
+    #[must_use]
+    pub fn file(filename: impl AsRef<str>) -> Self {
+        Self {
+            file: Some(UnfurledMediaItem::new(format!(
+                "attachment://{}",
+                filename.as_ref()
+            ))),
+            ..Self::new(ComponentType::FILE)
+        }
+    }
+
+    /// Creates a separator with explicit divider visibility and spacing.
+    #[must_use]
+    pub fn separator(divider: bool, spacing: SeparatorSpacing) -> Self {
+        Self {
+            divider: Some(divider),
+            spacing: Some(spacing),
+            ..Self::new(ComponentType::SEPARATOR)
+        }
+    }
+
+    /// Creates a Components V2 message container.
+    #[must_use]
+    pub fn container(components: impl IntoIterator<Item = Component>) -> Self {
+        Self {
+            components: components.into_iter().collect(),
+            ..Self::new(ComponentType::CONTAINER)
+        }
+    }
+
+    /// Wraps a modal input with its user-facing label.
+    #[must_use]
+    pub fn label(label: impl Into<String>, component: Component) -> Self {
+        Self {
+            label: Some(label.into()),
+            component: Some(Box::new(component)),
+            ..Self::new(ComponentType::LABEL)
+        }
+    }
+
+    /// Creates a modal file upload input.
+    #[must_use]
+    pub fn file_upload(custom_id: impl Into<String>) -> Self {
+        Self {
+            custom_id: Some(custom_id.into()),
+            ..Self::new(ComponentType::FILE_UPLOAD)
+        }
+    }
+
+    /// Creates a modal single-choice group with two to ten options.
+    #[must_use]
+    pub fn radio_group(
+        custom_id: impl Into<String>,
+        options: impl IntoIterator<Item = ComponentOption>,
+    ) -> Self {
+        Self {
+            custom_id: Some(custom_id.into()),
+            options: options.into_iter().collect(),
+            ..Self::new(ComponentType::RADIO_GROUP)
+        }
+    }
+
+    /// Creates a modal multiple-choice group with one to ten options.
+    #[must_use]
+    pub fn checkbox_group(
+        custom_id: impl Into<String>,
+        options: impl IntoIterator<Item = ComponentOption>,
+    ) -> Self {
+        Self {
+            custom_id: Some(custom_id.into()),
+            options: options.into_iter().collect(),
+            ..Self::new(ComponentType::CHECKBOX_GROUP)
+        }
+    }
+
+    /// Creates a modal checkbox with its initial selected state.
+    #[must_use]
+    pub fn checkbox(custom_id: impl Into<String>, default: bool) -> Self {
+        Self {
+            custom_id: Some(custom_id.into()),
+            default: Some(default),
+            ..Self::new(ComponentType::CHECKBOX)
+        }
+    }
+
+    /// Sets the optional numeric component ID.
+    #[must_use]
+    pub fn with_id(mut self, id: u32) -> Self {
+        self.id = Some(id);
+        self
+    }
+
+    /// Sets placeholder text for a select or text input.
+    #[must_use]
+    pub fn with_placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = Some(placeholder.into());
+        self
+    }
+
+    /// Sets whether a supported modal input must be answered.
+    #[must_use]
+    pub fn with_required(mut self, required: bool) -> Self {
+        self.required = Some(required);
+        self
+    }
+
+    /// Sets a label description or thumbnail alt text.
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Sets spoiler visibility for a supported media component.
+    #[must_use]
+    pub fn with_spoiler(mut self, spoiler: bool) -> Self {
+        self.spoiler = Some(spoiler);
+        self
+    }
+
+    /// Sets a container accent color.
+    #[must_use]
+    pub fn with_accent_color(mut self, accent_color: u32) -> Self {
+        self.accent_color = Some(accent_color);
+        self
+    }
+
+    /// Sets a text input's initial value.
+    #[must_use]
+    pub fn with_text_value(mut self, value: impl Into<String>) -> Self {
+        self.value = Some(ComponentValue::String(value.into()));
+        self
+    }
+
+    /// Sets defaults for an auto-populated select.
+    #[must_use]
+    pub fn with_default_values(
+        mut self,
+        default_values: impl IntoIterator<Item = SelectDefaultValue>,
+    ) -> Self {
+        self.default_values = default_values.into_iter().collect();
+        self
+    }
+
+    /// Restricts a channel select to the supplied channel types.
+    #[must_use]
+    pub fn with_channel_types(
+        mut self,
+        channel_types: impl IntoIterator<Item = ChannelType>,
+    ) -> Self {
+        self.channel_types = channel_types.into_iter().collect();
+        self
+    }
+
+    /// Sets selection or file-count bounds. Discord validates the limits.
+    #[must_use]
+    pub fn with_value_bounds(mut self, min: u8, max: u8) -> Self {
+        self.min_values = Some(min);
+        self.max_values = Some(max);
+        self
+    }
+
+    /// Sets the minimum and maximum length of a text input.
+    #[must_use]
+    pub fn with_length_bounds(mut self, min: u16, max: u16) -> Self {
+        self.min_length = Some(min);
+        self.max_length = Some(max);
+        self
+    }
+
+    /// Restricts file uploads by extension or Discord's supported file categories.
+    #[must_use]
+    pub fn with_file_types(mut self, types: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.file_types = types.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Finds a component by custom ID, including nested rows, labels and accessories.
+    #[must_use]
+    pub fn find_custom_id(&self, custom_id: &str) -> Option<&Self> {
+        if self.custom_id.as_deref() == Some(custom_id) {
+            return Some(self);
+        }
+        self.components
+            .iter()
+            .chain(self.component.as_deref())
+            .chain(self.accessory.as_deref())
+            .find_map(|child| child.find_custom_id(custom_id))
+    }
+
     /// Sets a component label (up to 80 characters for a button).
     #[must_use]
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
@@ -352,6 +685,22 @@ pub struct Modal {
     pub components: Vec<Component>,
 }
 
+impl Modal {
+    /// Creates a modal with its title, custom ID and top-level components.
+    #[must_use]
+    pub fn new(
+        custom_id: impl Into<String>,
+        title: impl Into<String>,
+        components: impl IntoIterator<Item = Component>,
+    ) -> Self {
+        Self {
+            custom_id: custom_id.into(),
+            title: title.into(),
+            components: components.into_iter().collect(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -362,6 +711,126 @@ mod tests {
         SkuId,
     };
     use serde_json::json;
+
+    #[test]
+    fn select_and_modal_builders_emit_request_fields() {
+        use super::ComponentOption;
+
+        let option = || ComponentOption::new("One", "one");
+        let cases = [
+            (
+                Component::string_select("choice", [option()]).with_value_bounds(1, 2),
+                json!({"type":3,"custom_id":"choice","options":[{"label":"One","value":"one"}],
+                    "min_values":1,"max_values":2}),
+            ),
+            (
+                Component::user_select("user"),
+                json!({"type":5,"custom_id":"user"}),
+            ),
+            (
+                Component::role_select("role"),
+                json!({"type":6,"custom_id":"role"}),
+            ),
+            (
+                Component::mentionable_select("mention"),
+                json!({"type":7,"custom_id":"mention"}),
+            ),
+            (
+                Component::channel_select("channel"),
+                json!({"type":8,"custom_id":"channel"}),
+            ),
+            (
+                Component::text_input(ComponentStyle::SHORT, "name")
+                    .with_length_bounds(1, 50)
+                    .with_text_value("Initial"),
+                json!({"type":4,"style":1,"custom_id":"name","min_length":1,
+                    "max_length":50,"value":"Initial"}),
+            ),
+            (
+                Component::file_upload("upload")
+                    .with_required(false)
+                    .with_value_bounds(0, 3)
+                    .with_file_types(["image", ".pdf"]),
+                json!({"type":19,"custom_id":"upload","required":false,
+                    "min_values":0,"max_values":3,"file_types":["image",".pdf"]}),
+            ),
+            (
+                Component::radio_group("radio", [option(), ComponentOption::new("Two", "two")]),
+                json!({"type":21,"custom_id":"radio","options":[
+                    {"label":"One","value":"one"},{"label":"Two","value":"two"}]}),
+            ),
+            (
+                Component::checkbox_group("group", [option()]),
+                json!({"type":22,"custom_id":"group","options":[{"label":"One","value":"one"}]}),
+            ),
+            (
+                Component::checkbox("confirm", false),
+                json!({"type":23,"custom_id":"confirm","default":false}),
+            ),
+        ];
+        for (component, expected) in cases {
+            assert_eq!(
+                serde_json::to_value(component).expect("component"),
+                expected
+            );
+        }
+        let modal = Modal::new(
+            "form",
+            "Form",
+            [Component::label(
+                "Confirm",
+                Component::checkbox("confirm", true),
+            )],
+        );
+        assert_eq!(
+            serde_json::to_value(modal).expect("modal"),
+            json!({"custom_id":"form","title":"Form","components":[
+                {"type":18,"label":"Confirm","component":{
+                    "type":23,"custom_id":"confirm","default":true}}]})
+        );
+    }
+
+    #[test]
+    fn components_v2_builders_emit_nested_layout() {
+        use super::{MediaGalleryItem, SeparatorSpacing, UnfurledMediaItem};
+        use crate::model::MessageFlags;
+
+        let layout = Component::container([
+            Component::section(
+                [Component::text_display("Hello")],
+                Component::thumbnail(UnfurledMediaItem::new("https://example.com/a.png")),
+            ),
+            Component::separator(false, SeparatorSpacing::SMALL),
+            Component::media_gallery([MediaGalleryItem::new(UnfurledMediaItem::new(
+                "attachment://image.png",
+            ))]),
+            Component::file("report.pdf").with_spoiler(true),
+            Component::action_row([
+                Component::button(InteractiveButtonStyle::Primary, "ok").with_label("OK")
+            ]),
+        ])
+        .with_accent_color(0x123456);
+        assert!(layout.find_custom_id("ok").is_some());
+        assert!(layout.find_custom_id("missing").is_none());
+        let request = CreateMessage {
+            flags: Some(MessageFlags::IS_COMPONENTS_V2),
+            components: vec![layout],
+            ..CreateMessage::default()
+        };
+        let wire = serde_json::to_value(request).expect("message");
+        assert_eq!(wire["flags"], 32768);
+        assert_eq!(
+            wire["components"],
+            json!([{"type":17,"accent_color":1193046,"components":[
+                {"type":9,"components":[{"type":10,"content":"Hello"}],
+                    "accessory":{"type":11,"media":{"url":"https://example.com/a.png"}}},
+                {"type":14,"divider":false,"spacing":1},
+                {"type":12,"items":[{"media":{"url":"attachment://image.png"}}]},
+                {"type":13,"file":{"url":"attachment://report.pdf"},"spoiler":true},
+                {"type":1,"components":[{"type":2,"style":1,"custom_id":"ok","label":"OK"}]}
+            ]}])
+        );
+    }
 
     #[test]
     fn interactive_button_styles_serialize_with_custom_ids() {
