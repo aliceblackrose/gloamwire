@@ -10,8 +10,6 @@
 mod close;
 mod crypto;
 mod dave;
-#[cfg(feature = "dave-davey")]
-mod dave_davey;
 mod dave_lifecycle;
 mod dave_session;
 mod driver;
@@ -33,8 +31,6 @@ pub use dave::{
     DAVE_READY_FOR_TRANSITION_OPCODE, DAVE_WELCOME_OPCODE, DaveGatewayCommand, DaveParticipantSet,
     DaveProposalOperation, DaveProtocolEvent, DaveProvider, DaveProviderError,
 };
-#[cfg(feature = "dave-davey")]
-pub use dave_davey::DaveyProvider;
 pub use dave_lifecycle::DaveProviderLifecycle;
 pub use dave_session::{DaveVoiceSession, VoiceReceivedOpus};
 pub use driver::{VoiceCommand, VoiceCommandSender, VoiceDriver};

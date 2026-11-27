@@ -24,13 +24,13 @@ The `1.0.1` release target includes:
 - Optional normalized Gateway state cache with direct typed-event synchronization and bounded message retention.
 - Capability feature flags for model-only builds, transport, Gateway compression codecs, TLS, cache, tracing, voice, and DAVE.
 - Discord Voice Gateway v8 rendezvous/session primitives, UDP discovery, RTP sequencing, Opus frame boundaries/pacing, speaking lifecycle, and RTP-size AES-256-GCM/XChaCha20-Poly1305 transport encryption behind the `voice` feature.
-- Backend-neutral DAVE/E2EE lifecycle and media-frame APIs plus an optional pure-Rust `davey` MLS backend through `dave-davey`.
+- Backend-neutral DAVE/E2EE lifecycle and media-frame APIs for application-supplied MLS providers.
 - Local HTTP/Gateway/voice protocol fixtures covering rate limits, reconnect/Resume, UDP negotiation, and voice recovery behavior.
 - Graceful client, voice-session, local shard-manager, and distributed shard-manager shutdown.
 
 Gloamwire deliberately does **not** embed a command framework. The separate [Gloam Macro Commands](https://github.com/aliceblackrose/gloam-macro-commands) project provides a slash-command-only framework on top of Gloamwire while keeping protocol and transport concerns in this crate.
 
-Voice is opt-in. The `voice` feature exposes the low-level provider-neutral transport and DAVE integration boundary; `dave-davey` adds Gloamwire's managed pure-Rust DAVE/MLS backend for normal E2EE-eligible Discord voice sessions.
+Voice is opt-in. The `voice` feature exposes the low-level provider-neutral transport and DAVE integration boundary. A separately vetted DAVE provider is required for managed end-to-end encrypted voice sessions.
 
 ## Requirements
 
@@ -51,7 +51,6 @@ Gloamwire's default feature set preserves the complete non-voice transport surfa
 | `cache` | Optional normalized Gateway state cache. Implies `transport`. |
 | `tracing` | Credential-safe structured transport instrumentation. Implies `transport`. |
 | `voice` | Voice Gateway v8, UDP discovery, RTP/Opus primitives, RTP-size transport AEAD, and backend-neutral DAVE lifecycle/media boundaries. Implies `transport` and Rustls TLS. |
-| `dave-davey` | Managed pure-Rust DAVE/MLS provider backed by `davey`. Implies `voice`. |
 
 For a model-only dependency with no HTTP, WebSocket, TLS, or compression stack:
 
@@ -72,13 +71,6 @@ For low-level voice transport with an application-supplied DAVE provider:
 ```toml
 [dependencies]
 gloamwire = { version = "1.0.1", features = ["voice"] }
-```
-
-For Gloamwire's managed pure-Rust DAVE backend:
-
-```toml
-[dependencies]
-gloamwire = { version = "1.0.1", features = ["dave-davey"] }
 ```
 
 `GatewayCompression::ZlibStream` and `GatewayCompression::ZstdStream` remain available in the public API across transport builds. Attempting to construct a Gateway connection with a disabled codec returns a `GatewayCompression` error that names the required Cargo feature.
@@ -128,7 +120,7 @@ loop {
 
 ## Voice transport and DAVE
 
-**Security release blocker (2026-11-27):** The optional `dave-davey` backend currently resolves `davey 0.2.0` with transitive cryptographic dependencies flagged by RustSec. The full dependency audit reports nine vulnerabilities (RUSTSEC-2026-0387, -0209, -0211, -0124, -0330, -0331, -0212, -0208, -0207). Two advisories have no fixed release in the affected crate family. Do not deploy this backend in security-sensitive production environments until a compatible upstream remediation has been verified with a clean audit and interoperability tests. The provider-neutral voice interface remains available for independently vetted providers. These advisories concern the resolved dependency graph; runtime reachability of every affected code path is not established. CI intentionally retains the failing security gate without advisory exemptions.
+**Security and migration notice (2026-11-27):** Gloamwire 1.0.1 removes the bundled `dave-davey` feature, `DaveyProvider`, and `DaveVoiceSession::connect_davey`. The previous backend (`davey 0.2.0`) pulled in nine RustSec vulnerabilities (RUSTSEC-2026-0387, -0209, -0211, -0124, -0330, -0331, -0212, -0208, -0207), including two with no fixed release in the affected crate family. Updating the other direct dependencies did not resolve these advisories. The old implementation and its backend-specific tests remain in Git history at [30aba01](https://github.com/aliceblackrose/gloamwire/tree/30aba01404e5b8a9a0fcd4d994e25b47cbf6c5fd); do not deploy that backend until its dependencies are remediated. This is a breaking change to the unreleased feature, not a patch to the vulnerable upstream libraries. No advisories are ignored and CI audits the complete remaining dependency graph.
 
 
 Enable `voice` to access the low-level Voice Gateway v8, UDP discovery, RTP sequencing, Opus boundaries, and transport-encryption primitives:
@@ -160,7 +152,7 @@ let transport_crypto = VoiceTransportCrypto::from_session_description(&descripti
 
 The transport AEAD layer is distinct from DAVE. DAVE transforms complete encoded Opus frames end-to-end between call participants; RTP-size AEAD remains the authenticated transport layer between the client and Discord's voice SFU.
 
-With `dave-davey`, `DaveVoiceSession::connect_davey(...)` creates the managed pure-Rust DAVE provider, advertises its supported protocol version, and composes the media pipeline as encoded Opus → DAVE → RTP → transport AEAD → UDP. `DaveVoiceSession::next_event()` applies participant and MLS transition events, `send_opus_frame()` and `recv_opus()` apply both encryption layers, and `finish_speaking()` flushes Discord's five canonical silence frames before clearing the Voice Gateway speaking state.
+To establish a managed session, implement `DaveProvider` and `DaveProviderLifecycle` using a separately vetted DAVE backend and call `DaveVoiceSession::connect(config, provider)`. Configure `VoiceGatewayConfig::with_min_dave_protocol_version(1)` when end-to-end encryption is required. The provider must implement real DAVE/MLS cryptography; there is no bundled fallback to plaintext. The media pipeline remains encoded Opus → DAVE → RTP → transport AEAD → UDP. `DaveVoiceSession::next_event()` applies participant and MLS transition events, `send_opus_frame()` and `recv_opus()` apply both encryption layers, and `finish_speaking()` flushes Discord's five canonical silence frames before clearing the Voice Gateway speaking state.
 
 Applications should continuously drive the managed session's Voice Gateway events while connected so participant changes and DAVE epoch transitions are processed promptly. The backend-neutral `DaveProviderLifecycle` interface remains available when an application wants to supply a different DAVE implementation.
 

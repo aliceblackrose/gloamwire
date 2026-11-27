@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-#[cfg(feature = "dave-davey")]
-use crate::model::ChannelId;
 use crate::model::UserId;
 
 use super::{
@@ -341,20 +339,6 @@ where
     pub async fn shutdown(&mut self) -> VoiceResult<()> {
         self.protocol_failed = true;
         self.session.shutdown().await
-    }
-}
-
-#[cfg(feature = "dave-davey")]
-impl DaveVoiceSession<super::DaveyProvider> {
-    /// Connects a managed voice session using Gloamwire's optional pure-Rust
-    /// `davey` backend. `channel_id` is the voice channel snowflake and becomes
-    /// the MLS group ID.
-    pub async fn connect_davey(
-        info: super::VoiceConnectionInfo,
-        channel_id: ChannelId,
-    ) -> VoiceResult<Self> {
-        let provider = super::DaveyProvider::new(info.user_id, channel_id);
-        Self::connect(VoiceGatewayConfig::new(info), provider).await
     }
 }
 
