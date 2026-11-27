@@ -61,6 +61,7 @@ impl SharedRateLimits {
 struct RateLimitState {
     global_requests: VecDeque<Instant>,
     global_until: Option<Instant>,
+    ambiguous_429s: usize,
     route_buckets: HashMap<String, String>,
     buckets: HashMap<RateLimitBucketKey, BucketState>,
 }
@@ -84,7 +85,34 @@ struct BucketState {
     cooldown_until: Option<Instant>,
 }
 
+/// Cancellation-safe provisional admission barrier for an unclassified 429.
+pub(crate) struct Ambiguous429<'a> {
+    limiter: &'a RateLimiter,
+    classified: bool,
+}
+
+impl Ambiguous429<'_> {
+    pub(crate) fn classified(mut self) {
+        self.classified = true;
+    }
+}
+
+impl Drop for Ambiguous429<'_> {
+    fn drop(&mut self) {
+        let mut state = self.limiter.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.ambiguous_429s -= 1;
+        if !self.classified {
+            state.global_until = later(state.global_until, Instant::now() + Duration::from_secs(1));
+        }
+    }
+}
+
 impl RateLimiter {
+    pub(crate) fn begin_ambiguous_429(&self) -> Ambiguous429<'_> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).ambiguous_429s += 1;
+        Ambiguous429 { limiter: self, classified: false }
+    }
+
     pub(crate) fn with_shared(shared: Arc<SharedRateLimits>) -> Self {
         Self {
             shared,
@@ -134,6 +162,9 @@ impl RateLimiter {
         }
 
         let mut wait_until = state.global_until.filter(|deadline| *deadline > now);
+        if state.ambiguous_429s > 0 {
+            wait_until = later(wait_until, now + Duration::from_millis(50));
+        }
         if let Some(deadline) = self.shared.cooldown(route.resource_major(), now) {
             wait_until = later(wait_until, deadline);
         }
@@ -179,7 +210,9 @@ impl RateLimiter {
     /// A limiter with a live bucket/global deadline must not be evicted.
     pub(crate) fn has_live_cooldown(&self, now: Instant) -> bool {
         let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.global_until.is_some_and(|until| until > now)
+        state.ambiguous_429s > 0
+            || state.global_requests.back().is_some_and(|time| now.saturating_duration_since(*time) < GLOBAL_WINDOW)
+            || state.global_until.is_some_and(|until| until > now)
             || state.buckets.values().any(|bucket| {
                 bucket.reset_at > now || bucket.cooldown_until.is_some_and(|until| until > now)
             })
@@ -353,6 +386,17 @@ mod tests {
         headers.insert("x-ratelimit-bucket", "new".parse().unwrap());
         limiter.update(&route, StatusCode::OK, &headers, None, false);
         assert!(limiter.try_acquire(&route).is_some());
+    }
+
+    #[test]
+    fn ambiguous_global_rate_limit_blocks_other_routes_until_classified() {
+        let limiter = RateLimiter::default();
+        let guard = limiter.begin_ambiguous_429();
+        assert!(limiter.try_acquire(&Route::gateway_bot()).is_some());
+        guard.classified();
+        assert!(limiter.try_acquire(&Route::gateway_bot()).is_none());
+        drop(limiter.begin_ambiguous_429());
+        assert!(limiter.try_acquire(&Route::current_user()).is_some());
     }
 
     #[test]

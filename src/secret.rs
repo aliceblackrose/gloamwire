@@ -51,3 +51,18 @@ pub(crate) fn secure_websocket_endpoint(endpoint: &str, allow_loopback: bool) ->
     url.scheme() == "ws" && allow_loopback
         && url.host_str().is_some_and(|host| host.trim_matches(['[', ']']).parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()))
 }
+
+#[cfg(test)]
+mod endpoint_tests {
+    use super::secure_websocket_endpoint;
+
+    #[test]
+    fn plaintext_requires_explicit_numeric_loopback() {
+        assert!(secure_websocket_endpoint("wss://gateway.discord.gg", false));
+        assert!(!secure_websocket_endpoint("ws://127.0.0.1:80", false));
+        assert!(secure_websocket_endpoint("ws://127.0.0.1:80", true));
+        assert!(secure_websocket_endpoint("ws://[::1]:80", true));
+        assert!(!secure_websocket_endpoint("ws://example.com", true));
+        assert!(!secure_websocket_endpoint("wss://secret@example.com", true));
+    }
+}

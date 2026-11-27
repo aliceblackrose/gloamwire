@@ -124,7 +124,7 @@ impl UploadFile {
         }
     }
 
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.filename.is_empty() || self.filename.chars().any(char::is_control) {
             return Err(Error::InvalidRestRequest(
                 "upload filename is empty or contains control characters".into(),
@@ -157,7 +157,7 @@ impl UploadFile {
     }
 }
 
-pub(crate) async fn multipart_form(payload_json: String, files: &[UploadFile]) -> Result<Form> {
+pub(crate) fn validate_uploads(files: &[UploadFile]) -> Result<()> {
     let mut ids = HashSet::new();
     for file in files {
         file.validate()?;
@@ -167,6 +167,11 @@ pub(crate) async fn multipart_form(payload_json: String, files: &[UploadFile]) -
             ));
         }
     }
+    Ok(())
+}
+
+pub(crate) async fn multipart_form(payload_json: String, files: &[UploadFile]) -> Result<Form> {
+    validate_uploads(files)?;
     let mut form = Form::new().text("payload_json", payload_json);
 
     for file in files {
