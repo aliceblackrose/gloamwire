@@ -132,3 +132,36 @@ fn ready_from_other_shard_preserves_cached_guild() {
         .expect("ready");
     assert!(cache.guild(GuildId::new(1)).is_some());
 }
+
+#[test]
+fn member_update_preserves_omitted_timeout_and_clears_explicit_null() {
+    use gloamwire::model::UserId;
+    let mut cache = Cache::default();
+    let dispatch = |name: &str, data: serde_json::Value| {
+        DispatchEvent { name: name.into(), sequence: 1, data }
+    };
+    cache.update_dispatch(&dispatch("GUILD_CREATE", json!({
+        "id":"1","name":"guild","owner_id":"2","member_count":1,
+        "members":[{"user":{"id":"2","username":"user"},"communication_disabled_until":"future"}]
+    }))).expect("guild");
+    cache.update_dispatch(&dispatch("GUILD_MEMBER_UPDATE", json!({
+        "guild_id":"1","user":{"id":"2","username":"user"},"nick":"new"
+    }))).expect("update");
+    assert_eq!(cache.member(GuildId::new(1), UserId::new(2)).unwrap().communication_disabled_until.as_deref(), Some("future"));
+    cache.update_dispatch(&dispatch("GUILD_MEMBER_UPDATE", json!({
+        "guild_id":"1","user":{"id":"2","username":"user"},"communication_disabled_until":null
+    }))).expect("clear");
+    assert!(cache.member(GuildId::new(1), UserId::new(2)).unwrap().communication_disabled_until.is_none());
+}
+
+#[test]
+fn unavailable_guild_and_initial_presence_are_supported() {
+    use gloamwire::model::UserId;
+    let mut cache = Cache::default();
+    cache.update_dispatch(&DispatchEvent { name:"GUILD_CREATE".into(), sequence:1,
+        data:json!({"id":"1","unavailable":true}) }).expect("unavailable");
+    assert!(cache.is_guild_unavailable(GuildId::new(1)));
+    cache.update_dispatch(&DispatchEvent { name:"GUILD_CREATE".into(), sequence:2,
+        data:json!({"id":"1","name":"guild","owner_id":"2","presences":[{"user":{"id":"2"},"status":"online"}]}) }).expect("available");
+    assert!(cache.presence(GuildId::new(1),UserId::new(2)).is_some());
+}

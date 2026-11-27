@@ -52,6 +52,9 @@ pub struct Guild {
     pub threads: Vec<Channel>,
     #[serde(default)]
     pub members: Vec<GuildMember>,
+    /// Gateway-only initial presence payloads (guild ID may be omitted).
+    #[serde(default)]
+    pub presences: Vec<Value>,
     #[serde(default)]
     pub voice_states: Vec<VoiceState>,
     #[serde(default)]

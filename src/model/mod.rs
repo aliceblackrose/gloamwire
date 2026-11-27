@@ -14,6 +14,7 @@ mod invite;
 mod member;
 mod message;
 mod monetization;
+mod patch;
 mod permissions;
 mod poll;
 mod presence;
@@ -80,6 +81,7 @@ pub use message::{
 pub use monetization::{
     Entitlement, EntitlementType, Sku, SkuFlags, SkuType, Subscription, SubscriptionStatus,
 };
+pub use patch::Patch;
 pub use permissions::{
     PermissionOverwrite, PermissionOverwriteType, Permissions, compute_base_permissions,
     compute_channel_permissions,
