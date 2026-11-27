@@ -125,9 +125,9 @@ impl DaveProtocolEvent {
                         epoch: data.epoch,
                     })
                 }
-                opcode if is_known_dave_opcode(opcode) => Err(
-                    VoiceError::Protocol("invalid inbound DAVE JSON opcode or framing".into()),
-                ),
+                opcode if is_known_dave_opcode(opcode) => Err(VoiceError::Protocol(
+                    "invalid inbound DAVE JSON opcode or framing".into(),
+                )),
                 _ => Ok(Self::Unknown(event.clone())),
             },
             DaveGatewayEvent::Binary {
@@ -161,9 +161,9 @@ impl DaveProtocolEvent {
                         welcome,
                     })
                 }
-                opcode if is_known_dave_opcode(opcode) => Err(
-                    VoiceError::Protocol("invalid inbound DAVE binary opcode or framing".into()),
-                ),
+                opcode if is_known_dave_opcode(opcode) => Err(VoiceError::Protocol(
+                    "invalid inbound DAVE binary opcode or framing".into(),
+                )),
                 _ => Ok(Self::Unknown(event.clone())),
             },
         }
