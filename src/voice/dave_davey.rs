@@ -140,7 +140,9 @@ impl DaveyProvider {
                 DaveProviderError::new(format!("failed to execute DAVE transition: {error}"))
             })?
         {
-            return Err(DaveProviderError::new("DAVE backend did not execute prepared transition"));
+            return Err(DaveProviderError::new(
+                "DAVE backend did not execute prepared transition",
+            ));
         }
         self.pending_transitions.remove(&transition_id);
         let old_version = self.active_protocol_version;
@@ -173,15 +175,19 @@ impl DaveyProvider {
             Ok(false) => Ok(Vec::new()),
             Ok(true) => {
                 let version = self.prepared_protocol_version;
-                session.prepare_transition(transition_id, version).map_err(|error| {
-                    DaveProviderError::new(format!("failed to prepare DAVE keys: {error}"))
-                })?;
+                session
+                    .prepare_transition(transition_id, version)
+                    .map_err(|error| {
+                        DaveProviderError::new(format!("failed to prepare DAVE keys: {error}"))
+                    })?;
                 self.pending_transitions.insert(transition_id, version);
                 if transition_id == 0 {
                     self.execute_transition(transition_id)?;
                     return Ok(Vec::new());
                 }
-                Ok(vec![DaveGatewayCommand::ReadyForTransition { transition_id }])
+                Ok(vec![DaveGatewayCommand::ReadyForTransition {
+                    transition_id,
+                }])
             }
             Err(_error) => {
                 let mut commands = vec![DaveGatewayCommand::InvalidCommitWelcome { transition_id }];
@@ -256,7 +262,9 @@ impl DaveProvider for DaveyProvider {
                     session
                         .prepare_transition(*transition_id, *protocol_version)
                         .map_err(|error| {
-                            DaveProviderError::new(format!("failed to prepare DAVE transition: {error}"))
+                            DaveProviderError::new(format!(
+                                "failed to prepare DAVE transition: {error}"
+                            ))
                         })?;
                 } else if *protocol_version != 0 {
                     return Err(DaveProviderError::new("DAVE transition has no MLS session"));

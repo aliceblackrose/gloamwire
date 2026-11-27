@@ -156,11 +156,13 @@ impl VoiceGatewayConnection {
         let deadline = Instant::now() + NEGOTIATION_TIMEOUT;
         let ready = loop {
             if pending.len() >= MAX_PENDING_EVENTS {
-                return Err(VoiceError::Protocol("Voice Ready event buffer exceeded".into()));
+                return Err(VoiceError::Protocol(
+                    "Voice Ready event buffer exceeded".into(),
+                ));
             }
-            match negotiation_inbound(
-                &mut socket, &mut heartbeat, sequence, &mut sent, deadline,
-            ).await? {
+            match negotiation_inbound(&mut socket, &mut heartbeat, sequence, &mut sent, deadline)
+                .await?
+            {
                 Inbound::Json(envelope) => {
                     update_sequence(&mut sequence, envelope.sequence);
                     if envelope.opcode == READY_OPCODE {
@@ -362,11 +364,13 @@ impl VoiceGatewayConnection {
         let deadline = Instant::now() + NEGOTIATION_TIMEOUT;
         loop {
             if buffered.len() >= MAX_PENDING_EVENTS {
-                return Err(VoiceError::Protocol("Voice Resume event buffer exceeded".into()));
+                return Err(VoiceError::Protocol(
+                    "Voice Resume event buffer exceeded".into(),
+                ));
             }
-            match negotiation_inbound(
-                &mut socket, &mut heartbeat, sequence, &mut sent, deadline,
-            ).await? {
+            match negotiation_inbound(&mut socket, &mut heartbeat, sequence, &mut sent, deadline)
+                .await?
+            {
                 Inbound::Json(envelope) => {
                     update_sequence(&mut sequence, envelope.sequence);
                     if envelope.opcode == RESUMED_OPCODE {
@@ -602,7 +606,9 @@ async fn next_inbound(socket: &mut VoiceSocket) -> VoiceResult<Inbound> {
         match message {
             Message::Text(text) => {
                 if text.len() > MAX_INBOUND_BYTES {
-                    return Err(VoiceError::Protocol("oversized Voice Gateway message".into()));
+                    return Err(VoiceError::Protocol(
+                        "oversized Voice Gateway message".into(),
+                    ));
                 }
                 let envelope = serde_json::from_str::<VoiceEnvelope>(text.as_str())?;
                 return Ok(Inbound::Json(NormalizedEnvelope {
@@ -613,7 +619,9 @@ async fn next_inbound(socket: &mut VoiceSocket) -> VoiceResult<Inbound> {
             }
             Message::Binary(bytes) => {
                 if bytes.len() > MAX_INBOUND_BYTES {
-                    return Err(VoiceError::Protocol("oversized Voice Gateway message".into()));
+                    return Err(VoiceError::Protocol(
+                        "oversized Voice Gateway message".into(),
+                    ));
                 }
                 if bytes.len() < 3 {
                     return Err(VoiceError::Protocol(

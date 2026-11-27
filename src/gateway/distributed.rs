@@ -12,8 +12,7 @@ use crate::{
 };
 
 use super::{
-    DistributedShardCoordinator, GatewayConfig, GatewayConnection,
-    GatewayCoordinationError,
+    DistributedShardCoordinator, GatewayConfig, GatewayConnection, GatewayCoordinationError,
     GatewayIdentifyCoordinator, GatewayIntents, GatewayReconnectStrategy, ShardCount, ShardEvent,
     ShardId,
 };
@@ -395,7 +394,9 @@ where
         tokio::time::sleep_until(renew_at).await;
         let started = Instant::now();
         if started >= deadline {
-            return Err(Error::GatewayProtocol("distributed shard lease expired".into()));
+            return Err(Error::GatewayProtocol(
+                "distributed shard lease expired".into(),
+            ));
         }
         let renewed = tokio::time::timeout_at(
             deadline,

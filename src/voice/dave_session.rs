@@ -161,7 +161,8 @@ where
         };
 
         if let DaveProtocolEvent::ClientDisconnect { user_id } = &dave_event {
-            self.replay.retain(|ssrc, _| self.ssrc_users.get(ssrc) != Some(user_id));
+            self.replay
+                .retain(|ssrc, _| self.ssrc_users.get(ssrc) != Some(user_id));
             self.ssrc_users.retain(|_, mapped| mapped != user_id);
         }
 
@@ -201,7 +202,9 @@ where
     /// and the connected UDP socket.
     pub async fn send_opus_frame(&mut self, frame: VoiceOpusFrame<'_>) -> VoiceResult<usize> {
         if self.protocol_failed {
-            return Err(VoiceError::Protocol("DAVE control state failed; restart voice session".into()));
+            return Err(VoiceError::Protocol(
+                "DAVE control state failed; restart voice session".into(),
+            ));
         }
         let media = if frame.payload() == OPUS_SILENCE_FRAME {
             frame.payload().to_vec()
@@ -227,10 +230,19 @@ where
         let header = decode_audio_header(&decrypted.header)?;
         let sender = self.ssrc_users.get(&header.ssrc).copied();
         if !self.replay.contains_key(&header.ssrc) && self.replay.len() >= 4096 {
-            return Err(VoiceError::Protocol("voice replay-window capacity exceeded".into()));
+            return Err(VoiceError::Protocol(
+                "voice replay-window capacity exceeded".into(),
+            ));
         }
-        if !self.replay.entry(header.ssrc).or_default().accept(decrypted.nonce) {
-            return Err(VoiceError::InvalidRtpPacket("duplicate or stale RTP nonce".into()));
+        if !self
+            .replay
+            .entry(header.ssrc)
+            .or_default()
+            .accept(decrypted.nonce)
+        {
+            return Err(VoiceError::InvalidRtpPacket(
+                "duplicate or stale RTP nonce".into(),
+            ));
         }
 
         let payload = if decrypted.media == OPUS_SILENCE_FRAME {

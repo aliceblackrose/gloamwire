@@ -189,7 +189,8 @@ impl Cache {
                     }
                     if let Ok(presence) = serde_json::from_value::<PresenceUpdate>(raw) {
                         self.merge_partial_user(&presence);
-                        self.presences.insert((event.guild_id, presence.user.id), presence);
+                        self.presences
+                            .insert((event.guild_id, presence.user.id), presence);
                     }
                 }
             }
@@ -287,14 +288,18 @@ impl Cache {
                 self.remove_guild(guild);
             }
             if event.shard_id.get() == 0 {
-                let channels: Vec<_> = self.channels.values()
+                let channels: Vec<_> = self
+                    .channels
+                    .values()
                     .filter(|channel| channel.guild_id.is_none())
                     .map(|channel| channel.id)
                     .collect();
                 for channel in channels {
                     self.remove_channel(channel);
                 }
-                let messages: Vec<_> = self.messages.values()
+                let messages: Vec<_> = self
+                    .messages
+                    .values()
                     .filter(|message| message.guild_id.is_none())
                     .map(|message| message.id)
                     .collect();
@@ -304,16 +309,20 @@ impl Cache {
             }
             self.current_user_id = Some(ready.user.id);
             self.users.insert(ready.user.id, ready.user.clone());
-            self.unavailable_guilds.extend(ready.guilds.iter().map(|guild| guild.id));
+            self.unavailable_guilds
+                .extend(ready.guilds.iter().map(|guild| guild.id));
         } else {
-            if self.shard_sequences.get(&event.shard_id)
+            if self
+                .shard_sequences
+                .get(&event.shard_id)
                 .is_some_and(|sequence| *sequence >= dispatch.sequence)
             {
                 return Ok(None);
             }
             self.apply_checked(&typed)?;
         }
-        self.shard_sequences.insert(event.shard_id, dispatch.sequence);
+        self.shard_sequences
+            .insert(event.shard_id, dispatch.sequence);
         Ok(Some(typed))
     }
 

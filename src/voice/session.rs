@@ -79,7 +79,9 @@ impl VoiceSession {
         let description = tokio::time::timeout(timeout, async {
             loop {
                 if pending.len() >= 32 {
-                    return Err(super::VoiceError::Protocol("voice session event buffer exceeded".into()));
+                    return Err(super::VoiceError::Protocol(
+                        "voice session event buffer exceeded".into(),
+                    ));
                 }
                 match gateway.next_event().await? {
                     VoiceGatewayEvent::SessionDescription(description) => break Ok(description),
