@@ -358,7 +358,8 @@ mod tests {
         Component, ComponentStyle, ComponentType, ComponentValue, InteractiveButtonStyle, Modal,
     };
     use crate::model::{
-        CreateMessage, EditMessage, InteractionMessageData, InteractionResponse, PartialEmoji, SkuId,
+        CreateMessage, EditMessage, InteractionMessageData, InteractionResponse, PartialEmoji,
+        SkuId,
     };
     use serde_json::json;
 
