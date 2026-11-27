@@ -115,64 +115,60 @@ impl RateLimiter {
     }
 
     async fn try_acquire(&self, route: &Route) -> Option<Instant> {
-        let wait_until = {
-            let mut state = self.state.lock().await;
-            let now = Instant::now();
+        let mut state = self.state.lock().await;
+        let now = Instant::now();
 
-            while state
-                .global_requests
-                .front()
-                .is_some_and(|instant| now.duration_since(*instant) >= GLOBAL_WINDOW)
-            {
-                state.global_requests.pop_front();
+        while state
+            .global_requests
+            .front()
+            .is_some_and(|instant| now.duration_since(*instant) >= GLOBAL_WINDOW)
+        {
+            state.global_requests.pop_front();
+        }
+
+        if state.buckets.len() > 4096 {
+            state.buckets.retain(|_, bucket| {
+                now.saturating_duration_since(bucket.reset_at) < Duration::from_secs(60)
+            });
+        }
+
+        let mut wait_until = state.global_until.filter(|deadline| *deadline > now);
+        if let Some(deadline) = self.shared.cooldown(route.resource_major(), now) {
+            wait_until = later(wait_until, deadline);
+        }
+
+        if !route.global_exempt()
+            && state.global_requests.len() >= GLOBAL_REQUEST_LIMIT
+            && let Some(oldest) = state.global_requests.front()
+        {
+            wait_until = later(wait_until, *oldest + GLOBAL_WINDOW);
+        }
+
+        let route_identity = route.identity();
+        let bucket_key = state
+            .route_buckets
+            .get(&route_identity)
+            .map(|hash| bucket_key(hash, route.major()))
+            .unwrap_or_else(|| provisional_bucket_key(&route_identity, route.major()));
+
+        if let Some(bucket) = state.buckets.get(&bucket_key)
+            && bucket.remaining == 0
+            && bucket.reset_at > now
+        {
+            wait_until = later(wait_until, bucket.reset_at);
+        }
+
+        if wait_until.is_none() {
+            if !route.global_exempt() {
+                state.global_requests.push_back(now);
             }
-
-            if state.buckets.len() > 4096 {
-                state.buckets.retain(|_, bucket| {
-                    now.saturating_duration_since(bucket.reset_at) < Duration::from_secs(60)
-                });
-            }
-
-            let mut wait_until = state.global_until.filter(|deadline| *deadline > now);
-            if let Some(deadline) = self.shared.cooldown(route.resource_major(), now) {
-                wait_until = later(wait_until, deadline);
-            }
-
-            if !route.global_exempt()
-                && state.global_requests.len() >= GLOBAL_REQUEST_LIMIT
-                && let Some(oldest) = state.global_requests.front()
-            {
-                wait_until = later(wait_until, *oldest + GLOBAL_WINDOW);
-            }
-
-            let route_identity = route.identity();
-            let bucket_key = state
-                .route_buckets
-                .get(&route_identity)
-                .map(|hash| bucket_key(hash, route.major()))
-                .unwrap_or_else(|| provisional_bucket_key(&route_identity, route.major()));
-
-            if let Some(bucket) = state.buckets.get(&bucket_key)
-                && bucket.remaining == 0
+            if let Some(bucket) = state.buckets.get_mut(&bucket_key)
                 && bucket.reset_at > now
+                && bucket.remaining > 0
             {
-                wait_until = later(wait_until, bucket.reset_at);
+                bucket.remaining -= 1;
             }
-
-            if wait_until.is_none() {
-                if !route.global_exempt() {
-                    state.global_requests.push_back(now);
-                }
-                if let Some(bucket) = state.buckets.get_mut(&bucket_key)
-                    && bucket.reset_at > now
-                    && bucket.remaining > 0
-                {
-                    bucket.remaining -= 1;
-                }
-            }
-
-            wait_until
-        };
+        }
 
         wait_until
     }

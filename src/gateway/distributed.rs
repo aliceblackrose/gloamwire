@@ -239,16 +239,16 @@ where
             let budget = budget.clone();
             let shutdown_rx = shutdown.subscribe();
 
-            tasks.push(tokio::spawn(run_shard_supervisor(
-                config,
+            tasks.push(tokio::spawn(run_shard_supervisor(ShardSupervisor {
+                gateway_config: config,
                 shard_id,
                 owner_id,
                 coordinator,
                 distributed,
                 event_tx,
-                shutdown_rx,
+                shutdown: shutdown_rx,
                 budget,
-            )));
+            })));
         }
         drop(event_tx);
 
@@ -308,18 +308,31 @@ where
     }
 }
 
-async fn run_shard_supervisor<C>(
+struct ShardSupervisor<C> {
     gateway_config: GatewayConfig,
     shard_id: ShardId,
     owner_id: Arc<str>,
     coordinator: Arc<C>,
     distributed: DistributedShardConfig,
     event_tx: mpsc::Sender<QueuedEvent>,
-    mut shutdown: watch::Receiver<bool>,
+    shutdown: watch::Receiver<bool>,
     budget: crate::queue_budget::Budget,
-) where
+}
+
+async fn run_shard_supervisor<C>(supervisor: ShardSupervisor<C>)
+where
     C: DistributedShardCoordinator + 'static,
 {
+    let ShardSupervisor {
+        gateway_config,
+        shard_id,
+        owner_id,
+        coordinator,
+        distributed,
+        event_tx,
+        mut shutdown,
+        budget,
+    } = supervisor;
     loop {
         if shutdown_requested(&shutdown) {
             return;
