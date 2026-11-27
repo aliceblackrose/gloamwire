@@ -189,16 +189,15 @@ impl std::fmt::Debug for DaveGatewayEvent {
 impl std::fmt::Debug for VoiceGatewayEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SessionDescription(description) => {
-                f.debug_tuple("SessionDescription").field(description).finish()
-            }
+            Self::SessionDescription(description) => f
+                .debug_tuple("SessionDescription")
+                .field(description)
+                .finish(),
             Self::Speaking(event) => f.debug_tuple("Speaking").field(event).finish(),
             Self::Resumed => f.write_str("Resumed"),
             Self::HeartbeatAck => f.write_str("HeartbeatAck"),
             Self::ClientsConnect(_) => f.debug_struct("ClientsConnect").finish_non_exhaustive(),
-            Self::ClientDisconnect(_) => {
-                f.debug_struct("ClientDisconnect").finish_non_exhaustive()
-            }
+            Self::ClientDisconnect(_) => f.debug_struct("ClientDisconnect").finish_non_exhaustive(),
             Self::Dave(event) => f.debug_tuple("Dave").field(event).finish(),
             Self::Unknown {
                 opcode, sequence, ..

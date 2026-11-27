@@ -234,7 +234,10 @@ impl Cache {
             return;
         }
         let limits = self.config.limits;
-        let guild_count = self.guilds.len().saturating_add(self.unavailable_guilds.len());
+        let guild_count = self
+            .guilds
+            .len()
+            .saturating_add(self.unavailable_guilds.len());
         let entry_count = [
             guild_count,
             self.channels.len(),
@@ -1242,8 +1245,9 @@ fn payload_estimate<T: serde::Serialize>(value: &T) -> usize {
 fn event_charge(event: &TypedDispatchEvent) -> usize {
     use TypedDispatchEvent as E;
     let size = match event {
-        E::Ready(ready) => payload_estimate(&ready.user)
-            .saturating_add(ready.guilds.len().saturating_mul(128)),
+        E::Ready(ready) => {
+            payload_estimate(&ready.user).saturating_add(ready.guilds.len().saturating_mul(128))
+        }
         E::GuildCreate(guild) | E::GuildUpdate(guild) => payload_estimate(guild),
         E::ChannelCreate(channel)
         | E::ChannelUpdate(channel)
