@@ -250,3 +250,36 @@ construct credential fields from strings. Serialization still contains the
 credential. Server error details remain available through their public fields
 but are omitted from default error formatting. REST rate-limit bookkeeping
 has fixed capacity and conservatively applies shared cooldowns at saturation.
+
+### Defensive hardening (cache and voice)
+
+Cache collection and aggregate entry limits are configured with
+`CacheConfig::limits(CacheLimits { ..CacheLimits::default() })`. The cache
+also uses an approximate retained-payload byte budget. It is not a precise
+allocator or process-memory cap; incoming event decoding and temporary
+copies may use additional memory. On a capacity violation the entire cache
+is cleared and latched invalidated; subsequent events do not repopulate it.
+Check `Cache::is_invalidated()`, treat missing state as unknown, and call
+`Cache::clear()` only when arranging fresh authoritative snapshots. Never
+treat incomplete cache data as authoritative permission information.
+
+Voice Ready UDP addresses must be numeric public unicast addresses by default.
+Private or loopback infrastructure requires the separate explicit
+`VoiceUdpDestinationPolicy::AllowPrivate` opt-in on
+`VoiceGatewayConfig::with_udp_destination_policy` or
+`VoiceUdpSocket::connect_with_policy`. Link-local, multicast, unspecified and
+other rejected special-use addresses remain blocked. Hostnames are not
+resolved.
+
+Low-level outbound crypto construction now uses
+`VoiceTransportCrypto::new_with_fresh_key` or
+`VoiceTransportCrypto::from_fresh_session_description`. Only construct one
+outbound encryptor per fresh key, including across independent processes.
+For receive-only processing, use `VoiceTransportDecryptor`; standalone
+receivers must implement their own replay protection. Managed voice keeps
+outbound nonce state private. The API does not claim cross-process key
+uniqueness or certify external DAVE/MLS implementations.
+
+Default debug formatting omits raw voice/DAVE payloads, encoded or decrypted
+audio, upload contents and paths, and OAuth2 state/redirect values. Explicit
+access and serialization can still reveal sensitive data.

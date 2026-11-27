@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Source used for a multipart Discord file upload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum UploadSource {
     /// In-memory file contents.
     Bytes(Vec<u8>),
@@ -24,7 +24,7 @@ pub enum UploadSource {
 /// Descriptors are intentionally cloneable so a request can rebuild its multipart
 /// form after Discord returns a rate limit response without buffering file-backed
 /// uploads into memory.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct UploadFile {
     pub id: u32,
     pub filename: String,
@@ -35,6 +35,28 @@ pub struct UploadFile {
     pub duration_secs: Option<f64>,
     pub waveform: Option<String>,
     pub spoiler: bool,
+}
+
+impl std::fmt::Debug for UploadSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Bytes(bytes) => f
+                .debug_struct("Bytes")
+                .field("len", &bytes.len())
+                .finish_non_exhaustive(),
+            Self::Path(_) => f.debug_struct("Path").finish_non_exhaustive(),
+        }
+    }
+}
+
+impl std::fmt::Debug for UploadFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UploadFile")
+            .field("id", &self.id)
+            .field("source", &self.source)
+            .field("spoiler", &self.spoiler)
+            .finish_non_exhaustive()
+    }
 }
 
 impl UploadFile {
@@ -240,5 +262,20 @@ mod tests {
         );
 
         assert!(matches!(upload.part().await, Err(Error::Io(_))));
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn upload_debug_omits_private_paths_and_metadata() {
+        let file = UploadFile::path(0, "secret-filename", "/private/secret-path")
+            .description("secret-description");
+        let debug = format!("{file:?}");
+        assert!(!debug.contains("secret-"));
+        let bytes = UploadFile::bytes(1, "secret-file", vec![123, 124, 125]);
+        assert!(!format!("{bytes:?}").contains("123"));
     }
 }

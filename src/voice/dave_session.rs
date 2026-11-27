@@ -12,7 +12,7 @@ use super::{
 
 /// One decoded Opus frame received through Discord's transport and optional
 /// DAVE media-encryption layers.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct VoiceReceivedOpus {
     /// RTP header carried by the Discord UDP packet.
     pub header: VoiceRtpHeader,
@@ -24,6 +24,17 @@ pub struct VoiceReceivedOpus {
     pub extension_payload: Vec<u8>,
     /// RTP-size transport nonce suffix carried by the packet.
     pub transport_nonce: u32,
+}
+
+impl std::fmt::Debug for VoiceReceivedOpus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceReceivedOpus")
+            .field("header", &self.header)
+            .field("sender", &self.sender)
+            .field("payload_len", &self.payload.len())
+            .field("transport_nonce", &self.transport_nonce)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Fully managed Discord voice session with a pluggable DAVE/MLS provider.
@@ -336,8 +347,8 @@ where
     }
 }
 
-fn provider_error(error: DaveProviderError) -> VoiceError {
-    VoiceError::Protocol(format!("DAVE provider error: {error}"))
+fn provider_error(_error: DaveProviderError) -> VoiceError {
+    VoiceError::Protocol("DAVE provider operation failed (details omitted)".into())
 }
 
 async fn send_commands(

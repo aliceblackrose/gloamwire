@@ -131,7 +131,7 @@ pub struct VoiceSpeakingEvent {
 }
 
 /// DAVE-related Voice Gateway event exposed to an external DAVE implementation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum DaveGatewayEvent {
     /// JSON Voice Gateway DAVE opcode.
     Json {
@@ -149,7 +149,7 @@ pub enum DaveGatewayEvent {
 }
 
 /// High-level Voice Gateway event after heartbeat/session lifecycle handling.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum VoiceGatewayEvent {
     SessionDescription(VoiceSessionDescription),
     Speaking(VoiceSpeakingEvent),
@@ -163,6 +163,52 @@ pub enum VoiceGatewayEvent {
         sequence: Option<u16>,
         data: Value,
     },
+}
+
+impl std::fmt::Debug for DaveGatewayEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Json {
+                opcode, sequence, ..
+            } => f
+                .debug_struct("DaveGatewayEvent::Json")
+                .field("opcode", opcode)
+                .field("sequence", sequence)
+                .finish_non_exhaustive(),
+            Self::Binary {
+                opcode, sequence, ..
+            } => f
+                .debug_struct("DaveGatewayEvent::Binary")
+                .field("opcode", opcode)
+                .field("sequence", sequence)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
+impl std::fmt::Debug for VoiceGatewayEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SessionDescription(description) => {
+                f.debug_tuple("SessionDescription").field(description).finish()
+            }
+            Self::Speaking(event) => f.debug_tuple("Speaking").field(event).finish(),
+            Self::Resumed => f.write_str("Resumed"),
+            Self::HeartbeatAck => f.write_str("HeartbeatAck"),
+            Self::ClientsConnect(_) => f.debug_struct("ClientsConnect").finish_non_exhaustive(),
+            Self::ClientDisconnect(_) => {
+                f.debug_struct("ClientDisconnect").finish_non_exhaustive()
+            }
+            Self::Dave(event) => f.debug_tuple("Dave").field(event).finish(),
+            Self::Unknown {
+                opcode, sequence, ..
+            } => f
+                .debug_struct("Unknown")
+                .field("opcode", opcode)
+                .field("sequence", sequence)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 impl VoiceGatewayEvent {
@@ -220,5 +266,26 @@ mod tests {
             VoiceEncryptionMode::preferred(&modes),
             Err(VoiceError::UnsupportedEncryptionMode)
         ));
+    }
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn unknown_voice_and_dave_payloads_are_not_logged() {
+        let unknown = VoiceGatewayEvent::Unknown {
+            opcode: 255,
+            sequence: None,
+            data: serde_json::json!({"token": "credential-sentinel"}),
+        };
+        let dave = VoiceGatewayEvent::Dave(DaveGatewayEvent::Json {
+            opcode: 21,
+            sequence: None,
+            data: serde_json::json!({"secret": "credential-sentinel"}),
+        });
+        assert!(!format!("{unknown:?}").contains("credential-sentinel"));
+        assert!(!format!("{dave:?}").contains("credential-sentinel"));
     }
 }

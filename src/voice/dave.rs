@@ -42,7 +42,7 @@ impl From<u8> for DaveProposalOperation {
 /// MLS structures intentionally remain opaque byte strings here. Their parsing,
 /// validation, group state, and cryptography belong to a DAVE provider rather
 /// than the low-level Voice Gateway protocol layer.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum DaveProtocolEvent {
     ClientsConnect {
         user_ids: Vec<UserId>,
@@ -77,6 +77,24 @@ pub enum DaveProtocolEvent {
         welcome: Vec<u8>,
     },
     Unknown(DaveGatewayEvent),
+}
+
+impl fmt::Debug for DaveProtocolEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let kind = match self {
+            Self::ClientsConnect { .. } => "ClientsConnect",
+            Self::ClientDisconnect { .. } => "ClientDisconnect",
+            Self::PrepareTransition { .. } => "PrepareTransition",
+            Self::ExecuteTransition { .. } => "ExecuteTransition",
+            Self::PrepareEpoch { .. } => "PrepareEpoch",
+            Self::ExternalSender { .. } => "ExternalSender",
+            Self::Proposals { .. } => "Proposals",
+            Self::AnnounceCommit { .. } => "AnnounceCommit",
+            Self::Welcome { .. } => "Welcome",
+            Self::Unknown(_) => "Unknown",
+        };
+        f.debug_struct(kind).finish_non_exhaustive()
+    }
 }
 
 impl DaveProtocolEvent {
@@ -214,12 +232,20 @@ struct PrepareEpoch {
 }
 
 /// Client-to-Voice-Gateway DAVE command.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum DaveGatewayCommand {
     ReadyForTransition { transition_id: u16 },
     KeyPackage(Vec<u8>),
     CommitWelcome(Vec<u8>),
     InvalidCommitWelcome { transition_id: u16 },
+}
+
+impl fmt::Debug for DaveGatewayCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DaveGatewayCommand")
+            .field("opcode", &self.opcode())
+            .finish_non_exhaustive()
+    }
 }
 
 impl DaveGatewayCommand {

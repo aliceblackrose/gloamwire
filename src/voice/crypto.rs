@@ -15,7 +15,7 @@ const RTP_VERSION: u8 = 2;
 const MAX_RTP_PACKET_BYTES: usize = 65_507;
 
 /// Decrypted Discord RTP-size transport packet.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct VoiceDecryptedRtp {
     /// Unencrypted RTP header, including CSRC entries and the extension preamble.
     pub header: Vec<u8>,
@@ -28,6 +28,15 @@ pub struct VoiceDecryptedRtp {
     pub media: Vec<u8>,
     /// 32-bit nonce suffix carried by the wire packet.
     pub nonce: u32,
+}
+
+impl std::fmt::Debug for VoiceDecryptedRtp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceDecryptedRtp")
+            .field("nonce", &self.nonce)
+            .field("media_len", &self.media.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Discord voice RTP-size transport encryptor/decryptor.
