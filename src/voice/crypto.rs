@@ -12,9 +12,10 @@ use super::{
 const AEAD_TAG_BYTES: usize = 16;
 const NONCE_SUFFIX_BYTES: usize = 4;
 const RTP_VERSION: u8 = 2;
+const MAX_RTP_PACKET_BYTES: usize = 65_507;
 
 /// Decrypted Discord RTP-size transport packet.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct VoiceDecryptedRtp {
     /// Unencrypted RTP header, including CSRC entries and the extension preamble.
     pub header: Vec<u8>,
@@ -27,6 +28,15 @@ pub struct VoiceDecryptedRtp {
     pub media: Vec<u8>,
     /// 32-bit nonce suffix carried by the wire packet.
     pub nonce: u32,
+}
+
+impl std::fmt::Debug for VoiceDecryptedRtp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceDecryptedRtp")
+            .field("nonce", &self.nonce)
+            .field("media_len", &self.media.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Discord voice RTP-size transport encryptor/decryptor.
@@ -49,6 +59,29 @@ impl std::fmt::Debug for VoiceTransportCrypto {
     }
 }
 
+/// Receive-only transport cryptography. It cannot encrypt or consume an
+/// outbound nonce, so constructing extra receivers does not risk nonce reuse.
+#[derive(Debug)]
+pub struct VoiceTransportDecryptor(VoiceTransportCrypto);
+
+impl VoiceTransportDecryptor {
+    /// Constructs a receive-only view of a session key.
+    pub fn new(mode: VoiceEncryptionMode, secret_key: [u8; 32]) -> VoiceResult<Self> {
+        VoiceTransportCrypto::new_with_fresh_key(mode, secret_key).map(Self)
+    }
+
+    /// Constructs a receiver from a negotiated session description.
+    pub fn from_session_description(description: &VoiceSessionDescription) -> VoiceResult<Self> {
+        Self::new(description.mode.clone(), description.secret_key)
+    }
+
+    /// Authenticates and decrypts one packet. Replay protection is the caller's
+    /// responsibility for standalone receivers; managed DAVE enforces it.
+    pub fn decrypt_rtp(&self, packet: &[u8]) -> VoiceResult<VoiceDecryptedRtp> {
+        self.0.decrypt_rtp(packet)
+    }
+}
+
 enum VoiceTransportCipher {
     Aes256Gcm(Box<Aes256Gcm>),
     XChaCha20Poly1305(XChaCha20Poly1305),
@@ -58,14 +91,19 @@ impl VoiceTransportCrypto {
     /// Creates transport crypto from a fresh Voice Gateway Session Description.
     /// Never construct a second outbound encryptor for an already used key.
     /// Prefer the session-owned encryptor for managed connections.
-    pub fn from_session_description(description: &VoiceSessionDescription) -> VoiceResult<Self> {
-        Self::new(description.mode.clone(), description.secret_key)
+    pub fn from_fresh_session_description(
+        description: &VoiceSessionDescription,
+    ) -> VoiceResult<Self> {
+        Self::new_with_fresh_key(description.mode.clone(), description.secret_key)
     }
 
     /// Creates transport crypto from a negotiated mode and fresh 32-byte session key.
     /// The caller must guarantee the key has never been used by another outbound
     /// encryptor. Reusing a key resets the nonce and breaks AEAD security.
-    pub fn new(mode: VoiceEncryptionMode, secret_key: [u8; 32]) -> VoiceResult<Self> {
+    pub fn new_with_fresh_key(
+        mode: VoiceEncryptionMode,
+        secret_key: [u8; 32],
+    ) -> VoiceResult<Self> {
         let secret_key = zeroize::Zeroizing::new(secret_key);
         let cipher = match mode.as_ref() {
             VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE => VoiceTransportCipher::Aes256Gcm(
@@ -120,6 +158,16 @@ impl VoiceTransportCrypto {
     /// preamble. The extension payload itself belongs at the beginning of
     /// `protected_payload` because RTP-size modes encrypt it.
     pub fn encrypt_rtp(&mut self, header: &[u8], protected_payload: &[u8]) -> VoiceResult<Vec<u8>> {
+        if header
+            .len()
+            .saturating_add(protected_payload.len())
+            .saturating_add(AEAD_TAG_BYTES + NONCE_SUFFIX_BYTES)
+            > MAX_RTP_PACKET_BYTES
+        {
+            return Err(VoiceError::InvalidRtpPacket(
+                "outbound RTP packet exceeds UDP payload limit".into(),
+            ));
+        }
         let layout = rtp_layout(header)?;
         if header.len() != layout.header_len {
             return Err(VoiceError::InvalidRtpPacket(format!(
@@ -138,8 +186,10 @@ impl VoiceTransportCrypto {
 
         let nonce = u32::try_from(self.next_send_nonce).map_err(|_| VoiceError::NonceExhausted)?;
         let nonce_suffix = nonce.to_be_bytes();
-        let ciphertext = self.encrypt_with_nonce(&nonce_suffix, header, protected_payload)?;
+        // Reserve before invoking the cipher; even an encryption failure must
+        // never make a previously attempted nonce available again.
         self.next_send_nonce += 1;
+        let ciphertext = self.encrypt_with_nonce(&nonce_suffix, header, protected_payload)?;
 
         let mut packet = Vec::with_capacity(header.len() + ciphertext.len() + NONCE_SUFFIX_BYTES);
         packet.extend_from_slice(header);
@@ -149,7 +199,13 @@ impl VoiceTransportCrypto {
     }
 
     /// Authenticates and decrypts one Discord RTP-size packet.
+    /// Standalone callers must enforce replay protection.
     pub fn decrypt_rtp(&self, packet: &[u8]) -> VoiceResult<VoiceDecryptedRtp> {
+        if packet.len() > MAX_RTP_PACKET_BYTES {
+            return Err(VoiceError::InvalidRtpPacket(
+                "inbound RTP packet exceeds UDP payload limit".into(),
+            ));
+        }
         let layout = rtp_layout(packet)?;
         let minimum = layout.header_len + AEAD_TAG_BYTES + NONCE_SUFFIX_BYTES;
         if packet.len() < minimum {
@@ -354,8 +410,46 @@ mod tests {
     const KEY: [u8; 32] = [0x42; 32];
 
     #[test]
+    fn nonce_exhaustion_never_wraps_and_receiver_can_decrypt_last_packet() {
+        let mode = VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE);
+        let mut crypto = VoiceTransportCrypto::new_with_fresh_key(mode.clone(), KEY).unwrap();
+        let receiver = super::VoiceTransportDecryptor::new(mode, KEY).unwrap();
+        crypto.next_send_nonce = u64::from(u32::MAX);
+        let header = VoiceRtpHeader {
+            sequence: 1,
+            timestamp: 2,
+            ssrc: 3,
+        };
+        let packet = crypto.encrypt_audio(header, b"last").unwrap();
+        assert_eq!(receiver.decrypt_rtp(&packet).unwrap().media, b"last");
+        assert!(matches!(
+            crypto.encrypt_audio(header, b"never"),
+            Err(crate::voice::VoiceError::NonceExhausted)
+        ));
+        assert_eq!(crypto.next_send_nonce(), None);
+    }
+
+    #[test]
+    fn rejects_oversized_packets_before_encryption() {
+        let mut crypto = VoiceTransportCrypto::new_with_fresh_key(
+            VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE),
+            KEY,
+        )
+        .unwrap();
+        let header = VoiceRtpHeader {
+            sequence: 1,
+            timestamp: 2,
+            ssrc: 3,
+        };
+        let oversized = vec![0; super::MAX_RTP_PACKET_BYTES + 1];
+        assert!(crypto.encrypt_audio(header, &oversized).is_err());
+        assert_eq!(crypto.next_send_nonce(), Some(0));
+        assert!(crypto.decrypt_rtp(&oversized).is_err());
+    }
+
+    #[test]
     fn aes_gcm_round_trips_audio_and_appends_big_endian_nonce() {
-        let mut crypto = VoiceTransportCrypto::new(
+        let mut crypto = VoiceTransportCrypto::new_with_fresh_key(
             VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE),
             KEY,
         )
@@ -378,7 +472,7 @@ mod tests {
 
     #[test]
     fn xchacha_round_trips_audio() {
-        let mut crypto = VoiceTransportCrypto::new(
+        let mut crypto = VoiceTransportCrypto::new_with_fresh_key(
             VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE),
             KEY,
         )
@@ -399,7 +493,7 @@ mod tests {
 
     #[test]
     fn rtpsize_keeps_extension_preamble_as_aad_and_encrypts_extension_payload() {
-        let mut crypto = VoiceTransportCrypto::new(
+        let mut crypto = VoiceTransportCrypto::new_with_fresh_key(
             VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE),
             KEY,
         )
@@ -426,7 +520,7 @@ mod tests {
 
     #[test]
     fn decrypt_removes_authenticated_rtp_padding() {
-        let mut crypto = VoiceTransportCrypto::new(
+        let mut crypto = VoiceTransportCrypto::new_with_fresh_key(
             VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE),
             KEY,
         )
@@ -447,7 +541,7 @@ mod tests {
 
     #[test]
     fn tampered_header_fails_authentication() {
-        let mut crypto = VoiceTransportCrypto::new(
+        let mut crypto = VoiceTransportCrypto::new_with_fresh_key(
             VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE),
             KEY,
         )

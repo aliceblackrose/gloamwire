@@ -55,10 +55,19 @@ impl VoiceOpusFrameDuration {
 ///
 /// The payload is the complete encoded Opus frame. If DAVE is enabled, DAVE
 /// protection belongs after codec output and before RTP transport encryption.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct VoiceOpusFrame<'a> {
     payload: &'a [u8],
     duration: VoiceOpusFrameDuration,
+}
+
+impl std::fmt::Debug for VoiceOpusFrame<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VoiceOpusFrame")
+            .field("payload_len", &self.payload.len())
+            .field("duration", &self.duration)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> VoiceOpusFrame<'a> {

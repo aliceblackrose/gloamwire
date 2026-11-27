@@ -23,7 +23,7 @@ mod session;
 mod udp;
 
 pub use close::{VoiceCloseCode, VoiceReconnectStrategy};
-pub use crypto::{VoiceDecryptedRtp, VoiceTransportCrypto};
+pub use crypto::{VoiceDecryptedRtp, VoiceTransportCrypto, VoiceTransportDecryptor};
 pub use dave::{
     DAVE_ANNOUNCE_COMMIT_OPCODE, DAVE_COMMIT_WELCOME_OPCODE, DAVE_EXECUTE_TRANSITION_OPCODE,
     DAVE_EXTERNAL_SENDER_OPCODE, DAVE_INVALID_COMMIT_WELCOME_OPCODE, DAVE_KEY_PACKAGE_OPCODE,
@@ -52,4 +52,4 @@ pub use rtp::{
     VoiceRtpHeader, VoiceRtpSequencer,
 };
 pub use session::{VoiceRecoveryOutcome, VoiceSession};
-pub use udp::{VoiceUdpDiscovery, VoiceUdpSocket};
+pub use udp::{VoiceUdpDestinationPolicy, VoiceUdpDiscovery, VoiceUdpSocket};

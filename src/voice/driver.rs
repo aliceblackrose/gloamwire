@@ -18,7 +18,7 @@ use super::{
 };
 
 /// Outbound operations for a managed voice session.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum VoiceCommand {
     SendOpus {
@@ -27,6 +27,20 @@ pub enum VoiceCommand {
     },
     SetSpeaking(VoiceSpeakingFlags),
     FinishSpeaking,
+}
+
+impl std::fmt::Debug for VoiceCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SendOpus { payload, duration } => f
+                .debug_struct("SendOpus")
+                .field("payload_len", &payload.len())
+                .field("duration", duration)
+                .finish_non_exhaustive(),
+            Self::SetSpeaking(flags) => f.debug_tuple("SetSpeaking").field(flags).finish(),
+            Self::FinishSpeaking => f.write_str("FinishSpeaking"),
+        }
+    }
 }
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);

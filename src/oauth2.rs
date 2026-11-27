@@ -75,7 +75,7 @@ impl OAuth2TokenTypeHint {
 /// The builder does not generate or persist `state`; callers should generate an
 /// unpredictable value, include it with [`Self::state`], and verify the returned
 /// value before exchanging an authorization code.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct OAuth2AuthorizationUrl {
     client_id: ApplicationId,
     response_type: Option<OAuth2ResponseType>,
@@ -87,6 +87,16 @@ pub struct OAuth2AuthorizationUrl {
     permissions: Option<Permissions>,
     guild_id: Option<GuildId>,
     disable_guild_select: Option<bool>,
+}
+
+impl fmt::Debug for OAuth2AuthorizationUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuth2AuthorizationUrl")
+            .field("client_id", &self.client_id)
+            .field("response_type", &self.response_type)
+            .field("state_set", &self.state.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl OAuth2AuthorizationUrl {
@@ -567,5 +577,19 @@ mod tests {
     fn client_debug_redacts_secret() {
         let client = OAuth2Client::new(ApplicationId::new(1), "client-secret").expect("client");
         assert!(!format!("{client:?}").contains("client-secret"));
+    }
+}
+
+#[cfg(test)]
+mod authorization_debug_tests {
+    use super::*;
+
+    #[test]
+    fn authorization_debug_omits_state_and_redirect() {
+        let url = OAuth2AuthorizationUrl::new(ApplicationId::new(1))
+            .state("state-sentinel")
+            .redirect_uri("https://example.com/redirect-sentinel");
+        let debug = format!("{url:?}");
+        assert!(!debug.contains("sentinel"));
     }
 }
