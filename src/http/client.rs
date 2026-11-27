@@ -470,14 +470,13 @@ impl RestClient {
             let response_headers = response.headers().clone();
             // Commit header information before awaiting the body. For 429s
             // retain a provisional cooldown until the JSON retry hint arrives.
-            limiter
-                .update(
-                    &route,
-                    status,
-                    &response_headers,
-                    retry_after_header(&response_headers),
-                    false,
-                );
+            limiter.update(
+                &route,
+                status,
+                &response_headers,
+                retry_after_header(&response_headers),
+                false,
+            );
             // Non-429 bodies have no additional rate-limit metadata.
             let reservation = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 Some(reservation)
@@ -517,8 +516,7 @@ impl RestClient {
                     .is_some_and(|scope| scope == "global");
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                limiter
-                    .update(&route, status, &response_headers, retry_after, global);
+                limiter.update(&route, status, &response_headers, retry_after, global);
             }
             drop(reservation);
 

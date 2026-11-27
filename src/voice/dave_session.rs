@@ -277,7 +277,9 @@ where
 
     fn ensure_media_ready(&self) -> VoiceResult<()> {
         if self.protocol_failed || !self.session.is_media_ready() {
-            return Err(VoiceError::Protocol("voice media unavailable; recover or restart session".into()));
+            return Err(VoiceError::Protocol(
+                "voice media unavailable; recover or restart session".into(),
+            ));
         }
         Ok(())
     }

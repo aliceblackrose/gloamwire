@@ -577,12 +577,24 @@ impl Cache {
     fn seed_guild(&mut self, guild: &Guild) {
         let guild_id = guild.id;
         // An authoritative snapshot may omit channels no longer accessible.
-        let valid: HashSet<_> = guild.channels.iter().chain(&guild.threads).map(|channel| channel.id).collect();
-        let stale: Vec<_> = self.messages.iter().filter_map(|(&id, message)| {
-            let belongs = message.guild_id == Some(guild_id)
-                || self.channels.get(&message.channel_id).is_some_and(|channel| channel.guild_id == Some(guild_id));
-            (belongs && !valid.contains(&message.channel_id)).then_some(id)
-        }).collect();
+        let valid: HashSet<_> = guild
+            .channels
+            .iter()
+            .chain(&guild.threads)
+            .map(|channel| channel.id)
+            .collect();
+        let stale: Vec<_> = self
+            .messages
+            .iter()
+            .filter_map(|(&id, message)| {
+                let belongs = message.guild_id == Some(guild_id)
+                    || self
+                        .channels
+                        .get(&message.channel_id)
+                        .is_some_and(|channel| channel.guild_id == Some(guild_id));
+                (belongs && !valid.contains(&message.channel_id)).then_some(id)
+            })
+            .collect();
         for id in stale {
             self.remove_message(id);
         }
@@ -686,7 +698,8 @@ impl Cache {
             .retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
         self.membership
             .retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
-        self.tombstones.retain(|(cached_guild_id, _)| *cached_guild_id != guild_id);
+        self.tombstones
+            .retain(|(cached_guild_id, _)| *cached_guild_id != guild_id);
         self.presences
             .retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
         self.voice_states
@@ -724,7 +737,10 @@ impl Cache {
         let mut pending = vec![channel_id];
         while let Some(parent) = pending.pop() {
             for channel in self.channels.values() {
-                if channel.parent_id == Some(parent) && is_thread(channel.kind) && removed.insert(channel.id) {
+                if channel.parent_id == Some(parent)
+                    && is_thread(channel.kind)
+                    && removed.insert(channel.id)
+                {
                     pending.push(channel.id);
                 }
             }
@@ -775,11 +791,14 @@ impl Cache {
 
     fn prune_tombstones(&mut self) {
         while self.tombstones.len() > self.config.tombstone_capacity {
-            let Some(key) = self.tombstones.pop_front() else { break };
+            let Some(key) = self.tombstones.pop_front() else {
+                break;
+            };
             if self.membership.get(&key) == Some(&false) {
                 self.membership.remove(&key);
                 if let Some(guild) = self.guilds.get_mut(&key.0) {
-                    guild.approximate_member_count = guild.member_count.take().or(guild.approximate_member_count);
+                    guild.approximate_member_count =
+                        guild.member_count.take().or(guild.approximate_member_count);
                 }
             }
         }

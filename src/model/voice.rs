@@ -48,7 +48,8 @@ mod tests {
         let state: super::VoiceState = serde_json::from_value(serde_json::json!({
             "guild_id":"1","channel_id":"2","user_id":"3","session_id":"secret-session",
             "deaf":false,"mute":false,"self_deaf":false,"self_mute":false,"suppress":false
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(!format!("{state:?}").contains("secret-session"));
         assert!(format!("{state:?}").contains("[REDACTED]"));
     }

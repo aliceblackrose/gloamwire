@@ -67,7 +67,9 @@ impl<'a> VoiceOpusFrame<'a> {
         // Bound encoded packets before queuing or performing encryption.
         // This allows multi-frame Opus packets while remaining well below UDP limits.
         if payload.len() > 8192 {
-            return Err(VoiceError::Protocol("encoded Opus packet exceeds 8192 bytes".into()));
+            return Err(VoiceError::Protocol(
+                "encoded Opus packet exceeds 8192 bytes".into(),
+            ));
         }
         if payload.is_empty() {
             return Err(VoiceError::Protocol(

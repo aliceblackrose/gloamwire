@@ -309,7 +309,13 @@ mod tests {
     fn active_cooldown_prevents_limiter_eviction() {
         let limiter = RateLimiter::default();
         let route = Route::current_user();
-        limiter.update(&route, StatusCode::TOO_MANY_REQUESTS, &HeaderMap::new(), Some(Duration::from_secs(30)), true);
+        limiter.update(
+            &route,
+            StatusCode::TOO_MANY_REQUESTS,
+            &HeaderMap::new(),
+            Some(Duration::from_secs(30)),
+            true,
+        );
         let now = tokio::time::Instant::now();
         assert!(limiter.has_live_cooldown(now));
         assert!(!limiter.has_live_cooldown(now + Duration::from_secs(31)));
@@ -321,14 +327,13 @@ mod tests {
         let route = Route::current_user();
         let mut headers = HeaderMap::new();
         headers.insert("x-ratelimit-scope", "global".parse().unwrap());
-        limiter
-            .update(
-                &route,
-                StatusCode::TOO_MANY_REQUESTS,
-                &headers,
-                Some(Duration::from_secs(5)),
-                false,
-            );
+        limiter.update(
+            &route,
+            StatusCode::TOO_MANY_REQUESTS,
+            &headers,
+            Some(Duration::from_secs(5)),
+            false,
+        );
         assert!(limiter.try_acquire(&Route::gateway_bot()).is_some());
         assert!(limiter.state.lock().unwrap().global_until.is_some());
     }
@@ -338,14 +343,13 @@ mod tests {
         let limiter = RateLimiter::default();
         let route = Route::current_user();
 
-        limiter
-            .update(
-                &route,
-                StatusCode::TOO_MANY_REQUESTS,
-                &HeaderMap::new(),
-                Some(Duration::from_millis(20)),
-                true,
-            );
+        limiter.update(
+            &route,
+            StatusCode::TOO_MANY_REQUESTS,
+            &HeaderMap::new(),
+            Some(Duration::from_millis(20)),
+            true,
+        );
 
         let started = tokio::time::Instant::now();
         limiter.acquire(&route).await;
@@ -360,18 +364,15 @@ mod tests {
         headers.insert("x-ratelimit-bucket", "bucket".parse().unwrap());
         headers.insert("x-ratelimit-remaining", "1".parse().unwrap());
         headers.insert("x-ratelimit-reset-after", "10".parse().unwrap());
-        limiter
-            .update(&route, StatusCode::OK, &headers, None, false);
-        limiter
-            .update(
-                &route,
-                StatusCode::TOO_MANY_REQUESTS,
-                &HeaderMap::new(),
-                Some(Duration::from_secs(10)),
-                false,
-            );
-        limiter
-            .update(&route, StatusCode::OK, &headers, None, false);
+        limiter.update(&route, StatusCode::OK, &headers, None, false);
+        limiter.update(
+            &route,
+            StatusCode::TOO_MANY_REQUESTS,
+            &HeaderMap::new(),
+            Some(Duration::from_secs(10)),
+            false,
+        );
+        limiter.update(&route, StatusCode::OK, &headers, None, false);
         let state = limiter.state.lock().unwrap();
         assert_eq!(
             state.buckets[&bucket_key("bucket", route.major())].remaining,
@@ -388,14 +389,13 @@ mod tests {
         let b = Route::create_message(crate::model::ChannelId::new(2));
         let mut headers = HeaderMap::new();
         headers.insert("x-ratelimit-scope", "shared".parse().unwrap());
-        first
-            .update(
-                &a,
-                StatusCode::TOO_MANY_REQUESTS,
-                &headers,
-                Some(Duration::from_secs(5)),
-                false,
-            );
+        first.update(
+            &a,
+            StatusCode::TOO_MANY_REQUESTS,
+            &headers,
+            Some(Duration::from_secs(5)),
+            false,
+        );
         assert!(
             tokio::time::timeout(Duration::from_millis(20), second.reserve(&a))
                 .await
@@ -418,8 +418,7 @@ mod tests {
         headers.insert("x-ratelimit-remaining", "5".parse().unwrap());
         headers.insert("x-ratelimit-reset-after", "10".parse().unwrap());
         for route in [&first, &second] {
-            limiter
-                .update(route, StatusCode::OK, &headers, None, false);
+            limiter.update(route, StatusCode::OK, &headers, None, false);
         }
         let held = limiter.reserve(&first).await;
         assert!(

@@ -59,7 +59,9 @@ impl RestClient {
         query: &CreateInteractionResponseQuery,
     ) -> Result<Option<InteractionCallbackResponse>> {
         if !response.has_valid_data() {
-            return Err(Error::InvalidRestRequest("interaction callback type/data mismatch".into()));
+            return Err(Error::InvalidRestRequest(
+                "interaction callback type/data mismatch".into(),
+            ));
         }
         self.request_optional_json(
             interaction_callback_route(interaction_id, token, &query.suffix(), RetrySafety::Unsafe),
@@ -79,7 +81,9 @@ impl RestClient {
         query: &CreateInteractionResponseQuery,
     ) -> Result<Option<InteractionCallbackResponse>> {
         if !response.has_valid_data() || !matches!(response.kind.0, 4 | 7) {
-            return Err(Error::InvalidRestRequest("interaction callback files require a message response".into()));
+            return Err(Error::InvalidRestRequest(
+                "interaction callback files require a message response".into(),
+            ));
         }
         let mut request = response.clone();
         let Some(InteractionCallbackData::Message(message)) = &mut request.data else {

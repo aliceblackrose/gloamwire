@@ -231,14 +231,31 @@ fn presence_updates_keep_embedded_guild_snapshot_consistent() {
 fn channel_removal_cascades_to_threads_and_guild_reseed_discards_stale_messages() {
     let mut cache = Cache::new(gloamwire::CacheConfig::new().message_capacity(8));
     let events = [
-        ("GUILD_CREATE", json!({"id":"1","name":"guild","owner_id":"2","channels":[{"id":"10","type":0},{"id":"20","type":0}],"threads":[{"id":"11","type":11,"parent_id":"10"}]})),
-        ("MESSAGE_CREATE", json!({"id":"50","guild_id":"1","channel_id":"20","author":{"id":"2","username":"user"}})),
+        (
+            "GUILD_CREATE",
+            json!({"id":"1","name":"guild","owner_id":"2","channels":[{"id":"10","type":0},{"id":"20","type":0}],"threads":[{"id":"11","type":11,"parent_id":"10"}]}),
+        ),
+        (
+            "MESSAGE_CREATE",
+            json!({"id":"50","guild_id":"1","channel_id":"20","author":{"id":"2","username":"user"}}),
+        ),
         ("CHANNEL_DELETE", json!({"id":"10","type":0,"guild_id":"1"})),
-        ("GUILD_CREATE", json!({"id":"1","name":"guild","owner_id":"2","channels":[]})),
+        (
+            "GUILD_CREATE",
+            json!({"id":"1","name":"guild","owner_id":"2","channels":[]}),
+        ),
     ];
-    for (i,(name,data)) in events.into_iter().enumerate() {
-        cache.update_dispatch(&DispatchEvent {name:name.into(),sequence:i as u64+1,data}).unwrap();
-        if i == 2 { assert!(cache.channel(ChannelId::new(11)).is_none()); }
+    for (i, (name, data)) in events.into_iter().enumerate() {
+        cache
+            .update_dispatch(&DispatchEvent {
+                name: name.into(),
+                sequence: i as u64 + 1,
+                data,
+            })
+            .unwrap();
+        if i == 2 {
+            assert!(cache.channel(ChannelId::new(11)).is_none());
+        }
     }
     assert!(cache.message(MessageId::new(50)).is_none());
 }
@@ -247,6 +264,12 @@ fn channel_removal_cascades_to_threads_and_guild_reseed_discards_stale_messages(
 fn tombstone_eviction_invalidates_exact_member_count() {
     let mut cache = Cache::new(gloamwire::CacheConfig::new().membership_tombstone_capacity(0));
     cache.update_dispatch(&DispatchEvent {name:"GUILD_CREATE".into(),sequence:1,data:json!({"id":"1","name":"guild","owner_id":"2","member_count":1,"members":[{"user":{"id":"2","username":"user"}}]})}).unwrap();
-    cache.update_dispatch(&DispatchEvent {name:"GUILD_MEMBER_REMOVE".into(),sequence:2,data:json!({"guild_id":"1","user":{"id":"2","username":"user"}})}).unwrap();
+    cache
+        .update_dispatch(&DispatchEvent {
+            name: "GUILD_MEMBER_REMOVE".into(),
+            sequence: 2,
+            data: json!({"guild_id":"1","user":{"id":"2","username":"user"}}),
+        })
+        .unwrap();
     assert!(cache.guild(GuildId::new(1)).unwrap().member_count.is_none());
 }

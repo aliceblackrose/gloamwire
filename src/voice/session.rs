@@ -238,7 +238,9 @@ impl VoiceSession {
 
     fn apply_transport_event(&mut self, event: &VoiceGatewayEvent) -> VoiceResult<()> {
         if self.restart_required {
-            return Err(super::VoiceError::Protocol("voice session must be restarted".into()));
+            return Err(super::VoiceError::Protocol(
+                "voice session must be restarted".into(),
+            ));
         }
         match event {
             VoiceGatewayEvent::SessionDescription(description) => {
@@ -247,14 +249,20 @@ impl VoiceSession {
                 {
                     self.media_ready = false;
                     self.restart_required = true;
-                    return Err(super::VoiceError::Protocol("voice protocol changed; restart session".into()));
+                    return Err(super::VoiceError::Protocol(
+                        "voice protocol changed; restart session".into(),
+                    ));
                 }
                 if description.secret_key != self.description.secret_key {
                     // Never reset the nonce counter for a previously used key.
-                    if self.retired_keys.len() >= 32 || self.retired_keys.contains(&description.secret_key) {
+                    if self.retired_keys.len() >= 32
+                        || self.retired_keys.contains(&description.secret_key)
+                    {
                         self.media_ready = false;
                         self.restart_required = true;
-                        return Err(super::VoiceError::Protocol("voice key reuse or rekey limit; restart session".into()));
+                        return Err(super::VoiceError::Protocol(
+                            "voice key reuse or rekey limit; restart session".into(),
+                        ));
                     }
                     let was_ready = self.media_ready;
                     self.media_ready = false;
@@ -601,13 +609,20 @@ mod tests {
 
         // Repeated descriptions must not reset the outgoing nonce.
         let mut sequencer = crate::voice::VoiceRtpSequencer::new(SSRC);
-        session.transport_crypto_mut().encrypt_audio(sequencer.next_header(), &[1]).expect("first packet");
+        session
+            .transport_crypto_mut()
+            .encrypt_audio(sequencer.next_header(), &[1])
+            .expect("first packet");
         let original = session.session_description().clone();
-        session.apply_transport_event(&VoiceGatewayEvent::SessionDescription(original.clone())).expect("same key");
+        session
+            .apply_transport_event(&VoiceGatewayEvent::SessionDescription(original.clone()))
+            .expect("same key");
         assert_eq!(session.transport_crypto().next_send_nonce(), Some(1));
         let mut replacement = original.clone();
         replacement.secret_key = [8; 32];
-        session.apply_transport_event(&VoiceGatewayEvent::SessionDescription(replacement)).expect("new key");
+        session
+            .apply_transport_event(&VoiceGatewayEvent::SessionDescription(replacement))
+            .expect("new key");
         assert_eq!(session.key_generation(), 1);
         assert_eq!(session.transport_crypto().next_send_nonce(), Some(0));
         assert!(session.is_media_ready());
