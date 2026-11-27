@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{sync::{Arc, Mutex}, time::Duration};
 
 use tokio::{
     sync::{mpsc, watch},
@@ -14,7 +14,7 @@ use crate::{
 use super::{
     DistributedShardCoordinator, GatewayConfig, GatewayConnection, GatewayCoordinationError,
     GatewayIdentifyCoordinator, GatewayIntents, GatewayReconnectStrategy, ShardCount, ShardEvent,
-    ShardId,
+    ShardId, shard::shard_error,
 };
 
 /// Timing policy for distributed shard leases.
@@ -106,6 +106,46 @@ impl DistributedShardConfig {
     }
 }
 
+/// Identity attached to each distributed event. Monotonic generation is
+/// available only when the coordinator implements fenced acquisition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeaseIdentity {
+    pub owner_id: String,
+    pub generation: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DistributedShardEvent {
+    pub shard: ShardEvent,
+    pub lease: LeaseIdentity,
+}
+
+#[derive(Debug)]
+struct LeaseState {
+    deadline: Mutex<Option<Instant>>,
+    identity: LeaseIdentity,
+}
+
+impl LeaseState {
+    fn valid(&self) -> bool {
+        self.deadline.lock().unwrap_or_else(|e| e.into_inner())
+            .is_some_and(|deadline| Instant::now() < deadline)
+    }
+
+    fn set_deadline(&self, deadline: Option<Instant>) {
+        *self.deadline.lock().unwrap_or_else(|e| e.into_inner()) = deadline;
+    }
+}
+
+#[derive(Debug)]
+struct OwnedEvent {
+    event: ShardEvent,
+    lease: Arc<LeaseState>,
+}
+
+type QueuedEvent = Result<crate::queue_budget::Budgeted<OwnedEvent>>;
+
+
 /// Manages Discord Gateway shards across multiple cooperating processes.
 ///
 /// Every process may be started with the same shard count. The shared
@@ -118,7 +158,7 @@ where
     C: DistributedShardCoordinator + 'static,
 {
     shard_count: ShardCount,
-    events: mpsc::Receiver<Result<ShardEvent>>,
+    events: mpsc::Receiver<QueuedEvent>,
     shutdown: watch::Sender<bool>,
     tasks: Vec<JoinHandle<()>>,
     _coordinator: std::marker::PhantomData<C>,
@@ -172,6 +212,7 @@ where
         let identify: Arc<dyn GatewayIdentifyCoordinator> = coordinator.clone();
         let base_config = base_config.with_identify_coordinator(identify);
         let (event_tx, events) = mpsc::channel(256);
+        let budget = crate::queue_budget::Budget::default();
         let (shutdown, _) = watch::channel(false);
         let mut tasks = Vec::with_capacity(shard_count.get() as usize);
 
@@ -191,6 +232,7 @@ where
             let owner_id = Arc::clone(&owner_id);
             let coordinator = Arc::clone(&coordinator);
             let event_tx = event_tx.clone();
+            let budget = budget.clone();
             let shutdown_rx = shutdown.subscribe();
 
             tasks.push(tokio::spawn(run_shard_supervisor(
@@ -201,6 +243,7 @@ where
                 distributed,
                 event_tx,
                 shutdown_rx,
+                budget,
             )));
         }
         drop(event_tx);
@@ -223,7 +266,20 @@ where
 
     /// Receives the next event from a shard currently owned by this worker.
     pub async fn next_event(&mut self) -> Option<Result<ShardEvent>> {
-        self.events.recv().await
+        self.next_fenced_event().await.map(|event| event.map(|event| event.shard))
+    }
+
+    /// Receives an event together with its lease identity for downstream
+    /// fencing. Expired or retired queued events are rejected explicitly.
+    pub async fn next_fenced_event(&mut self) -> Option<Result<DistributedShardEvent>> {
+        let queued = self.events.recv().await?;
+        Some(queued.and_then(|queued| {
+            let owned = queued.into_inner();
+            if !owned.lease.valid() {
+                return Err(shard_error(owned.event.shard_id, Error::GatewayProtocol("queued event belongs to a retired shard lease".into())));
+            }
+            Ok(DistributedShardEvent { shard: owned.event, lease: owned.lease.identity.clone() })
+        }))
     }
 
     /// Gracefully stops owned shards, releases their leases, and waits for every
@@ -231,8 +287,10 @@ where
     pub async fn shutdown(&mut self) -> Result<()> {
         self.events.close();
         let _ = self.shutdown.send(true);
-        while let Some(task) = self.tasks.pop() {
-            task.await?;
+        while let Some(task) = self.tasks.last_mut() {
+            let result = task.await;
+            self.tasks.pop();
+            result?;
         }
         Ok(())
     }
@@ -244,8 +302,9 @@ async fn run_shard_supervisor<C>(
     owner_id: Arc<str>,
     coordinator: Arc<C>,
     distributed: DistributedShardConfig,
-    event_tx: mpsc::Sender<Result<ShardEvent>>,
+    event_tx: mpsc::Sender<QueuedEvent>,
     mut shutdown: watch::Receiver<bool>,
+    budget: crate::queue_budget::Budget,
 ) where
     C: DistributedShardCoordinator + 'static,
 {
@@ -264,10 +323,10 @@ async fn run_shard_supervisor<C>(
             _ = event_tx.closed() => return,
             result = tokio::time::timeout_at(
                 deadline,
-                coordinator.acquire_shard(&lease_owner, shard_id, distributed.lease_ttl),
+                coordinator.acquire_fenced_shard(&lease_owner, shard_id, distributed.lease_ttl),
             ) => result,
         };
-        let owns_shard = match acquired
+        let acquired_lease = match acquired
             .map_err(|_| GatewayCoordinationError::new("shard lease acquisition timed out"))
             .and_then(|result| result)
         {
@@ -285,12 +344,12 @@ async fn run_shard_supervisor<C>(
             }
         };
 
-        if !owns_shard {
+        let Some(acquired_lease) = acquired_lease else {
             if wait_or_shutdown(&mut shutdown, distributed.acquire_interval).await {
                 return;
             }
             continue;
-        }
+        };
 
         #[cfg(feature = "tracing")]
         tracing::debug!(
@@ -307,18 +366,25 @@ async fn run_shard_supervisor<C>(
 
         // Keep renewal alive even when connecting, identifying, reconnecting,
         // or waiting for an application consumer to make room in its queue.
+        let lease = Arc::new(LeaseState {
+            deadline: Mutex::new(Some(deadline)),
+            identity: LeaseIdentity { owner_id: lease_owner.clone(), generation: acquired_lease.generation },
+        });
         let result = tokio::select! {
+            biased;
+            result = renew_owned_shard(&*coordinator, &lease_owner, shard_id, distributed, deadline, &lease) => result,
             result = run_owned_shard(
                 gateway_config.clone(),
                 shard_id,
                 &event_tx,
                 &mut shutdown,
+                &lease,
+                &budget,
             ) => result,
-            result = renew_owned_shard(&*coordinator, &lease_owner, shard_id, distributed, deadline) => {
-                // Dropping the owned-shard future also drops its socket.
-                result
-            }
         };
+        // Invalidate before releasing or reporting errors. Queued events will
+        // not be delivered as authoritative after this point.
+        lease.set_deadline(None);
 
         release_lease(&event_tx, &*coordinator, &lease_owner, shard_id).await;
         if let Err(error) = result {
@@ -327,7 +393,7 @@ async fn run_shard_supervisor<C>(
                 Error::GatewayClosed { code: Some(code), .. }
                     if code.reconnect_strategy() == GatewayReconnectStrategy::Stop
             );
-            if event_tx.send(Err(error)).await.is_err() || terminal {
+            if event_tx.send(Err(shard_error(shard_id, error))).await.is_err() || terminal {
                 return;
             }
         }
@@ -343,8 +409,10 @@ async fn run_shard_supervisor<C>(
 async fn run_owned_shard(
     config: GatewayConfig,
     shard_id: ShardId,
-    event_tx: &mpsc::Sender<Result<ShardEvent>>,
+    event_tx: &mpsc::Sender<QueuedEvent>,
     shutdown: &mut watch::Receiver<bool>,
+    lease: &Arc<LeaseState>,
+    budget: &crate::queue_budget::Budget,
 ) -> Result<()> {
     let mut gateway = tokio::select! {
         result = GatewayConnection::connect(config) => result?,
@@ -360,7 +428,14 @@ async fn run_owned_shard(
             }
             event = gateway.next_event() => {
                 let event = event?;
-                match event_tx.try_send(Ok(ShardEvent { shard_id, event })) {
+                if !lease.valid() {
+                    return Err(Error::GatewayProtocol("shard lease expired before event publication".into()));
+                }
+                let queued = budget.wrap(event.estimated_bytes(), OwnedEvent {
+                    event: ShardEvent { shard_id, event },
+                    lease: lease.clone(),
+                }).ok_or_else(|| Error::GatewayProtocol("distributed event byte budget exceeded".into()))?;
+                match event_tx.try_send(Ok(queued)) {
                     Ok(()) => {}
                     Err(mpsc::error::TrySendError::Closed(_)) => {
                         let _ = gateway.shutdown().await;
@@ -385,6 +460,7 @@ async fn renew_owned_shard<C>(
     shard_id: ShardId,
     distributed: DistributedShardConfig,
     mut deadline: Instant,
+    lease: &LeaseState,
 ) -> Result<()>
 where
     C: DistributedShardCoordinator + ?Sized,
@@ -415,6 +491,7 @@ where
         }
         // Conservatively measure the next lease from the request start.
         deadline = started + distributed.lease_ttl;
+        lease.set_deadline(Some(deadline));
     }
 }
 
@@ -434,7 +511,7 @@ async fn wait_or_shutdown(shutdown: &mut watch::Receiver<bool>, delay: Duration)
 }
 
 async fn release_lease<C>(
-    event_tx: &mpsc::Sender<Result<ShardEvent>>,
+    event_tx: &mpsc::Sender<QueuedEvent>,
     coordinator: &C,
     owner_id: &str,
     shard_id: ShardId,
@@ -454,18 +531,25 @@ async fn release_lease<C>(
 }
 
 async fn send_coordination_error(
-    event_tx: &mpsc::Sender<Result<ShardEvent>>,
+    event_tx: &mpsc::Sender<QueuedEvent>,
     shard_id: ShardId,
     operation: &str,
     error: GatewayCoordinationError,
 ) -> bool {
     event_tx
-        .send(Err(Error::GatewayProtocol(format!(
-            "Gateway coordination failed while {operation} for shard {}: {error}",
-            shard_id.get()
-        ))))
+        .send(Err(shard_error(shard_id, Error::GatewayProtocol(format!(
+            "Gateway coordination failed while {operation}: {error}"
+        )))))
         .await
         .is_ok()
+}
+
+impl<C: DistributedShardCoordinator + 'static> Drop for DistributedShardManager<C> {
+    fn drop(&mut self) {
+        for task in &self.tasks {
+            task.abort();
+        }
+    }
 }
 
 #[cfg(test)]

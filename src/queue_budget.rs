@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Conservative byte accounting for queued decoded payloads.
+#[derive(Debug, Clone)]
 pub(crate) struct Budget(Arc<Semaphore>);
 
 impl Default for Budget {
@@ -11,6 +12,7 @@ impl Default for Budget {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct Budgeted<T> {
     value: T,
     _permit: OwnedSemaphorePermit,

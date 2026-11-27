@@ -65,6 +65,13 @@ pub trait GatewayIdentifyCoordinator: Send + Sync {
     fn acquire_identify(&self, shard_id: ShardId) -> GatewayCoordinationFuture<'_, ()>;
 }
 
+/// Lease acquisition result. A backend that implements monotonic fencing
+/// supplies a generation strictly increasing for each successful acquisition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShardLease {
+    pub generation: Option<u64>,
+}
+
 /// Cross-process shard ownership and Identify coordinator.
 ///
 /// Implement this trait using a shared transactional store such as Redis, etcd,
@@ -86,6 +93,22 @@ pub trait DistributedShardCoordinator: GatewayIdentifyCoordinator + Send + Sync 
         shard_id: ShardId,
         lease_ttl: Duration,
     ) -> GatewayCoordinationFuture<'a, bool>;
+
+    /// Acquires a lease and optionally returns a monotonic fencing generation.
+    /// Override this method with an atomic store operation to enable fencing
+    /// of downstream writes. The default preserves compatibility but cannot
+    /// provide cross-process ordering.
+    fn acquire_fenced_shard<'a>(
+        &'a self,
+        owner_id: &'a str,
+        shard_id: ShardId,
+        lease_ttl: Duration,
+    ) -> GatewayCoordinationFuture<'a, Option<ShardLease>> {
+        Box::pin(async move {
+            self.acquire_shard(owner_id, shard_id, lease_ttl).await
+                .map(|owned| owned.then_some(ShardLease { generation: None }))
+        })
+    }
 
     /// Renews an existing shard lease.
     ///

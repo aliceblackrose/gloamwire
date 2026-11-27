@@ -187,6 +187,14 @@ pub enum Error {
     #[error(transparent)]
     WebSocket(#[from] tokio_tungstenite::tungstenite::Error),
 
+    /// An identified shard failed; the underlying error remains available.
+    #[error("Gateway shard {shard_id} failed: {source}")]
+    Shard {
+        shard_id: u32,
+        #[source]
+        source: Box<Error>,
+    },
+
     /// A managed asynchronous shard task failed.
     #[error(transparent)]
     TaskJoin(#[from] tokio::task::JoinError),
