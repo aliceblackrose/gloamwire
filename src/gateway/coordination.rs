@@ -65,11 +65,11 @@ pub trait GatewayIdentifyCoordinator: Send + Sync {
     fn acquire_identify(&self, shard_id: ShardId) -> GatewayCoordinationFuture<'_, ()>;
 }
 
-/// Lease acquisition result. A backend that implements monotonic fencing
-/// supplies a generation strictly increasing for each successful acquisition.
+/// Lease acquisition result. The backend must assign a generation strictly
+/// increasing for each successful acquisition of the same shard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShardLease {
-    pub generation: Option<u64>,
+    pub generation: u64,
 }
 
 /// Cross-process shard ownership and Identify coordinator.
@@ -92,24 +92,23 @@ pub trait DistributedShardCoordinator: GatewayIdentifyCoordinator + Send + Sync 
         owner_id: &'a str,
         shard_id: ShardId,
         lease_ttl: Duration,
-    ) -> GatewayCoordinationFuture<'a, bool>;
+    ) -> GatewayCoordinationFuture<'a, bool> {
+        Box::pin(async move {
+            self.acquire_fenced_shard(owner_id, shard_id, lease_ttl)
+                .await
+                .map(|lease| lease.is_some())
+        })
+    }
 
-    /// Acquires a lease and optionally returns a monotonic fencing generation.
-    /// Override this method with an atomic store operation to enable fencing
-    /// of downstream writes. The default preserves compatibility but cannot
-    /// provide cross-process ordering.
+    /// Atomically acquires an exclusive lease and a monotonic fencing generation.
+    /// The generation must survive releases and process restarts. Downstream
+    /// writes must atomically reject generations older than the current owner.
     fn acquire_fenced_shard<'a>(
         &'a self,
         owner_id: &'a str,
         shard_id: ShardId,
         lease_ttl: Duration,
-    ) -> GatewayCoordinationFuture<'a, Option<ShardLease>> {
-        Box::pin(async move {
-            self.acquire_shard(owner_id, shard_id, lease_ttl)
-                .await
-                .map(|owned| owned.then_some(ShardLease { generation: None }))
-        })
-    }
+    ) -> GatewayCoordinationFuture<'a, Option<ShardLease>>;
 
     /// Renews an existing shard lease.
     ///

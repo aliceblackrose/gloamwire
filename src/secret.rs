@@ -1,8 +1,9 @@
 use zeroize::Zeroize;
 
 /// Owned credential that redacts Debug and clears its allocation on drop.
-/// Serialization and explicit exposure reveal the credential; avoid logging them.
-#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// This type deliberately does not implement Serialize. Use explicit exposure
+/// only at an authenticated protocol boundary.
+#[derive(Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(transparent)]
 pub struct SecretString(String);
 
@@ -201,3 +202,12 @@ mod http_endpoint_tests {
         assert!(!same_origin("wss://example.com", "wss://other.example.com"));
     }
 }
+
+/// A secret cannot be serialized accidentally.
+///
+/// ```compile_fail
+/// let secret = gloamwire::SecretString::from("credential");
+/// let _ = serde_json::to_string(&secret);
+/// ```
+#[cfg(doctest)]
+struct SecretSerializationMustBeExplicit;

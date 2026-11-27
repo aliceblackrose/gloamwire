@@ -238,6 +238,7 @@ pub struct Interaction {
     pub member: Option<GuildMember>,
     #[serde(default)]
     pub user: Option<User>,
+    #[serde(skip_serializing)]
     pub token: crate::SecretString,
     pub version: u8,
     #[serde(default)]

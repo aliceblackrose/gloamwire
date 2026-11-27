@@ -57,7 +57,7 @@ pub struct Webhook {
     pub name: Option<String>,
     #[serde(default)]
     pub avatar: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub token: Option<crate::SecretString>,
     #[serde(default)]
     pub application_id: Option<ApplicationId>,
@@ -65,7 +65,7 @@ pub struct Webhook {
     pub source_guild: Option<WebhookSourceGuild>,
     #[serde(default)]
     pub source_channel: Option<WebhookSourceChannel>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub url: Option<crate::SecretString>,
 }
 
@@ -142,5 +142,18 @@ mod tests {
     fn webhook_type_preserves_unknown_values() {
         let kind: WebhookType = serde_json::from_str("9").expect("webhook type");
         assert_eq!(kind, WebhookType(9));
+    }
+}
+
+#[cfg(test)]
+mod secret_serialization_tests {
+    #[test]
+    fn webhook_serialization_omits_credentials() {
+        let webhook: super::Webhook = serde_json::from_value(serde_json::json!({
+            "id":"1", "type":1, "token":"secret-token", "url":"https://example.com/secret-token"
+        })).unwrap();
+        let value = serde_json::to_value(webhook).unwrap();
+        assert!(value.get("token").is_none());
+        assert!(value.get("url").is_none());
     }
 }

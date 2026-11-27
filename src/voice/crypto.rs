@@ -91,16 +91,15 @@ impl VoiceTransportCrypto {
     /// Creates transport crypto from a fresh Voice Gateway Session Description.
     /// Never construct a second outbound encryptor for an already used key.
     /// Prefer the session-owned encryptor for managed connections.
-    pub fn from_fresh_session_description(
+    pub(super) fn from_fresh_session_description(
         description: &VoiceSessionDescription,
     ) -> VoiceResult<Self> {
         Self::new_with_fresh_key(description.mode.clone(), description.secret_key)
     }
 
-    /// Creates transport crypto from a negotiated mode and fresh 32-byte session key.
-    /// The caller must guarantee the key has never been used by another outbound
-    /// encryptor. Reusing a key resets the nonce and breaks AEAD security.
-    pub fn new_with_fresh_key(
+    /// Internal constructor; outbound instances are owned exclusively by VoiceSession.
+    /// Receive-only wrappers may initialize a cipher without ever consuming a nonce.
+    fn new_with_fresh_key(
         mode: VoiceEncryptionMode,
         secret_key: [u8; 32],
     ) -> VoiceResult<Self> {

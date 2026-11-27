@@ -127,7 +127,7 @@ Enable `voice` to access the low-level Voice Gateway v8, UDP discovery, RTP sequ
 
 ```rust,no_run
 use gloamwire::voice::{
-    VoiceEncryptionMode, VoiceGatewayConfig, VoiceGatewayConnection, VoiceTransportCrypto,
+    VoiceEncryptionMode, VoiceGatewayConfig, VoiceGatewayConnection, VoiceTransportDecryptor,
     VoiceUdpSocket,
 };
 
@@ -144,7 +144,7 @@ gateway.select_protocol(&discovery, &mode).await?;
 #     secret_key: [0; 32],
 #     dave_protocol_version: 0,
 # };
-let transport_crypto = VoiceTransportCrypto::from_fresh_session_description(&description)?;
+let transport_crypto = VoiceTransportDecryptor::from_session_description(&description)?;
 # let _ = transport_crypto;
 # Ok(())
 # }
@@ -160,7 +160,7 @@ Applications should continuously drive the managed session's Voice Gateway event
 
 `ShardManager` remains the simple single-process manager. For multiple workers, `DistributedShardManager` combines Gateway connections with a user-supplied `DistributedShardCoordinator`.
 
-A coordinator backend is responsible for two application-wide invariants: exclusive renewable ownership of each shard and coordinated Discord Identify reservations. Gloamwire intentionally does not hardwire Redis, etcd, Consul, or a database driver into core; applications can implement the coordinator against whichever shared transactional store fits their deployment.
+A coordinator backend is responsible for two application-wide invariants: exclusive renewable ownership with a persistent monotonically increasing fencing generation per shard, and coordinated Discord Identify reservations. Implement `acquire_fenced_shard` atomically; both distributed event APIs return a mandatory `lease.generation`. Downstream stores must atomically reject stale generations. Gloamwire intentionally does not hardwire Redis, etcd, Consul, or a database driver into core; applications can implement the coordinator against whichever shared transactional store fits their deployment.
 
 Lease-renewal failure or loss of ownership immediately stops the affected Gateway connection, while unowned shards are retried so ownership can rebalance between workers. `DistributedShardConfig` controls lease TTL, renewal cadence, and acquisition retry cadence.
 
@@ -227,7 +227,7 @@ MIT
 
 For voice, transfer a negotiated `DaveVoiceSession` to `VoiceDriver::spawn(session)`. The driver independently processes Gateway heartbeats, DAVE transitions, UDP reception and outbound `VoiceCommand` operations. Control queue overflow stops the session; incoming audio uses a bounded best-effort queue, with drops available via `dropped_audio_packets()`. A terminal control error requires a fresh session. The low-level voice API remains available.
 
-When using a shared cache with a shard manager, feed each `ShardEvent` into `Cache::update_shard_event(&event, shard_count)` rather than calling the single-shard `update_gateway_event` API. This isolates READY invalidation and sequence deduplication per shard.
+When using a shared cache with a shard manager, feed each `ShardEvent` into `Cache::update_shard_event(&event, shard_count)` rather than calling the single-shard `update_gateway_event` API. This isolates READY handling and sequence deduplication per shard. Feed the complete stream: a sequence gap, parse/apply failure, or reconnect invalidates the cache conservatively. Call `mark_stream_lost()` on driver errors or known dropped events. Clear only when rebuilding fresh authoritative snapshots.
 
 ## Security configuration
 
@@ -240,14 +240,14 @@ to the configured origin. Non-Discord Voice Gateway origins require
 
 Managed voice sessions own their outbound nonce state: use
 `VoiceSession::encrypt_audio` for low-level media instead of replacing the
-transport encryptor. Low-level `VoiceTransportCrypto` constructors require a
-fresh, never-before-used outbound key. A provider must be ready before managed
+transport encryptor. Standalone outbound constructors are no longer public.
+A provider must be ready before managed
 DAVE media operations proceed. No external MLS provider is certified here.
 
 Credential fields use `SecretString`, which redacts debug output and zeroizes
 its owned allocation. Use `.expose()` when necessary, and `.into()` to
-construct credential fields from strings. Serialization still contains the
-credential. Server error details remain available through their public fields
+construct credential fields from strings. `SecretString` no longer implements
+`Serialize`; serialized interactions and webhooks omit token and webhook URL fields. Server error details remain available through their public fields
 but are omitted from default error formatting. REST rate-limit bookkeeping
 has fixed capacity and conservatively applies shared cooldowns at saturation.
 
@@ -271,15 +271,16 @@ Private or loopback infrastructure requires the separate explicit
 other rejected special-use addresses remain blocked. Hostnames are not
 resolved.
 
-Low-level outbound crypto construction now uses
-`VoiceTransportCrypto::new_with_fresh_key` or
-`VoiceTransportCrypto::from_fresh_session_description`. Only construct one
-outbound encryptor per fresh key, including across independent processes.
-For receive-only processing, use `VoiceTransportDecryptor`; standalone
-receivers must implement their own replay protection. Managed voice keeps
-outbound nonce state private. The API does not claim cross-process key
-uniqueness or certify external DAVE/MLS implementations.
+Outbound transport cryptography is constructed only by `VoiceSession`, which
+owns its nonce counter. For receive-only processing use `VoiceTransportDecryptor`;
+standalone receivers must implement replay protection. Independent connections
+still require distinct keys from the trusted voice service; the library cannot
+guarantee cross-process key uniqueness or certify external DAVE/MLS providers.
 
 Default debug formatting omits raw voice/DAVE payloads, encoded or decrypted
 audio, upload contents and paths, and OAuth2 state/redirect values. Explicit
-access and serialization can still reveal sensitive data.
+access to raw dispatch data or explicit secret exposure can still reveal sensitive data.
+
+### OAuth2 code-flow migration
+
+Use `OAuth2AuthorizationUrl::begin_code_flow()` to obtain the URL and a non-cloneable, expiring pending authorization. Store the pending guard in the initiating browser's server-side session. Remove it from that session on callback and pass it, the returned code, and the returned state to `OAuth2Client::exchange_code`. A state mismatch or expired guard fails before any network request. The redirect URI and client ID are bound to the guard. Prefer authorization-code flows over the legacy implicit grant.
