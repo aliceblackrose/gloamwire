@@ -159,6 +159,18 @@ pub enum VoiceGatewayEvent {
     },
 }
 
+impl VoiceGatewayEvent {
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        match self {
+            Self::ClientsConnect(data) | Self::ClientDisconnect(data) | Self::Unknown { data, .. } =>
+                crate::queue_budget::json_bytes(data),
+            Self::Dave(DaveGatewayEvent::Binary { payload, .. }) => payload.capacity().saturating_add(128),
+            Self::Dave(DaveGatewayEvent::Json { data, .. }) => crate::queue_budget::json_bytes(data),
+            _ => 256,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{VoiceEncryptionMode, VoiceError};

@@ -289,7 +289,7 @@ impl VoiceGatewayConnection {
         let mut bytes = Vec::with_capacity(payload.len() + 1);
         bytes.push(opcode);
         bytes.extend_from_slice(payload);
-        self.socket.send(Message::Binary(bytes.into())).await?;
+        write_message(&mut self.socket, Message::Binary(bytes.into())).await?;
         Ok(())
     }
 
@@ -658,7 +658,7 @@ async fn next_inbound(socket: &mut VoiceSocket) -> VoiceResult<Inbound> {
                     payload: bytes[3..].to_vec(),
                 }));
             }
-            Message::Ping(payload) => socket.send(Message::Pong(payload)).await?,
+            Message::Ping(payload) => write_message(socket, Message::Pong(payload)).await?,
             Message::Close(frame) => return Err(closed_error(frame)),
             Message::Pong(_) | Message::Frame(_) => {}
         }
@@ -702,6 +702,13 @@ fn event_from_envelope(envelope: NormalizedEnvelope) -> VoiceResult<Option<Voice
     Ok(Some(event))
 }
 
+async fn write_message(socket: &mut VoiceSocket, message: Message) -> VoiceResult<()> {
+    let timeout = Duration::from_secs(5);
+    tokio::time::timeout(timeout, socket.send(message)).await
+        .map_err(|_| VoiceError::Timeout(timeout))??;
+    Ok(())
+}
+
 async fn send_json<T>(socket: &mut VoiceSocket, opcode: u8, data: &T) -> VoiceResult<()>
 where
     T: Serialize,
@@ -710,8 +717,7 @@ where
         op: opcode,
         d: data,
     })?;
-    socket.send(Message::Text(text.into())).await?;
-    Ok(())
+    write_message(socket, Message::Text(text.into())).await
 }
 
 fn update_sequence(current: &mut Option<u16>, received: Option<u16>) {

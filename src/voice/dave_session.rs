@@ -161,11 +161,17 @@ where
         };
 
         if let DaveProtocolEvent::ClientDisconnect { user_id } = &dave_event {
-            self.replay
-                .retain(|ssrc, _| self.ssrc_users.get(ssrc) != Some(user_id));
+            // Replay windows are keyed to this transport key, not membership.
+            // Retain tombstones until the entire session/key is replaced.
             self.ssrc_users.retain(|_, mapped| mapped != user_id);
         }
 
+        if self.protocol_failed {
+            return Err(VoiceError::Protocol("DAVE control state failed; restart voice session".into()));
+        }
+        // Set before any provider mutation or await. If this future is dropped
+        // during command transmission, the session remains fail-closed.
+        self.protocol_failed = true;
         self.participants.apply(&dave_event);
         let commands = match self
             .provider
@@ -186,14 +192,15 @@ where
                         self.protocol_failed = true;
                         return Err(error);
                     }
+                    self.protocol_failed = false;
                     return Ok(());
                 }
                 return Err(provider_error(error));
             }
         };
         let result = send_commands(&mut self.session, commands).await;
-        if result.is_err() {
-            self.protocol_failed = true;
+        if result.is_ok() {
+            self.protocol_failed = false;
         }
         result
     }
@@ -226,6 +233,9 @@ where
     /// Decrypts one already-received Discord UDP packet into an encoded Opus
     /// frame, including DAVE sender-ratchet processing when required.
     pub fn decrypt_rtp_packet(&mut self, packet: &[u8]) -> VoiceResult<VoiceReceivedOpus> {
+        if self.protocol_failed {
+            return Err(VoiceError::Protocol("DAVE control state failed; restart voice session".into()));
+        }
         let decrypted = self.session.transport_crypto().decrypt_rtp(packet)?;
         let header = decode_audio_header(&decrypted.header)?;
         let sender = self.ssrc_users.get(&header.ssrc).copied();

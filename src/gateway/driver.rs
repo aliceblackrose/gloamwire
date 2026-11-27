@@ -24,18 +24,25 @@ pub enum GatewayCommand {
     RequestChannelInfo(RequestChannelInfo),
 }
 
-type Command = (GatewayCommand, oneshot::Sender<Result<()>>);
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+type Command = (GatewayCommand, tokio::time::Instant, oneshot::Sender<Result<()>>);
+type QueuedEvent = crate::queue_budget::Budgeted<GatewayEvent>;
 
 /// Cloneable outbound handle; sending a command does not require the event receiver.
 #[derive(Debug, Clone)]
 pub struct GatewayCommandSender(mpsc::Sender<Command>);
 
 impl GatewayCommandSender {
-    /// Queues a command and awaits the actual write result.
+    /// Queues an operation with a ten-second end-to-end deadline.
+    /// Abandoned queued commands are skipped; cancellation cannot undo a write
+    /// that has already started.
     pub async fn send(&self, command: GatewayCommand) -> Result<()> {
-        let (reply, response) = oneshot::channel();
-        self.0.send((command, reply)).await.map_err(|_| stopped())?;
-        response.await.map_err(|_| stopped())?
+        let deadline = tokio::time::Instant::now() + COMMAND_TIMEOUT;
+        tokio::time::timeout_at(deadline, async {
+            let (reply, response) = oneshot::channel();
+            self.0.send((command, deadline, reply)).await.map_err(|_| stopped())?;
+            response.await.map_err(|_| stopped())?
+        }).await.map_err(|_| Error::GatewayProtocol("Gateway command deadline exceeded; execution may already have started".into()))?
     }
 }
 
@@ -46,7 +53,7 @@ impl GatewayCommandSender {
 /// queued events are drained rather than silently losing dispatches.
 pub struct GatewayDriver {
     commands: GatewayCommandSender,
-    events: mpsc::Receiver<GatewayEvent>,
+    events: mpsc::Receiver<QueuedEvent>,
     stop: watch::Sender<bool>,
     task: Option<JoinHandle<Result<()>>>,
 }
@@ -88,7 +95,7 @@ impl GatewayDriver {
     /// Receives a dispatch or lifecycle event; yields any terminal driver error once.
     pub async fn next_event(&mut self) -> Option<Result<GatewayEvent>> {
         if let Some(event) = self.events.recv().await {
-            return Some(Ok(event));
+            return Some(Ok(event.into_inner()));
         }
         let task = self.task.as_mut()?;
         let result = task.await;
@@ -137,16 +144,20 @@ fn stopped() -> Error {
 async fn run(
     mut connection: GatewayConnection,
     mut commands: mpsc::Receiver<Command>,
-    events: mpsc::Sender<GatewayEvent>,
+    events: mpsc::Sender<QueuedEvent>,
     mut stop: watch::Receiver<bool>,
 ) -> Result<()> {
+    let budget = crate::queue_budget::Budget::default();
     loop {
         let input = tokio::select! {
             _ = stop.changed() => break,
             result = connection.next_event_or(commands.recv()) => result?,
         };
         match input {
-            Either::Left(event) => match events.try_send(event) {
+            Either::Left(event) => {
+                let queued = budget.wrap(event.estimated_bytes(), event)
+                    .ok_or_else(|| Error::GatewayProtocol("Gateway event byte budget exceeded".into()))?;
+                match events.try_send(queued) {
                 Ok(()) => {}
                 Err(mpsc::error::TrySendError::Closed(_)) => break,
                 Err(mpsc::error::TrySendError::Full(_)) => {
@@ -154,9 +165,17 @@ async fn run(
                         "Gateway driver event queue overflow".into(),
                     ));
                 }
-            },
-            Either::Right(Some((command, reply))) => {
-                let result = tokio::time::timeout(Duration::from_secs(5), async {
+                }
+            }
+            Either::Right(Some((command, deadline, reply))) => {
+                if reply.is_closed() || tokio::time::Instant::now() >= deadline {
+                    continue;
+                }
+                if !connection.is_ready() {
+                    let _ = reply.send(Err(Error::GatewayProtocol("Gateway is not READY".into())));
+                    continue;
+                }
+                let result = tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + Duration::from_secs(5)), async {
                     match command {
                         GatewayCommand::UpdatePresence(update) => {
                             connection.update_presence(&update).await

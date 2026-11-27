@@ -43,3 +43,13 @@ pub enum GatewayEvent {
         data: Value,
     },
 }
+
+impl GatewayEvent {
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        match self {
+            Self::Dispatch(event) => crate::queue_budget::json_bytes(&event.data).saturating_add(event.name.capacity()),
+            Self::Unknown { data, .. } => crate::queue_budget::json_bytes(data),
+            _ => 128,
+        }
+    }
+}

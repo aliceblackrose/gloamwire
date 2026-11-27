@@ -29,18 +29,25 @@ pub enum VoiceCommand {
     FinishSpeaking,
 }
 
-type Command = (VoiceCommand, oneshot::Sender<VoiceResult<()>>);
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+type Command = (VoiceCommand, tokio::time::Instant, oneshot::Sender<VoiceResult<()>>);
+type QueuedEvent = crate::queue_budget::Budgeted<VoiceGatewayEvent>;
 
 /// Cloneable outbound voice handle.
 #[derive(Debug, Clone)]
 pub struct VoiceCommandSender(mpsc::Sender<Command>);
 
 impl VoiceCommandSender {
-    /// Queues an operation and waits for its actual result.
+    /// Queues an operation with a ten-second end-to-end deadline.
+    /// Abandoned queued commands are skipped; cancellation cannot undo a write
+    /// that has already started.
     pub async fn send(&self, command: VoiceCommand) -> VoiceResult<()> {
-        let (reply, response) = oneshot::channel();
-        self.0.send((command, reply)).await.map_err(|_| stopped())?;
-        response.await.map_err(|_| stopped())?
+        let deadline = tokio::time::Instant::now() + COMMAND_TIMEOUT;
+        tokio::time::timeout_at(deadline, async {
+            let (reply, response) = oneshot::channel();
+            self.0.send((command, deadline, reply)).await.map_err(|_| stopped())?;
+            response.await.map_err(|_| stopped())?
+        }).await.map_err(|_| VoiceError::Timeout(COMMAND_TIMEOUT))?
     }
 }
 
@@ -53,7 +60,7 @@ impl VoiceCommandSender {
 /// establishing a fresh voice session after observing that error.
 pub struct VoiceDriver {
     commands: VoiceCommandSender,
-    events: mpsc::Receiver<VoiceGatewayEvent>,
+    events: mpsc::Receiver<QueuedEvent>,
     audio: Option<mpsc::Receiver<VoiceReceivedOpus>>,
     dropped: Arc<AtomicU64>,
     stop: watch::Sender<bool>,
@@ -102,7 +109,7 @@ impl VoiceDriver {
     /// Receives control events and reports the terminal driver error once.
     pub async fn next_event(&mut self) -> Option<VoiceResult<VoiceGatewayEvent>> {
         if let Some(event) = self.events.recv().await {
-            return Some(Ok(event));
+            return Some(Ok(event.into_inner()));
         }
         let result = self.task.as_mut()?.await;
         self.task.take();
@@ -172,13 +179,14 @@ fn stopped() -> VoiceError {
 async fn run<P: DaveProviderLifecycle + Send>(
     mut session: DaveVoiceSession<P>,
     mut commands: mpsc::Receiver<Command>,
-    events: mpsc::Sender<VoiceGatewayEvent>,
+    events: mpsc::Sender<QueuedEvent>,
     audio: mpsc::Sender<VoiceReceivedOpus>,
     dropped: Arc<AtomicU64>,
     mut stop: watch::Receiver<bool>,
 ) -> VoiceResult<()> {
     let mut buffer = vec![0; 65_536];
     let timeout = Duration::from_secs(5);
+    let budget = crate::queue_budget::Budget::default();
     loop {
         let input = tokio::select! {
             _ = stop.changed() => break,
@@ -189,7 +197,9 @@ async fn run<P: DaveProviderLifecycle + Send>(
                 tokio::time::timeout(timeout, session.apply_gateway_event(&event))
                     .await
                     .map_err(|_| VoiceError::Timeout(timeout))??;
-                match events.try_send(event) {
+                let queued = budget.wrap(event.estimated_bytes(), event)
+                    .ok_or_else(|| VoiceError::Protocol("voice control byte budget exceeded".into()))?;
+                match events.try_send(queued) {
                     Ok(()) => {}
                     Err(mpsc::error::TrySendError::Closed(_)) => break,
                     Err(mpsc::error::TrySendError::Full(_)) => {
@@ -209,8 +219,11 @@ async fn run<P: DaveProviderLifecycle + Send>(
                     dropped.fetch_add(1, Ordering::Relaxed);
                 }
             },
-            VoiceInput::External(Some((command, reply))) => {
-                let result = tokio::time::timeout(timeout, async {
+            VoiceInput::External(Some((command, deadline, reply))) => {
+                if reply.is_closed() || tokio::time::Instant::now() >= deadline {
+                    continue;
+                }
+                let result = tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + Duration::from_secs(5)), async {
                     match command {
                         VoiceCommand::SendOpus { payload, duration } => session
                             .send_opus_frame(VoiceOpusFrame::new(&payload, duration)?)

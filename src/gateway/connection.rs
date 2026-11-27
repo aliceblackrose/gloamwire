@@ -178,7 +178,8 @@ impl GatewayConfig {
 /// while the connection is active.
 pub struct GatewayConnection {
     config: GatewayConfig,
-    socket: GatewaySocket,
+    socket: Option<GatewaySocket>,
+    ready: bool,
     decoder: GatewayDecoder,
     heartbeat: Interval,
     heartbeat_acknowledged: bool,
@@ -213,7 +214,8 @@ impl GatewayConnection {
 
         Ok(Self {
             config,
-            socket,
+            socket: Some(socket),
+            ready: false,
             decoder,
             heartbeat,
             heartbeat_acknowledged: last_heartbeat_sent.is_none(),
@@ -280,15 +282,14 @@ impl GatewayConnection {
             return Ok(());
         }
 
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            self.socket.send(Message::Close(Some(CloseFrame {
+        self.ready = false;
+        if let Some(socket) = self.socket.as_mut() {
+            write_message(socket, Message::Close(Some(CloseFrame {
                 code: CloseCode::Normal,
                 reason: "Gloamwire shutdown".into(),
-            }))),
-        )
-        .await
-        .map_err(|_| Error::GatewayProtocol("Gateway shutdown timed out".into()))??;
+            }))).await?;
+        }
+        self.socket.take();
         self.shutdown = true;
         self.session = None;
         self.sequence = None;
@@ -325,6 +326,9 @@ impl GatewayConnection {
             });
         }
 
+        if self.socket.is_none() {
+            self.reconnect(GatewayReconnectStrategy::Resume).await?;
+        }
         loop {
             tokio::select! {
                 output = &mut external => return Ok(Either::Right(output)),
@@ -342,7 +346,7 @@ impl GatewayConnection {
                         Err(error) => return Err(error),
                     }
                 }
-                envelope = next_envelope(&mut self.socket, &mut self.decoder, self.config.encoding) => {
+                envelope = next_envelope(self.socket.as_mut().ok_or_else(disconnected)?, &mut self.decoder, self.config.encoding) => {
                     let envelope = match envelope {
                         Ok(envelope) => envelope,
                         Err(Error::GatewayClosed { code, reason }) => {
@@ -426,6 +430,10 @@ impl GatewayConnection {
             ));
         }
 
+        if name == "READY" || name == "RESUMED" {
+            self.ready = true;
+        }
+
         Ok(GatewayEvent::Dispatch(DispatchEvent {
             name,
             sequence,
@@ -438,6 +446,12 @@ impl GatewayConnection {
         if let Some(session) = &mut self.session {
             session.update_sequence(sequence);
         }
+    }
+
+    /// True after READY or RESUMED on the current transport.
+    #[must_use]
+    pub const fn is_ready(&self) -> bool {
+        self.ready && !self.shutdown
     }
 
     async fn send_event<T>(&mut self, opcode: u8, data: &T) -> Result<()>
@@ -466,13 +480,13 @@ impl GatewayConnection {
             return Err(Error::GatewayOutboundRateLimited { retry_after });
         }
 
-        send_payload(&mut self.socket, payload).await
+        send_payload(self.socket.as_mut().ok_or_else(disconnected)?, payload).await
     }
 
     async fn send_heartbeat(&mut self) -> Result<()> {
         let sent_at = Instant::now();
         send_heartbeat(
-            &mut self.socket,
+            self.socket.as_mut().ok_or_else(disconnected)?,
             &self.rate_limiter,
             self.config.encoding,
             self.sequence,
@@ -494,6 +508,10 @@ impl GatewayConnection {
             ));
         }
 
+        self.ready = false;
+        // Retire the old transport before opening a replacement.
+        self.socket.take();
+
         if strategy == GatewayReconnectStrategy::Reidentify {
             self.session = None;
             self.sequence = None;
@@ -510,7 +528,7 @@ impl GatewayConnection {
             let rate_limiter = Arc::new(GatewayRateLimiter::default());
             match open_and_handshake(&config, session.as_ref(), &rate_limiter).await {
                 Ok((socket, decoder, heartbeat, last_heartbeat_sent)) => {
-                    self.socket = socket;
+                    self.socket = Some(socket);
                     self.decoder = decoder;
                     self.heartbeat = heartbeat;
                     self.heartbeat_acknowledged = last_heartbeat_sent.is_none();
@@ -746,7 +764,7 @@ async fn next_envelope(
                     return encoding.decode_bytes(&decoded);
                 }
             }
-            Message::Ping(payload) => socket.send(Message::Pong(payload)).await?,
+            Message::Ping(payload) => write_message(socket, Message::Pong(payload)).await?,
             Message::Close(frame) => {
                 let code = frame
                     .as_ref()
@@ -789,7 +807,8 @@ where
     T: Serialize,
 {
     let payload = encode_payload(encoding, payload)?;
-    rate_limiter.acquire(priority).await;
+    tokio::time::timeout(Duration::from_secs(5), rate_limiter.acquire(priority))
+        .await.map_err(|_| write_timeout())?;
     send_payload(socket, payload).await
 }
 
@@ -808,13 +827,28 @@ where
     Ok(payload)
 }
 
+fn disconnected() -> Error {
+    Error::GatewayClosed { code: None, reason: "Gateway transport unavailable".into() }
+}
+
+fn write_timeout() -> Error {
+    Error::WebSocket(tokio_tungstenite::tungstenite::Error::Io(
+        std::io::Error::new(std::io::ErrorKind::TimedOut, "Gateway write deadline exceeded"),
+    ))
+}
+
+async fn write_message(socket: &mut GatewaySocket, message: Message) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(5), socket.send(message))
+        .await.map_err(|_| write_timeout())??;
+    Ok(())
+}
+
 async fn send_payload(socket: &mut GatewaySocket, payload: EncodedGatewayPayload) -> Result<()> {
     let message = match payload {
         EncodedGatewayPayload::Text(text) => Message::Text(text.into()),
         EncodedGatewayPayload::Binary(bytes) => Message::Binary(bytes.into()),
     };
-    socket.send(message).await?;
-    Ok(())
+    write_message(socket, message).await
 }
 
 fn gateway_url(
