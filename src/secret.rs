@@ -141,11 +141,28 @@ pub(crate) fn discord_websocket_origin(endpoint: &str) -> bool {
     };
     url.scheme() == "wss"
         && url.port_or_known_default() == Some(443)
-        && url.host_str().is_some_and(|host| {
-            ["discord.gg", "discord.com", "discord.media"]
-                .iter()
-                .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
-        })
+        && discord_websocket_host(&url)
+}
+
+/// Voice Server Update may specify a non-default TLS port. Keep the same
+/// Discord hostname boundary without imposing the main Gateway's port policy.
+#[cfg(feature = "voice")]
+pub(crate) fn discord_voice_websocket_origin(endpoint: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(endpoint) else {
+        return false;
+    };
+    secure_websocket_endpoint(endpoint, false)
+        && url.port_or_known_default().is_some_and(|port| port != 0)
+        && discord_websocket_host(&url)
+}
+
+#[cfg(feature = "transport")]
+fn discord_websocket_host(url: &reqwest::Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        ["discord.gg", "discord.com", "discord.media"]
+            .iter()
+            .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+    })
 }
 
 #[cfg(feature = "transport")]
