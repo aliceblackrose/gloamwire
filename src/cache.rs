@@ -689,7 +689,11 @@ impl Cache {
             .iter()
             .filter_map(|(&id, message)| {
                 (message.guild_id == Some(guild_id)
-                    || self.channels.get(&message.channel_id).is_some_and(|channel| channel.guild_id == Some(guild_id))).then_some(id)
+                    || self
+                        .channels
+                        .get(&message.channel_id)
+                        .is_some_and(|channel| channel.guild_id == Some(guild_id)))
+                .then_some(id)
             })
             .collect::<Vec<_>>();
         self.remove_guild_children(guild_id);

@@ -273,7 +273,12 @@ impl VoiceGatewayConnection {
                 "Voice DAVE opcode {opcode} is not a client JSON opcode"
             )));
         }
-        send_json(self.socket.as_mut().ok_or_else(transport_unavailable)?, opcode, data).await
+        send_json(
+            self.socket.as_mut().ok_or_else(transport_unavailable)?,
+            opcode,
+            data,
+        )
+        .await
     }
 
     /// Sends a binary DAVE client opcode. Client binary messages contain the
@@ -287,12 +292,18 @@ impl VoiceGatewayConnection {
         }
 
         if payload.len() >= MAX_INBOUND_BYTES {
-            return Err(VoiceError::Protocol("oversized outbound Voice Gateway binary payload".into()));
+            return Err(VoiceError::Protocol(
+                "oversized outbound Voice Gateway binary payload".into(),
+            ));
         }
         let mut bytes = Vec::with_capacity(payload.len() + 1);
         bytes.push(opcode);
         bytes.extend_from_slice(payload);
-        write_message(self.socket.as_mut().ok_or_else(transport_unavailable)?, Message::Binary(bytes.into())).await?;
+        write_message(
+            self.socket.as_mut().ok_or_else(transport_unavailable)?,
+            Message::Binary(bytes.into()),
+        )
+        .await?;
         Ok(())
     }
 
@@ -370,7 +381,8 @@ impl VoiceGatewayConnection {
         // Retire the previous socket before initiating the replacement handshake.
         self.socket.take();
         // A stale synthetic Resumed event must not authorize media on a later recovery.
-        self.pending.retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
+        self.pending
+            .retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
         let (mut socket, mut heartbeat) = open_socket(&self.config.endpoint).await?;
         send_json(
             &mut socket,
@@ -439,10 +451,14 @@ impl VoiceGatewayConnection {
         self.shutdown = true;
         self.pending.clear();
         if let Some(mut socket) = self.socket.take() {
-            write_message(&mut socket, Message::Close(Some(CloseFrame {
-                code: CloseCode::Normal,
-                reason: "Gloamwire voice shutdown".into(),
-            }))).await?;
+            write_message(
+                &mut socket,
+                Message::Close(Some(CloseFrame {
+                    code: CloseCode::Normal,
+                    reason: "Gloamwire voice shutdown".into(),
+                })),
+            )
+            .await?;
         }
         Ok(())
     }
@@ -551,15 +567,20 @@ struct Speaking {
 
 async fn open_socket(endpoint: &str) -> VoiceResult<(VoiceSocket, Interval)> {
     let url = voice_gateway_url(endpoint);
-    let (mut socket, _) = tokio::time::timeout(NEGOTIATION_TIMEOUT, connect_async_with_config(
-        url,
-        Some(WebSocketConfig::default()
-            .max_message_size(Some(MAX_INBOUND_BYTES))
-            .max_frame_size(Some(MAX_INBOUND_BYTES))),
-        false,
-    ))
-        .await
-        .map_err(|_| VoiceError::Timeout(NEGOTIATION_TIMEOUT))??;
+    let (mut socket, _) = tokio::time::timeout(
+        NEGOTIATION_TIMEOUT,
+        connect_async_with_config(
+            url,
+            Some(
+                WebSocketConfig::default()
+                    .max_message_size(Some(MAX_INBOUND_BYTES))
+                    .max_frame_size(Some(MAX_INBOUND_BYTES)),
+            ),
+            false,
+        ),
+    )
+    .await
+    .map_err(|_| VoiceError::Timeout(NEGOTIATION_TIMEOUT))??;
 
     match tokio::time::timeout(NEGOTIATION_TIMEOUT, next_inbound(&mut socket))
         .await

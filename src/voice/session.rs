@@ -300,7 +300,8 @@ impl VoiceSession {
         }
         match strategy {
             VoiceReconnectStrategy::Resume => {
-                self.pending.retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
+                self.pending
+                    .retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
                 self.gateway.resume().await?;
                 Ok(VoiceRecoveryOutcome::Resumed)
             }

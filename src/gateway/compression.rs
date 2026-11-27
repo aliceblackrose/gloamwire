@@ -173,7 +173,8 @@ impl ZstdStreamDecoder {
     fn new() -> Result<Self> {
         let mut decoder =
             ZstdDecoder::new().map_err(|error| Error::GatewayCompression(error.to_string()))?;
-        decoder.set_parameter(zstd::stream::raw::DParameter::WindowLogMax(25))
+        decoder
+            .set_parameter(zstd::stream::raw::DParameter::WindowLogMax(25))
             .map_err(|error| Error::GatewayCompression(error.to_string()))?;
         Ok(Self { decoder })
     }

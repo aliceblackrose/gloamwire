@@ -278,12 +278,24 @@ fn tombstone_eviction_invalidates_exact_member_count() {
 fn guild_delete_removes_messages_without_explicit_guild_id() {
     let mut cache = Cache::new(gloamwire::CacheConfig::new().message_capacity(8));
     let events = [
-        ("GUILD_CREATE", json!({"id":"1","name":"guild","owner_id":"2","channels":[{"id":"10","type":0}]})),
-        ("MESSAGE_CREATE", json!({"id":"50","channel_id":"10","author":{"id":"2","username":"user"}})),
+        (
+            "GUILD_CREATE",
+            json!({"id":"1","name":"guild","owner_id":"2","channels":[{"id":"10","type":0}]}),
+        ),
+        (
+            "MESSAGE_CREATE",
+            json!({"id":"50","channel_id":"10","author":{"id":"2","username":"user"}}),
+        ),
         ("GUILD_DELETE", json!({"id":"1","unavailable":false})),
     ];
-    for (i,(name,data)) in events.into_iter().enumerate() {
-        cache.update_dispatch(&DispatchEvent {name:name.into(),sequence:i as u64+1,data}).unwrap();
+    for (i, (name, data)) in events.into_iter().enumerate() {
+        cache
+            .update_dispatch(&DispatchEvent {
+                name: name.into(),
+                sequence: i as u64 + 1,
+                data,
+            })
+            .unwrap();
     }
     assert!(cache.message(MessageId::new(50)).is_none());
 }

@@ -71,7 +71,8 @@ impl VoiceUdpSocket {
         let timeout = std::time::Duration::from_secs(3);
         let mut received = None;
         for _ in 0..3 {
-            tokio::time::timeout(timeout, self.socket.send(&request)).await
+            tokio::time::timeout(timeout, self.socket.send(&request))
+                .await
                 .map_err(|_| VoiceError::Timeout(timeout))??;
             if let Ok(result) = tokio::time::timeout(timeout, self.socket.recv(&mut response)).await
             {
@@ -126,7 +127,9 @@ impl VoiceUdpSocket {
 
         let port = u16::from_be_bytes([response[72], response[73]]);
         if port == 0 {
-            return Err(VoiceError::InvalidDiscoveryResponse("external port was zero".into()));
+            return Err(VoiceError::InvalidDiscoveryResponse(
+                "external port was zero".into(),
+            ));
         }
         Ok(VoiceUdpDiscovery { address, port })
     }

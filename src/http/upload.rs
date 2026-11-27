@@ -1,4 +1,7 @@
-use std::{collections::HashSet, path::{Path, PathBuf}};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use reqwest::multipart::{Form, Part};
 
@@ -123,10 +126,17 @@ impl UploadFile {
 
     fn validate(&self) -> Result<()> {
         if self.filename.is_empty() || self.filename.chars().any(char::is_control) {
-            return Err(Error::InvalidRestRequest("upload filename is empty or contains control characters".into()));
+            return Err(Error::InvalidRestRequest(
+                "upload filename is empty or contains control characters".into(),
+            ));
         }
-        if self.duration_secs.is_some_and(|duration| !duration.is_finite() || duration < 0.0) {
-            return Err(Error::InvalidRestRequest("upload duration must be finite and nonnegative".into()));
+        if self
+            .duration_secs
+            .is_some_and(|duration| !duration.is_finite() || duration < 0.0)
+        {
+            return Err(Error::InvalidRestRequest(
+                "upload duration must be finite and nonnegative".into(),
+            ));
         }
         Ok(())
     }
@@ -152,7 +162,9 @@ pub(crate) async fn multipart_form(payload_json: String, files: &[UploadFile]) -
     for file in files {
         file.validate()?;
         if !ids.insert(file.id) {
-            return Err(Error::InvalidRestRequest("duplicate multipart file ID".into()));
+            return Err(Error::InvalidRestRequest(
+                "duplicate multipart file ID".into(),
+            ));
         }
     }
     let mut form = Form::new().text("payload_json", payload_json);
@@ -197,10 +209,21 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_duplicate_file_ids_and_invalid_metadata() {
-        let files = [UploadFile::bytes(0, "first.txt", [1]), UploadFile::bytes(0, "second.txt", [2])];
-        assert!(matches!(super::multipart_form("{}".into(), &files).await, Err(Error::InvalidRestRequest(_))));
+        let files = [
+            UploadFile::bytes(0, "first.txt", [1]),
+            UploadFile::bytes(0, "second.txt", [2]),
+        ];
+        assert!(matches!(
+            super::multipart_form("{}".into(), &files).await,
+            Err(Error::InvalidRestRequest(_))
+        ));
         assert!(UploadFile::bytes(0, "bad\nname", [1]).validate().is_err());
-        assert!(UploadFile::bytes(0, "audio.ogg", [1]).duration_secs(f64::NAN).validate().is_err());
+        assert!(
+            UploadFile::bytes(0, "audio.ogg", [1])
+                .duration_secs(f64::NAN)
+                .validate()
+                .is_err()
+        );
     }
 
     #[tokio::test]

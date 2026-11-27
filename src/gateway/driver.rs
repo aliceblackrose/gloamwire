@@ -51,7 +51,10 @@ impl GatewayCommandSender {
             GatewayCommand::RequestChannelInfo(value) => serde_json::to_vec(value)?,
         };
         if bytes.len() > 4096 {
-            return Err(Error::GatewayPayloadTooLarge { actual: bytes.len(), limit: 4096 });
+            return Err(Error::GatewayPayloadTooLarge {
+                actual: bytes.len(),
+                limit: 4096,
+            });
         }
         let deadline = tokio::time::Instant::now() + COMMAND_TIMEOUT;
         tokio::time::timeout_at(deadline, async {
