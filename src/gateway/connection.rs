@@ -46,7 +46,7 @@ type GatewaySocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 /// Configuration used to create a Gateway connection.
 #[derive(Clone)]
 pub struct GatewayConfig {
-    token: String,
+    token: crate::secret::SecretString,
     intents: GatewayIntents,
     url: String,
     shard: Option<[u32; 2]>,
@@ -75,7 +75,7 @@ impl GatewayConfig {
     #[must_use]
     pub fn new(token: impl Into<String>, intents: GatewayIntents) -> Self {
         Self {
-            token: token.into(),
+            token: crate::secret::SecretString::new(token.into()),
             intents,
             url: DEFAULT_GATEWAY_URL.to_owned(),
             shard: None,
@@ -98,7 +98,7 @@ impl GatewayConfig {
         gateway: &GatewayBot,
     ) -> Self {
         Self {
-            token: token.into(),
+            token: crate::secret::SecretString::new(token.into()),
             intents,
             url: gateway.url.clone(),
             shard: None,
@@ -651,7 +651,7 @@ async fn open_and_handshake(
             &OutboundEnvelope {
                 op: 6,
                 d: Resume {
-                    token: &config.token,
+                    token: config.token.expose(),
                     session_id: session.session_id(),
                     seq: session.sequence(),
                 },
@@ -708,7 +708,7 @@ async fn open_and_handshake(
             &OutboundEnvelope {
                 op: 2,
                 d: Identify {
-                    token: &config.token,
+                    token: config.token.expose(),
                     intents: config.intents.bits(),
                     properties: IdentifyProperties {
                         os: std::env::consts::OS,

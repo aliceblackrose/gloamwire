@@ -48,7 +48,7 @@ impl VoiceCommandSender {
 pub struct VoiceDriver {
     commands: VoiceCommandSender,
     events: mpsc::Receiver<VoiceGatewayEvent>,
-    audio: mpsc::Receiver<VoiceReceivedOpus>,
+    audio: Option<mpsc::Receiver<VoiceReceivedOpus>>,
     dropped: Arc<AtomicU64>,
     stop: watch::Sender<bool>,
     task: Option<JoinHandle<VoiceResult<()>>>,
@@ -70,7 +70,7 @@ impl VoiceDriver {
         let (stop, stop_rx) = watch::channel(false);
         let dropped = Arc::new(AtomicU64::new(0));
         let task = tokio::spawn(run(session, command_rx, event_tx, audio_tx, Arc::clone(&dropped), stop_rx));
-        Self { commands: VoiceCommandSender(commands), events, audio, dropped, stop, task: Some(task) }
+        Self { commands: VoiceCommandSender(commands), events, audio: Some(audio), dropped, stop, task: Some(task) }
     }
 
     /// Returns an independently usable outbound handle.
@@ -95,7 +95,13 @@ impl VoiceDriver {
 
     /// Receives decoded Opus audio. Returns None when the driver stops.
     pub async fn next_audio(&mut self) -> Option<VoiceReceivedOpus> {
-        self.audio.recv().await
+        self.audio.as_mut()?.recv().await
+    }
+
+    /// Transfers the inbound audio receiver to a separate application task.
+    /// Subsequent calls to next_audio return None.
+    pub fn take_audio_receiver(&mut self) -> Option<mpsc::Receiver<VoiceReceivedOpus>> {
+        self.audio.take()
     }
 
     /// Total malformed, replayed or backpressured inbound audio packets dropped.
@@ -107,7 +113,9 @@ impl VoiceDriver {
     /// Requests shutdown and waits for the driver to exit.
     pub async fn shutdown(&mut self) -> VoiceResult<()> {
         self.events.close();
-        self.audio.close();
+        if let Some(audio) = &mut self.audio {
+            audio.close();
+        }
         let _ = self.stop.send(true);
         if let Some(task) = self.task.as_mut() {
             match tokio::time::timeout(Duration::from_secs(10), &mut *task).await {

@@ -53,7 +53,7 @@ pub struct VoiceGatewayConfig {
     guild_id: GuildId,
     user_id: UserId,
     session_id: String,
-    token: String,
+    token: crate::secret::SecretString,
     endpoint: String,
     max_dave_protocol_version: u16,
 }
@@ -64,7 +64,7 @@ impl std::fmt::Debug for VoiceGatewayConfig {
             .debug_struct("VoiceGatewayConfig")
             .field("guild_id", &self.guild_id)
             .field("user_id", &self.user_id)
-            .field("session_id", &self.session_id)
+            .field("session_id", &"[REDACTED]")
             .field("token", &"[REDACTED]")
             .field("endpoint", &self.endpoint)
             .field("max_dave_protocol_version", &self.max_dave_protocol_version)
@@ -80,7 +80,7 @@ impl VoiceGatewayConfig {
             guild_id: info.guild_id,
             user_id: info.user_id,
             session_id: info.session_id,
-            token: info.token,
+            token: crate::secret::SecretString::new(info.token),
             endpoint: info.endpoint,
             max_dave_protocol_version: 0,
         }
@@ -144,7 +144,7 @@ impl VoiceGatewayConnection {
                 server_id: config.guild_id,
                 user_id: config.user_id,
                 session_id: &config.session_id,
-                token: &config.token,
+                token: config.token.expose(),
                 max_dave_protocol_version: config.max_dave_protocol_version,
             },
         )
@@ -365,7 +365,7 @@ impl VoiceGatewayConnection {
             &Resume {
                 server_id: self.config.guild_id,
                 session_id: &self.config.session_id,
-                token: &self.config.token,
+                token: self.config.token.expose(),
                 seq_ack: self.sequence,
             },
         )

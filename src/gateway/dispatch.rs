@@ -73,7 +73,7 @@ pub enum TypedDispatchEvent {
 }
 
 /// Data delivered by Discord's `READY` dispatch.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, PartialEq, Deserialize)]
 pub struct ReadyEvent {
     pub v: u8,
     pub user: User,
@@ -84,6 +84,19 @@ pub struct ReadyEvent {
     #[serde(default)]
     pub shard: Option<[u32; 2]>,
     pub application: ReadyApplication,
+}
+
+impl std::fmt::Debug for ReadyEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReadyEvent")
+            .field("v", &self.v)
+            .field("user", &self.user)
+            .field("guilds", &self.guilds)
+            .field("session_id", &"[REDACTED]")
+            .field("shard", &self.shard)
+            .field("application", &self.application)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The partial application object included in `READY`.

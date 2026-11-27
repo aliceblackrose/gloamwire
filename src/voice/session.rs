@@ -62,13 +62,15 @@ impl VoiceSession {
             let discovery = udp.discover();
             tokio::pin!(discovery);
             loop {
-                tokio::select! {
-                    result = &mut discovery => break result?,
-                    event = gateway.next_event() => {
+                match gateway.next_event_or(&mut discovery).await? {
+                    futures_util::future::Either::Right(result) => break result?,
+                    futures_util::future::Either::Left(event) => {
                         if pending.len() >= 32 {
-                            return Err(super::VoiceError::Protocol("voice discovery event buffer exceeded".into()));
+                            return Err(super::VoiceError::Protocol(
+                                "voice discovery event buffer exceeded".into(),
+                            ));
                         }
-                        pending.push_back(event?);
+                        pending.push_back(event);
                     }
                 }
             }

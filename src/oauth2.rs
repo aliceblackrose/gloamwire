@@ -288,7 +288,7 @@ pub struct OAuth2AuthorizationInfo {
 pub struct OAuth2Client {
     http: reqwest::Client,
     client_id: ApplicationId,
-    client_secret: String,
+    client_secret: crate::secret::SecretString,
     api_base_url: String,
 }
 
@@ -308,7 +308,7 @@ impl OAuth2Client {
         Ok(Self {
             http: reqwest::Client::builder().user_agent(USER_AGENT).build()?,
             client_id,
-            client_secret: client_secret.into(),
+            client_secret: crate::secret::SecretString::new(client_secret.into()),
             api_base_url: API_BASE_URL.to_owned(),
         })
     }
@@ -374,7 +374,7 @@ impl OAuth2Client {
         let response = self
             .http
             .post(format!("{}/oauth2/token/revoke", self.api_base_url))
-            .basic_auth(self.client_id, Some(&self.client_secret))
+            .basic_auth(self.client_id, Some(self.client_secret.expose()))
             .form(&RevokeTokenRequest {
                 token: token.as_ref(),
                 token_type_hint: token_type_hint.map(OAuth2TokenTypeHint::as_str),
@@ -407,7 +407,7 @@ impl OAuth2Client {
         let response = self
             .http
             .post(format!("{}/oauth2/token", self.api_base_url))
-            .basic_auth(self.client_id, Some(&self.client_secret))
+            .basic_auth(self.client_id, Some(self.client_secret.expose()))
             .form(form)
             .send()
             .await?;

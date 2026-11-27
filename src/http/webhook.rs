@@ -453,6 +453,9 @@ impl RestClient {
     }
 
     /// Edits a webhook message and appends streamed multipart file uploads.
+    ///
+    /// Omitted attachments are fetched and retained; pass an explicit list
+    /// when concurrent edits must not rely on a read-before-write snapshot.
     pub async fn edit_webhook_message_with_files(
         &self,
         webhook_id: WebhookId,
@@ -462,7 +465,19 @@ impl RestClient {
         files: &[UploadFile],
         query: &EditWebhookMessageQuery,
     ) -> Result<Message> {
+        if files.is_empty() {
+            return self.edit_webhook_message(webhook_id, token, message_id, edit, query).await;
+        }
         let mut request = edit.clone();
+        if request.attachments.is_none() {
+            let current = self.get_webhook_message(
+                webhook_id,
+                token,
+                message_id,
+                &WebhookMessageQuery { thread_id: query.thread_id },
+            ).await?;
+            request.attachments = Some(Some(current.attachments.iter().map(Into::into).collect()));
+        }
         request
             .attachments
             .get_or_insert_with(|| Some(Vec::new()))

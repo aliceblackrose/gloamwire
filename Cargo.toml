@@ -27,6 +27,7 @@ transport = [
     "dep:reqwest",
     "dep:tokio",
     "dep:tokio-tungstenite",
+    "dep:zeroize",
     "reqwest/charset",
     "reqwest/http2",
     "reqwest/system-proxy",
@@ -65,6 +66,7 @@ thiserror = { version = "2", optional = true }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"], optional = true }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"], optional = true }
 tracing = { version = "0.1.44", optional = true }
+zeroize = { version = "1", optional = true }
 zstd = { version = "0.13", optional = true }
 
 [dev-dependencies]

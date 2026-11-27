@@ -5,7 +5,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::{RestClient, error::Result, model::GuildId};
+use crate::{Error, RestClient, error::Result, model::GuildId};
 
 use super::{GatewayConfig, GatewayConnection, GatewayEvent, GatewayIntents};
 
