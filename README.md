@@ -4,7 +4,7 @@ Gloamwire is an asynchronous Discord Gateway and REST API library for Rust. It p
 
 ## Current scope
 
-The `0.1` foundation includes:
+The `1.0.1` release target includes:
 
 - Rust 1.98 and Edition 2024.
 - Discord REST API v10 client with bot authentication.
@@ -39,7 +39,7 @@ Voice is opt-in. The `voice` feature exposes the low-level provider-neutral tran
 
 ## Cargo features
 
-Gloamwire's default feature set preserves the complete `0.1` non-voice transport surface: REST and Gateway transport, both Gateway compression codecs, and Rustls TLS using native certificate roots. Voice and DAVE remain explicit opt-ins.
+Gloamwire's default feature set preserves the complete non-voice transport surface: REST and Gateway transport, both Gateway compression codecs, and Rustls TLS using native certificate roots. Voice and DAVE remain explicit opt-ins.
 
 | Feature | Purpose |
 | --- | --- |
@@ -57,28 +57,28 @@ For a model-only dependency with no HTTP, WebSocket, TLS, or compression stack:
 
 ```toml
 [dependencies]
-gloamwire = { version = "0.1", default-features = false, features = ["model"] }
+gloamwire = { version = "1.0.1", default-features = false, features = ["model"] }
 ```
 
 For transport without Gateway compression, explicitly select transport and TLS:
 
 ```toml
 [dependencies]
-gloamwire = { version = "0.1", default-features = false, features = ["transport", "tls-rustls-native-roots"] }
+gloamwire = { version = "1.0.1", default-features = false, features = ["transport", "tls-rustls-native-roots"] }
 ```
 
 For low-level voice transport with an application-supplied DAVE provider:
 
 ```toml
 [dependencies]
-gloamwire = { version = "0.1", features = ["voice"] }
+gloamwire = { version = "1.0.1", features = ["voice"] }
 ```
 
 For Gloamwire's managed pure-Rust DAVE backend:
 
 ```toml
 [dependencies]
-gloamwire = { version = "0.1", features = ["dave-davey"] }
+gloamwire = { version = "1.0.1", features = ["dave-davey"] }
 ```
 
 `GatewayCompression::ZlibStream` and `GatewayCompression::ZstdStream` remain available in the public API across transport builds. Attempting to construct a Gateway connection with a disabled codec returns a `GatewayCompression` error that names the required Cargo feature.
@@ -178,7 +178,7 @@ Enable the cache with the `cache` Cargo feature:
 
 ```toml
 [dependencies]
-gloamwire = { version = "0.1", features = ["cache"] }
+gloamwire = { version = "1.0.1", features = ["cache"] }
 ```
 
 The cache is explicit state owned by the application; Gloamwire does not hide a lock or background task inside it. Feed Gateway events into it from the same loop that consumes them:
@@ -215,7 +215,7 @@ Enable Gloamwire's instrumentation with the `tracing` Cargo feature:
 
 ```toml
 [dependencies]
-gloamwire = { version = "0.1", features = ["tracing"] }
+gloamwire = { version = "1.0.1", features = ["tracing"] }
 ```
 
 Gloamwire emits structured events through the standard `tracing` facade and does not install a subscriber. Applications remain responsible for choosing and configuring their subscriber/exporter.

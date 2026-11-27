@@ -16,7 +16,11 @@ use super::{
 };
 
 const API_BASE_URL: &str = "https://discord.com/api/v10";
-const USER_AGENT: &str = "Gloamwire/0.1 (+https://github.com/aliceblackrose/gloamwire)";
+const USER_AGENT: &str = concat!(
+    "Gloamwire/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/aliceblackrose/gloamwire)"
+);
 const MAX_RATE_LIMIT_RETRIES: usize = 3;
 const DEFAULT_TRANSIENT_RETRIES: usize = 2;
 const DEFAULT_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);

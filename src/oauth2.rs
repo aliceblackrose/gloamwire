@@ -14,7 +14,11 @@ use crate::{
 
 const API_BASE_URL: &str = "https://discord.com/api/v10";
 const AUTHORIZE_URL: &str = "https://discord.com/oauth2/authorize";
-const USER_AGENT: &str = "Gloamwire/0.1 (+https://github.com/cybellereaper/Gloamwire)";
+const USER_AGENT: &str = concat!(
+    "Gloamwire/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/aliceblackrose/gloamwire)"
+);
 
 /// OAuth2 response type used by Discord's authorization endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

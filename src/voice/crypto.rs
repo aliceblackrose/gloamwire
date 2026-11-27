@@ -205,7 +205,7 @@ impl VoiceTransportCrypto {
                 let nonce = aes_nonce(nonce_suffix);
                 cipher
                     .encrypt(
-                        Nonce::from_slice(&nonce),
+                        &Nonce::from(nonce),
                         Payload {
                             msg: plaintext,
                             aad,
@@ -217,7 +217,7 @@ impl VoiceTransportCrypto {
                 let nonce = xchacha_nonce(nonce_suffix);
                 cipher
                     .encrypt(
-                        XNonce::from_slice(&nonce),
+                        &XNonce::from(nonce),
                         Payload {
                             msg: plaintext,
                             aad,
@@ -241,7 +241,7 @@ impl VoiceTransportCrypto {
                 let nonce = aes_nonce(nonce_suffix);
                 cipher
                     .decrypt(
-                        Nonce::from_slice(&nonce),
+                        &Nonce::from(nonce),
                         Payload {
                             msg: ciphertext,
                             aad,
@@ -257,7 +257,7 @@ impl VoiceTransportCrypto {
                 let nonce = xchacha_nonce(nonce_suffix);
                 cipher
                     .decrypt(
-                        XNonce::from_slice(&nonce),
+                        &XNonce::from(nonce),
                         Payload {
                             msg: ciphertext,
                             aad,

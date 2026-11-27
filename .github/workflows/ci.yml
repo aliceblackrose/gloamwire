@@ -56,8 +56,10 @@ jobs:
         run: |
           rustup toolchain install 1.98.0 --profile minimal
           rustup default 1.98.0
-          cargo install cargo-audit --locked --version 0.22.1
+          cargo install cargo-audit --locked --version 0.23.0
       - name: Audit resolved dependencies
         run: |
           cargo generate-lockfile
+          cargo update
+          cargo tree --all-features --locked
           cargo audit
