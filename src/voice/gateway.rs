@@ -84,7 +84,7 @@ impl VoiceGatewayConfig {
             guild_id: info.guild_id,
             user_id: info.user_id,
             session_id: info.session_id,
-            token: crate::secret::SecretString::new(info.token),
+            token: info.token,
             endpoint: info.endpoint,
             max_dave_protocol_version: 0,
             min_dave_protocol_version: 1,

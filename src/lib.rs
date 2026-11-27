@@ -27,8 +27,10 @@ pub mod model;
 pub mod oauth2;
 #[cfg(feature = "transport")]
 mod queue_budget;
-#[cfg(feature = "transport")]
+#[cfg(feature = "model")]
 mod secret;
+#[cfg(feature = "model")]
+pub use secret::SecretString;
 #[cfg(feature = "voice")]
 pub mod voice;
 

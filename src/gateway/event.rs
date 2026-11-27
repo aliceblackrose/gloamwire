@@ -22,7 +22,7 @@ impl std::fmt::Debug for DispatchEvent {
 }
 
 /// A meaningful event received from the Gateway connection.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum GatewayEvent {
     /// A normal Discord dispatch event.
     Dispatch(DispatchEvent),
@@ -42,6 +42,24 @@ pub enum GatewayEvent {
         /// Raw data payload.
         data: Value,
     },
+}
+
+impl std::fmt::Debug for GatewayEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Dispatch(event) => f.debug_tuple("Dispatch").field(event).finish(),
+            Self::HeartbeatAck => f.write_str("HeartbeatAck"),
+            Self::Reconnect => f.write_str("Reconnect"),
+            Self::InvalidSession { resumable } => f
+                .debug_struct("InvalidSession")
+                .field("resumable", resumable)
+                .finish(),
+            Self::Unknown { opcode, .. } => f
+                .debug_struct("Unknown")
+                .field("opcode", opcode)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 impl GatewayEvent {

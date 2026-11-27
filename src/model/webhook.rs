@@ -58,7 +58,7 @@ pub struct Webhook {
     #[serde(default)]
     pub avatar: Option<String>,
     #[serde(default)]
-    pub token: Option<String>,
+    pub token: Option<crate::SecretString>,
     #[serde(default)]
     pub application_id: Option<ApplicationId>,
     #[serde(default)]
@@ -66,7 +66,7 @@ pub struct Webhook {
     #[serde(default)]
     pub source_channel: Option<WebhookSourceChannel>,
     #[serde(default)]
-    pub url: Option<String>,
+    pub url: Option<crate::SecretString>,
 }
 
 impl std::fmt::Debug for Webhook {

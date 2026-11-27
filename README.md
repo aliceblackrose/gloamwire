@@ -243,3 +243,10 @@ Managed voice sessions own their outbound nonce state: use
 transport encryptor. Low-level `VoiceTransportCrypto` constructors require a
 fresh, never-before-used outbound key. A provider must be ready before managed
 DAVE media operations proceed. No external MLS provider is certified here.
+
+Credential fields use `SecretString`, which redacts debug output and zeroizes
+its owned allocation. Use `.expose()` when necessary, and `.into()` to
+construct credential fields from strings. Serialization still contains the
+credential. Server error details remain available through their public fields
+but are omitted from default error formatting. REST rate-limit bookkeeping
+has fixed capacity and conservatively applies shared cooldowns at saturation.

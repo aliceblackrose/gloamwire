@@ -559,7 +559,7 @@ mod tests {
             guild_id: GuildId::new(10),
             user_id: UserId::new(20),
             session_id: "fixture-session".to_owned(),
-            token: "fixture-token".to_owned(),
+            token: "fixture-token".into(),
             endpoint: format!("ws://{websocket_addr}"),
         })
         .with_insecure_loopback(true);

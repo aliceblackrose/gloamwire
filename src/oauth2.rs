@@ -222,11 +222,11 @@ impl OAuth2AuthorizationUrl {
 /// Access-token response returned by Discord OAuth2 token exchanges.
 #[derive(Clone, PartialEq, Deserialize)]
 pub struct OAuth2TokenResponse {
-    pub access_token: String,
+    pub access_token: crate::SecretString,
     pub token_type: String,
     pub expires_in: u64,
     #[serde(default)]
-    pub refresh_token: Option<String>,
+    pub refresh_token: Option<crate::SecretString>,
     pub scope: String,
     /// Additional flow-specific response fields such as `guild` or `webhook`.
     #[serde(flatten)]

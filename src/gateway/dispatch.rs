@@ -15,7 +15,7 @@ use super::DispatchEvent;
 ///
 /// Unmodeled event names are preserved in [`Self::Unknown`] so a Discord API
 /// addition does not make a newer Gateway event impossible to consume.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 #[non_exhaustive]
 pub enum TypedDispatchEvent {
     Ready(ReadyEvent),
@@ -72,6 +72,68 @@ pub enum TypedDispatchEvent {
     WebhooksUpdate(WebhooksUpdateEvent),
     UserUpdate(User),
     Unknown { name: String, data: Value },
+}
+
+impl std::fmt::Debug for TypedDispatchEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = match self {
+            Self::Ready(..) => "Ready",
+            Self::Resumed => "Resumed",
+            Self::AutoModerationRuleCreate(..) => "AutoModerationRuleCreate",
+            Self::AutoModerationRuleUpdate(..) => "AutoModerationRuleUpdate",
+            Self::AutoModerationRuleDelete(..) => "AutoModerationRuleDelete",
+            Self::AutoModerationActionExecution(..) => "AutoModerationActionExecution",
+            Self::EntitlementCreate(..) => "EntitlementCreate",
+            Self::EntitlementUpdate(..) => "EntitlementUpdate",
+            Self::EntitlementDelete(..) => "EntitlementDelete",
+            Self::SubscriptionCreate(..) => "SubscriptionCreate",
+            Self::SubscriptionUpdate(..) => "SubscriptionUpdate",
+            Self::SubscriptionDelete(..) => "SubscriptionDelete",
+            Self::GuildCreate(..) => "GuildCreate",
+            Self::GuildUnavailable(..) => "GuildUnavailable",
+            Self::GuildUpdate(..) => "GuildUpdate",
+            Self::GuildDelete(..) => "GuildDelete",
+            Self::GuildAuditLogEntryCreate(..) => "GuildAuditLogEntryCreate",
+            Self::GuildScheduledEventCreate(..) => "GuildScheduledEventCreate",
+            Self::GuildScheduledEventUpdate(..) => "GuildScheduledEventUpdate",
+            Self::GuildScheduledEventDelete(..) => "GuildScheduledEventDelete",
+            Self::GuildScheduledEventUserAdd(..) => "GuildScheduledEventUserAdd",
+            Self::GuildScheduledEventUserRemove(..) => "GuildScheduledEventUserRemove",
+            Self::ChannelCreate(..) => "ChannelCreate",
+            Self::ChannelUpdate(..) => "ChannelUpdate",
+            Self::ChannelDelete(..) => "ChannelDelete",
+            Self::ThreadCreate(..) => "ThreadCreate",
+            Self::ThreadUpdate(..) => "ThreadUpdate",
+            Self::ThreadDelete(..) => "ThreadDelete",
+            Self::ThreadListSync(..) => "ThreadListSync",
+            Self::GuildMemberAdd(..) => "GuildMemberAdd",
+            Self::GuildMemberUpdate(..) => "GuildMemberUpdate",
+            Self::GuildMemberRemove(..) => "GuildMemberRemove",
+            Self::GuildMembersChunk(..) => "GuildMembersChunk",
+            Self::GuildRoleCreate(..) => "GuildRoleCreate",
+            Self::GuildRoleUpdate(..) => "GuildRoleUpdate",
+            Self::GuildRoleDelete(..) => "GuildRoleDelete",
+            Self::InviteCreate(..) => "InviteCreate",
+            Self::InviteDelete(..) => "InviteDelete",
+            Self::MessageCreate(..) => "MessageCreate",
+            Self::MessageUpdate(..) => "MessageUpdate",
+            Self::MessageDelete(..) => "MessageDelete",
+            Self::MessageDeleteBulk(..) => "MessageDeleteBulk",
+            Self::MessageReactionAdd(..) => "MessageReactionAdd",
+            Self::MessageReactionRemove(..) => "MessageReactionRemove",
+            Self::MessageReactionRemoveAll(..) => "MessageReactionRemoveAll",
+            Self::MessageReactionRemoveEmoji(..) => "MessageReactionRemoveEmoji",
+            Self::MessagePollVoteAdd(..) => "MessagePollVoteAdd",
+            Self::MessagePollVoteRemove(..) => "MessagePollVoteRemove",
+            Self::InteractionCreate(..) => "InteractionCreate",
+            Self::PresenceUpdate(..) => "PresenceUpdate",
+            Self::VoiceStateUpdate(..) => "VoiceStateUpdate",
+            Self::WebhooksUpdate(..) => "WebhooksUpdate",
+            Self::UserUpdate(..) => "UserUpdate",
+            Self::Unknown { .. } => "Unknown",
+        };
+        f.debug_struct(kind).finish_non_exhaustive()
+    }
 }
 
 /// Data delivered by Discord's `READY` dispatch.
@@ -895,5 +957,17 @@ mod tests {
         };
         assert_eq!(name, "FUTURE_EVENT");
         assert_eq!(data["new"], true);
+    }
+}
+
+#[cfg(test)]
+mod security_debug_tests {
+    #[test]
+    fn unknown_dispatch_debug_omits_credentials() {
+        let event = super::TypedDispatchEvent::Unknown {
+            name: "VOICE_SERVER_UPDATE".into(),
+            data: serde_json::json!({"token": "credential-sentinel"}),
+        };
+        assert!(!format!("{event:?}").contains("credential-sentinel"));
     }
 }

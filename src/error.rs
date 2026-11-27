@@ -10,7 +10,7 @@ use crate::gateway::GatewayCloseCode;
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// One field-level validation failure returned by Discord.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DiscordValidationError {
     /// Object keys and array indexes locating the invalid field.
     pub path: Vec<String>,
@@ -33,7 +33,7 @@ impl DiscordValidationError {
 /// Discord may add new nested error shapes over time. `raw_errors` therefore
 /// retains the complete error tree while `validation_errors` provides a
 /// convenient flattened view of every `_errors` entry found within it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct DiscordApiError {
     /// Discord's numeric API error code.
     pub code: i64,
@@ -62,12 +62,12 @@ impl DiscordApiError {
 
 impl fmt::Display for DiscordApiError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{} (Discord code {})", self.message, self.code)
+        write!(formatter, "Discord code {}", self.code)
     }
 }
 
 /// Structured OAuth2 error returned by Discord's authorization server.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct OAuth2ApiError {
     /// Machine-readable OAuth2 error code.
     pub error: String,
@@ -78,11 +78,7 @@ pub struct OAuth2ApiError {
 
 impl fmt::Display for OAuth2ApiError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(description) = &self.error_description {
-            write!(formatter, "{}: {description}", self.error)
-        } else {
-            formatter.write_str(&self.error)
-        }
+        formatter.write_str("OAuth2 authorization failed (details omitted)")
     }
 }
 
@@ -132,7 +128,7 @@ fn collect_validation_errors(
 }
 
 /// Errors produced by the REST and Gateway clients.
-#[derive(Debug, Error)]
+#[derive(Error)]
 pub enum Error {
     /// Discord returned structured form-validation errors.
     #[error("Discord API returned HTTP {status}: {error}")]
@@ -153,7 +149,7 @@ pub enum Error {
     },
 
     /// Discord returned an unsuccessful HTTP response without structured validation details.
-    #[error("Discord API returned HTTP {status}: {message}")]
+    #[error("Discord API returned HTTP {status} (code {code:?}; details omitted)")]
     HttpStatus {
         /// HTTP status returned by Discord.
         status: StatusCode,
@@ -247,6 +243,48 @@ pub enum Error {
         /// Maximum accepted payload size.
         limit: usize,
     },
+}
+
+impl fmt::Debug for DiscordValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DiscordValidationError").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for DiscordApiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DiscordApiError")
+            .field("code", &self.code)
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for OAuth2ApiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuth2ApiError").finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DiscordApi { status, error } => f
+                .debug_struct("DiscordApi")
+                .field("status", status)
+                .field("error", error)
+                .finish(),
+            Self::OAuth2 { status, .. } => f
+                .debug_struct("OAuth2")
+                .field("status", status)
+                .finish_non_exhaustive(),
+            Self::HttpStatus { status, code, .. } => f
+                .debug_struct("HttpStatus")
+                .field("status", status)
+                .field("code", code)
+                .finish_non_exhaustive(),
+            other => write!(f, "{other}"),
+        }
+    }
 }
 
 /// Bounds response collection even when the peer omits Content-Length.
@@ -345,5 +383,21 @@ mod tests {
 
         assert_eq!(error.raw_errors, raw);
         assert!(error.validation_errors.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod safe_format_tests {
+    use super::*;
+
+    #[test]
+    fn server_error_details_are_opt_in() {
+        let error = Error::HttpStatus {
+            status: StatusCode::BAD_REQUEST,
+            code: Some(1),
+            message: "credential-sentinel\nforged log".into(),
+        };
+        assert!(!format!("{error:?}").contains("credential-sentinel"));
+        assert!(!format!("{error}").contains("forged log"));
     }
 }

@@ -1,16 +1,48 @@
 use zeroize::Zeroize;
 
-/// Internal owned credential that redacts Debug and clears its allocation on drop.
-#[derive(Clone)]
-pub(crate) struct SecretString(String);
+/// Owned credential that redacts Debug and clears its allocation on drop.
+/// Serialization and explicit exposure reveal the credential; avoid logging them.
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct SecretString(String);
 
 impl SecretString {
-    pub(crate) const fn new(value: String) -> Self {
+    /// Takes ownership of a credential.
+    #[must_use]
+    pub const fn new(value: String) -> Self {
         Self(value)
     }
 
-    pub(crate) fn expose(&self) -> &str {
+    /// Explicitly exposes the credential for authenticated operations.
+    #[must_use]
+    pub fn expose(&self) -> &str {
         &self.0
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for SecretString {
+    fn from(value: &str) -> Self {
+        Self::new(value.to_owned())
+    }
+}
+
+impl AsRef<str> for SecretString {
+    fn as_ref(&self) -> &str {
+        self.expose()
+    }
+}
+
+impl std::ops::Deref for SecretString {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.expose()
     }
 }
 
@@ -40,6 +72,7 @@ mod tests {
 
 /// Require TLS for credential-bearing WebSockets. Plaintext is restricted to
 /// explicitly enabled numeric loopback endpoints (no DNS resolution).
+#[cfg(feature = "transport")]
 pub(crate) fn secure_websocket_endpoint(endpoint: &str, allow_loopback: bool) -> bool {
     let Ok(url) = reqwest::Url::parse(endpoint) else {
         return false;
@@ -63,7 +96,7 @@ pub(crate) fn secure_websocket_endpoint(endpoint: &str, allow_loopback: bool) ->
         })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "transport"))]
 mod endpoint_tests {
     use super::secure_websocket_endpoint;
 
@@ -78,6 +111,7 @@ mod endpoint_tests {
     }
 }
 
+#[cfg(feature = "transport")]
 pub(crate) fn secure_http_endpoint(endpoint: &str, allow_loopback: bool) -> bool {
     let Ok(url) = reqwest::Url::parse(endpoint) else {
         return false;
@@ -100,6 +134,7 @@ pub(crate) fn secure_http_endpoint(endpoint: &str, allow_loopback: bool) -> bool
             }))
 }
 
+#[cfg(feature = "transport")]
 pub(crate) fn discord_websocket_origin(endpoint: &str) -> bool {
     let Ok(url) = reqwest::Url::parse(endpoint) else {
         return false;
@@ -113,6 +148,7 @@ pub(crate) fn discord_websocket_origin(endpoint: &str) -> bool {
         })
 }
 
+#[cfg(feature = "transport")]
 pub(crate) fn same_origin(first: &str, second: &str) -> bool {
     match (reqwest::Url::parse(first), reqwest::Url::parse(second)) {
         (Ok(first), Ok(second)) => first.origin() == second.origin(),
@@ -120,7 +156,7 @@ pub(crate) fn same_origin(first: &str, second: &str) -> bool {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "transport"))]
 mod http_endpoint_tests {
     use super::{discord_websocket_origin, same_origin, secure_http_endpoint};
 

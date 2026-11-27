@@ -17,7 +17,7 @@ default = [
     "compression-zstd",
     "tls-rustls-native-roots",
 ]
-model = ["dep:bitflags", "dep:serde", "dep:serde_json", "dep:thiserror"]
+model = ["dep:bitflags", "dep:serde", "dep:serde_json", "dep:thiserror", "dep:zeroize"]
 transport = [
     "model",
     "dep:erltf",
@@ -27,7 +27,6 @@ transport = [
     "dep:reqwest",
     "dep:tokio",
     "dep:tokio-tungstenite",
-    "dep:zeroize",
     "reqwest/charset",
     "reqwest/http2",
     "reqwest/system-proxy",
