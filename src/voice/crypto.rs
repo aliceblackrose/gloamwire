@@ -107,10 +107,7 @@ impl VoiceTransportCrypto {
 
     /// Internal constructor; outbound instances are owned exclusively by VoiceSession.
     /// Receive-only wrappers may initialize a cipher without ever consuming a nonce.
-    fn new_with_fresh_key(
-        mode: VoiceEncryptionMode,
-        secret_key: [u8; 32],
-    ) -> VoiceResult<Self> {
+    fn new_with_fresh_key(mode: VoiceEncryptionMode, secret_key: [u8; 32]) -> VoiceResult<Self> {
         let secret_key = zeroize::Zeroizing::new(secret_key);
         let cipher = match mode.as_ref() {
             VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE => VoiceTransportCipher::Aes256Gcm(

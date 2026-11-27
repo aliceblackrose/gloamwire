@@ -204,9 +204,8 @@ impl OAuth2AuthorizationUrl {
                 Error::InvalidRestRequest("OAuth2 code flow requires a redirect URI".into())
             })?;
         let mut bytes = zeroize::Zeroizing::new([0_u8; 32]);
-        getrandom::fill(&mut bytes[..]).map_err(|_| {
-            Error::InvalidRestRequest("OAuth2 state generation failed".into())
-        })?;
+        getrandom::fill(&mut bytes[..])
+            .map_err(|_| Error::InvalidRestRequest("OAuth2 state generation failed".into()))?;
         let mut state = String::with_capacity(64);
         for byte in bytes.iter() {
             write!(&mut state, "{byte:02x}").expect("writing to String cannot fail");
@@ -275,7 +274,8 @@ pub struct OAuth2PendingAuthorization {
 
 impl fmt::Debug for OAuth2PendingAuthorization {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("OAuth2PendingAuthorization").finish_non_exhaustive()
+        f.debug_struct("OAuth2PendingAuthorization")
+            .finish_non_exhaustive()
     }
 }
 
@@ -284,7 +284,12 @@ impl OAuth2PendingAuthorization {
         use subtle::ConstantTimeEq;
         if self.client_id != client_id
             || std::time::Instant::now() >= self.expires_at
-            || !bool::from(self.state.expose().as_bytes().ct_eq(returned_state.as_bytes()))
+            || !bool::from(
+                self.state
+                    .expose()
+                    .as_bytes()
+                    .ct_eq(returned_state.as_bytes()),
+            )
         {
             return Err(Error::InvalidRestRequest(
                 "invalid or expired OAuth2 state".into(),

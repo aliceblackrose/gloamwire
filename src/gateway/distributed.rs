@@ -594,8 +594,8 @@ mod tests {
 
     use super::DistributedShardConfig;
     use crate::gateway::{
-        DistributedShardCoordinator, GatewayCoordinationFuture, GatewayIdentifyCoordinator, ShardId,
-        ShardLease,
+        DistributedShardCoordinator, GatewayCoordinationFuture, GatewayIdentifyCoordinator,
+        ShardId, ShardLease,
     };
 
     #[derive(Default)]
