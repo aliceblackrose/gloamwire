@@ -17,7 +17,7 @@ const GLOBAL_WINDOW: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Default)]
 pub(crate) struct RateLimiter {
-    state: Mutex<RateLimitState>,
+    state: std::sync::Mutex<RateLimitState>,
     shared: Arc<SharedRateLimits>,
 }
 
@@ -99,7 +99,7 @@ impl RateLimiter {
                 .await
                 .lock_owned()
                 .await;
-            match self.try_acquire(route).await {
+            match self.try_acquire(route) {
                 None => return guard,
                 Some(deadline) => {
                     drop(guard);
@@ -114,8 +114,8 @@ impl RateLimiter {
         drop(self.reserve(route).await);
     }
 
-    async fn try_acquire(&self, route: &Route) -> Option<Instant> {
-        let mut state = self.state.lock().await;
+    fn try_acquire(&self, route: &Route) -> Option<Instant> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
 
         while state
@@ -173,7 +173,14 @@ impl RateLimiter {
         wait_until
     }
 
-    pub(crate) async fn update(
+    /// A limiter with a live bucket/global deadline must not be evicted.
+    pub(crate) fn has_live_cooldown(&self, now: Instant) -> bool {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.global_until.is_some_and(|until| until > now)
+            || state.buckets.values().any(|bucket| bucket.reset_at > now)
+    }
+
+    pub(crate) fn update(
         &self,
         route: &Route,
         status: StatusCode,
@@ -181,7 +188,7 @@ impl RateLimiter {
         retry_after: Option<Duration>,
         global: bool,
     ) {
-        let mut state = self.state.lock().await;
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         let route_identity = route.identity();
         let bucket_hash = header_str(headers, "x-ratelimit-bucket").map(str::to_owned);
@@ -311,10 +318,9 @@ mod tests {
                 &headers,
                 Some(Duration::from_secs(5)),
                 false,
-            )
-            .await;
-        assert!(limiter.try_acquire(&Route::gateway_bot()).await.is_some());
-        assert!(limiter.state.lock().await.global_until.is_some());
+            );
+        assert!(limiter.try_acquire(&Route::gateway_bot()).is_some());
+        assert!(limiter.state.lock().unwrap().global_until.is_some());
     }
 
     #[tokio::test]
@@ -329,8 +335,7 @@ mod tests {
                 &HeaderMap::new(),
                 Some(Duration::from_millis(20)),
                 true,
-            )
-            .await;
+            );
 
         let started = tokio::time::Instant::now();
         limiter.acquire(&route).await;
@@ -346,8 +351,7 @@ mod tests {
         headers.insert("x-ratelimit-remaining", "1".parse().unwrap());
         headers.insert("x-ratelimit-reset-after", "10".parse().unwrap());
         limiter
-            .update(&route, StatusCode::OK, &headers, None, false)
-            .await;
+            .update(&route, StatusCode::OK, &headers, None, false);
         limiter
             .update(
                 &route,
@@ -355,12 +359,10 @@ mod tests {
                 &HeaderMap::new(),
                 Some(Duration::from_secs(10)),
                 false,
-            )
-            .await;
+            );
         limiter
-            .update(&route, StatusCode::OK, &headers, None, false)
-            .await;
-        let state = limiter.state.lock().await;
+            .update(&route, StatusCode::OK, &headers, None, false);
+        let state = limiter.state.lock().unwrap();
         assert_eq!(
             state.buckets[&bucket_key("bucket", route.major())].remaining,
             0
@@ -383,8 +385,7 @@ mod tests {
                 &headers,
                 Some(Duration::from_secs(5)),
                 false,
-            )
-            .await;
+            );
         assert!(
             tokio::time::timeout(Duration::from_millis(20), second.reserve(&a))
                 .await
@@ -408,8 +409,7 @@ mod tests {
         headers.insert("x-ratelimit-reset-after", "10".parse().unwrap());
         for route in [&first, &second] {
             limiter
-                .update(route, StatusCode::OK, &headers, None, false)
-                .await;
+                .update(route, StatusCode::OK, &headers, None, false);
         }
         let held = limiter.reserve(&first).await;
         assert!(

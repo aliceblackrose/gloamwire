@@ -24,6 +24,7 @@ use crate::{
 pub struct CacheConfig {
     message_capacity: usize,
     user_capacity: usize,
+    tombstone_capacity: usize,
 }
 
 impl Default for CacheConfig {
@@ -39,6 +40,7 @@ impl CacheConfig {
         Self {
             message_capacity: 0,
             user_capacity: 100_000,
+            tombstone_capacity: 100_000,
         }
     }
 
@@ -60,6 +62,14 @@ impl CacheConfig {
         self
     }
 
+    /// Limits retained departed-member records. Eviction invalidates exact
+    /// counts for affected guilds rather than guessing on subsequent events.
+    #[must_use]
+    pub const fn membership_tombstone_capacity(mut self, capacity: usize) -> Self {
+        self.tombstone_capacity = capacity;
+        self
+    }
+
     /// Returns the configured message capacity.
     #[must_use]
     pub const fn max_messages(&self) -> usize {
@@ -75,6 +85,7 @@ pub struct Cache {
     users: HashMap<UserId, User>,
     user_order: VecDeque<UserId>,
     membership: HashMap<(GuildId, UserId), bool>,
+    tombstones: VecDeque<(GuildId, UserId)>,
     guilds: HashMap<GuildId, Guild>,
     unavailable_guilds: HashSet<GuildId>,
     channels: HashMap<ChannelId, Channel>,
@@ -104,6 +115,7 @@ impl Cache {
             users: HashMap::new(),
             user_order: VecDeque::new(),
             membership: HashMap::new(),
+            tombstones: VecDeque::new(),
             guilds: HashMap::new(),
             unavailable_guilds: HashSet::new(),
             channels: HashMap::new(),
@@ -130,6 +142,7 @@ impl Cache {
         self.users.clear();
         self.user_order.clear();
         self.membership.clear();
+        self.tombstones.clear();
         self.guilds.clear();
         self.unavailable_guilds.clear();
         self.channels.clear();
@@ -214,9 +227,11 @@ impl Cache {
             }
             TypedDispatchEvent::GuildMemberUpdate(event) => self.merge_member_update(event),
             TypedDispatchEvent::GuildMemberRemove(event) => {
-                let prior = self
-                    .membership
-                    .insert((event.guild_id, event.user.id), false);
+                let key = (event.guild_id, event.user.id);
+                let prior = self.membership.insert(key, false);
+                if prior != Some(false) {
+                    self.tombstones.push_back(key);
+                }
                 self.members.remove(&(event.guild_id, event.user.id));
                 self.remember_user(event.user.clone());
                 if let Some(guild) = self.guilds.get_mut(&event.guild_id) {
@@ -239,6 +254,7 @@ impl Cache {
                         .retain(|raw| presence_user_id(raw) != Some(event.user.id));
                 }
                 self.voice_states.remove(&(event.guild_id, event.user.id));
+                self.prune_tombstones();
             }
             TypedDispatchEvent::GuildMembersChunk(event) => {
                 for member in &event.members {
@@ -560,6 +576,16 @@ impl Cache {
 
     fn seed_guild(&mut self, guild: &Guild) {
         let guild_id = guild.id;
+        // An authoritative snapshot may omit channels no longer accessible.
+        let valid: HashSet<_> = guild.channels.iter().chain(&guild.threads).map(|channel| channel.id).collect();
+        let stale: Vec<_> = self.messages.iter().filter_map(|(&id, message)| {
+            let belongs = message.guild_id == Some(guild_id)
+                || self.channels.get(&message.channel_id).is_some_and(|channel| channel.guild_id == Some(guild_id));
+            (belongs && !valid.contains(&message.channel_id)).then_some(id)
+        }).collect();
+        for id in stale {
+            self.remove_message(id);
+        }
         self.remove_guild_children(guild_id);
         self.unavailable_guilds.remove(&guild_id);
 
@@ -585,7 +611,7 @@ impl Cache {
             if let Some(user) = &member.user {
                 self.remember_user(user.clone());
                 self.members.insert((guild_id, user.id), member.clone());
-                self.membership.insert((guild_id, user.id), true);
+                self.remember_membership((guild_id, user.id));
             }
         }
 
@@ -660,6 +686,7 @@ impl Cache {
             .retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
         self.membership
             .retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
+        self.tombstones.retain(|(cached_guild_id, _)| *cached_guild_id != guild_id);
         self.presences
             .retain(|(cached_guild_id, _), _| *cached_guild_id != guild_id);
         self.voice_states
@@ -693,6 +720,21 @@ impl Cache {
     }
 
     fn remove_channel(&mut self, channel_id: ChannelId) {
+        let mut removed = HashSet::from([channel_id]);
+        let mut pending = vec![channel_id];
+        while let Some(parent) = pending.pop() {
+            for channel in self.channels.values() {
+                if channel.parent_id == Some(parent) && is_thread(channel.kind) && removed.insert(channel.id) {
+                    pending.push(channel.id);
+                }
+            }
+        }
+        for id in removed {
+            self.remove_single_channel(id);
+        }
+    }
+
+    fn remove_single_channel(&mut self, channel_id: ChannelId) {
         let guild_id = self
             .channels
             .remove(&channel_id)
@@ -725,13 +767,31 @@ impl Cache {
         }
     }
 
+    fn remember_membership(&mut self, key: (GuildId, UserId)) {
+        if self.membership.insert(key, true) == Some(false) {
+            self.tombstones.retain(|entry| *entry != key);
+        }
+    }
+
+    fn prune_tombstones(&mut self) {
+        while self.tombstones.len() > self.config.tombstone_capacity {
+            let Some(key) = self.tombstones.pop_front() else { break };
+            if self.membership.get(&key) == Some(&false) {
+                self.membership.remove(&key);
+                if let Some(guild) = self.guilds.get_mut(&key.0) {
+                    guild.approximate_member_count = guild.member_count.take().or(guild.approximate_member_count);
+                }
+            }
+        }
+    }
+
     fn upsert_member(&mut self, guild_id: GuildId, member: &GuildMember) {
         let Some(user) = &member.user else {
             return;
         };
         self.remember_user(user.clone());
         self.members.insert((guild_id, user.id), member.clone());
-        self.membership.insert((guild_id, user.id), true);
+        self.remember_membership((guild_id, user.id));
 
         if let Some(guild) = self.guilds.get_mut(&guild_id) {
             if let Some(existing) = guild
@@ -749,7 +809,7 @@ impl Cache {
     fn merge_member_update(&mut self, event: &GuildMemberUpdateEvent) {
         self.remember_user(event.user.clone());
         let key = (event.guild_id, event.user.id);
-        self.membership.insert(key, true);
+        self.remember_membership(key);
         let updated = {
             let member = self.members.entry(key).or_insert_with(|| GuildMember {
                 user: Some(event.user.clone()),

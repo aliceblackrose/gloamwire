@@ -400,6 +400,7 @@ impl RestClient {
             // 24h matches the maximum recorded cooldown.
             limiters.retain(|_, entry| {
                 Arc::strong_count(&entry.limiter) > 1
+                    || entry.limiter.has_live_cooldown(now)
                     || now.saturating_duration_since(entry.last_used) < Duration::from_secs(86_401)
             });
             let key = credential_fingerprint(authorization.as_bytes());
@@ -476,8 +477,7 @@ impl RestClient {
                     &response_headers,
                     retry_after_header(&response_headers),
                     false,
-                )
-                .await;
+                );
             // Non-429 bodies have no additional rate-limit metadata.
             let reservation = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 Some(reservation)
@@ -518,8 +518,7 @@ impl RestClient {
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 limiter
-                    .update(&route, status, &response_headers, retry_after, global)
-                    .await;
+                    .update(&route, status, &response_headers, retry_after, global);
             }
             drop(reservation);
 
