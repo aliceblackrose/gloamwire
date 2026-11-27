@@ -99,6 +99,9 @@ impl VoiceRendezvous {
                 if voice_state.guild_id == Some(self.guild_id)
                     && voice_state.user_id == self.user_id
                 {
+                    if voice_state.channel_id.is_none() {
+                        self.server_update = None;
+                    }
                     self.voice_state = Some(voice_state);
                 }
             }

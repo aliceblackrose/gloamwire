@@ -87,7 +87,8 @@ fn epoch_prepare_initializes_only_the_first_epoch() {
         .expect("prepare first epoch");
     assert_eq!(initial.len(), 1);
     assert_eq!(initial[0].opcode(), DAVE_KEY_PACKAGE_OPCODE);
-    assert_eq!(provider.active_protocol_version(), 1);
+    // Preparing a new group must not activate its outbound protocol.
+    assert_eq!(provider.active_protocol_version(), 0);
 
     let later = provider
         .handle_gateway_event(

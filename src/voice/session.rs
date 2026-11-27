@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 use super::{
     VoiceCloseCode, VoiceEncryptionMode, VoiceGatewayConfig, VoiceGatewayConnection,
@@ -57,16 +57,38 @@ impl VoiceSession {
         let mut gateway = VoiceGatewayConnection::connect(config).await?;
         let mode = gateway.ready().preferred_encryption_mode()?;
         let udp = VoiceUdpSocket::connect(gateway.ready()).await?;
-        let discovery = udp.discover().await?;
-        gateway.select_protocol(&discovery, &mode).await?;
-
         let mut pending = VecDeque::new();
-        let description = loop {
-            match gateway.next_event().await? {
-                VoiceGatewayEvent::SessionDescription(description) => break description,
-                event => pending.push_back(event),
+        let discovery = {
+            let discovery = udp.discover();
+            tokio::pin!(discovery);
+            loop {
+                tokio::select! {
+                    result = &mut discovery => break result?,
+                    event = gateway.next_event() => {
+                        if pending.len() >= 32 {
+                            return Err(super::VoiceError::Protocol("voice discovery event buffer exceeded".into()));
+                        }
+                        pending.push_back(event?);
+                    }
+                }
             }
         };
+        gateway.select_protocol(&discovery, &mode).await?;
+
+        let timeout = Duration::from_secs(20);
+        let description = tokio::time::timeout(timeout, async {
+            loop {
+                if pending.len() >= 32 {
+                    return Err(super::VoiceError::Protocol("voice session event buffer exceeded".into()));
+                }
+                match gateway.next_event().await? {
+                    VoiceGatewayEvent::SessionDescription(description) => break Ok(description),
+                    event => pending.push_back(event),
+                }
+            }
+        })
+        .await
+        .map_err(|_| super::VoiceError::Timeout(timeout))??;
 
         if description.mode != mode {
             return Err(super::VoiceError::Protocol(format!(

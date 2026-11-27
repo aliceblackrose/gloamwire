@@ -43,6 +43,9 @@ const CLIENTS_CONNECT_OPCODE: u8 = 11;
 const CLIENT_DISCONNECT_OPCODE: u8 = 13;
 const DAVE_FIRST_OPCODE: u8 = 21;
 const DAVE_LAST_OPCODE: u8 = 31;
+const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(20);
+const MAX_PENDING_EVENTS: usize = 32;
+const MAX_INBOUND_BYTES: usize = 1024 * 1024;
 
 /// Configuration for one Discord Voice Gateway v8 session.
 #[derive(Clone)]
@@ -133,7 +136,7 @@ impl VoiceGatewayConnection {
     /// Opens the Voice Gateway, receives Hello, identifies, and waits for Ready.
     pub async fn connect(config: VoiceGatewayConfig) -> VoiceResult<Self> {
         let config = Arc::new(config);
-        let (mut socket, heartbeat) = open_socket(&config.endpoint).await?;
+        let (mut socket, mut heartbeat) = open_socket(&config.endpoint).await?;
         send_json(
             &mut socket,
             IDENTIFY_OPCODE,
@@ -149,8 +152,15 @@ impl VoiceGatewayConnection {
 
         let mut sequence = None;
         let mut pending = VecDeque::new();
+        let mut sent = None;
+        let deadline = Instant::now() + NEGOTIATION_TIMEOUT;
         let ready = loop {
-            match next_inbound(&mut socket).await? {
+            if pending.len() >= MAX_PENDING_EVENTS {
+                return Err(VoiceError::Protocol("Voice Ready event buffer exceeded".into()));
+            }
+            match negotiation_inbound(
+                &mut socket, &mut heartbeat, sequence, &mut sent, deadline,
+            ).await? {
                 Inbound::Json(envelope) => {
                     update_sequence(&mut sequence, envelope.sequence);
                     if envelope.opcode == READY_OPCODE {
@@ -179,8 +189,8 @@ impl VoiceGatewayConnection {
             socket,
             ready,
             heartbeat,
-            heartbeat_acknowledged: true,
-            last_heartbeat_sent: None,
+            heartbeat_acknowledged: sent.is_none(),
+            last_heartbeat_sent: sent,
             latency: None,
             sequence,
             pending,
@@ -333,7 +343,7 @@ impl VoiceGatewayConnection {
     /// Opens a new Voice Gateway socket and resumes this v8 session using the
     /// latest `seq_ack`. Buffered messages received before Resumed are queued.
     pub async fn resume(&mut self) -> VoiceResult<()> {
-        let (mut socket, heartbeat) = open_socket(&self.config.endpoint).await?;
+        let (mut socket, mut heartbeat) = open_socket(&self.config.endpoint).await?;
         send_json(
             &mut socket,
             RESUME_OPCODE,
@@ -348,8 +358,15 @@ impl VoiceGatewayConnection {
 
         let mut buffered = VecDeque::new();
         let mut sequence = self.sequence;
+        let mut sent = None;
+        let deadline = Instant::now() + NEGOTIATION_TIMEOUT;
         loop {
-            match next_inbound(&mut socket).await? {
+            if buffered.len() >= MAX_PENDING_EVENTS {
+                return Err(VoiceError::Protocol("Voice Resume event buffer exceeded".into()));
+            }
+            match negotiation_inbound(
+                &mut socket, &mut heartbeat, sequence, &mut sent, deadline,
+            ).await? {
                 Inbound::Json(envelope) => {
                     update_sequence(&mut sequence, envelope.sequence);
                     if envelope.opcode == RESUMED_OPCODE {
@@ -375,8 +392,8 @@ impl VoiceGatewayConnection {
 
         self.socket = socket;
         self.heartbeat = heartbeat;
-        self.heartbeat_acknowledged = true;
-        self.last_heartbeat_sent = None;
+        self.heartbeat_acknowledged = sent.is_none();
+        self.last_heartbeat_sent = sent;
         self.latency = None;
         self.sequence = sequence;
         self.pending.extend(buffered);
@@ -389,13 +406,17 @@ impl VoiceGatewayConnection {
         if self.shutdown {
             return Ok(());
         }
-        self.shutdown = true;
-        self.socket
-            .send(Message::Close(Some(CloseFrame {
+        let timeout = Duration::from_secs(5);
+        tokio::time::timeout(
+            timeout,
+            self.socket.send(Message::Close(Some(CloseFrame {
                 code: CloseCode::Normal,
                 reason: "Gloamwire voice shutdown".into(),
-            })))
-            .await?;
+            }))),
+        )
+        .await
+        .map_err(|_| VoiceError::Timeout(timeout))??;
+        self.shutdown = true;
         Ok(())
     }
 
@@ -503,9 +524,14 @@ struct Speaking {
 
 async fn open_socket(endpoint: &str) -> VoiceResult<(VoiceSocket, Interval)> {
     let url = voice_gateway_url(endpoint);
-    let (mut socket, _) = connect_async(url).await?;
+    let (mut socket, _) = tokio::time::timeout(NEGOTIATION_TIMEOUT, connect_async(url))
+        .await
+        .map_err(|_| VoiceError::Timeout(NEGOTIATION_TIMEOUT))??;
 
-    match next_inbound(&mut socket).await? {
+    match tokio::time::timeout(NEGOTIATION_TIMEOUT, next_inbound(&mut socket))
+        .await
+        .map_err(|_| VoiceError::Timeout(NEGOTIATION_TIMEOUT))??
+    {
         Inbound::Json(envelope) if envelope.opcode == HELLO_OPCODE => {
             let hello = serde_json::from_value::<Hello>(envelope.data)?;
             if hello.heartbeat_interval == 0 {
@@ -529,6 +555,43 @@ async fn open_socket(endpoint: &str) -> VoiceResult<(VoiceSocket, Interval)> {
     }
 }
 
+async fn negotiation_inbound(
+    socket: &mut VoiceSocket,
+    heartbeat: &mut Interval,
+    sequence: Option<u16>,
+    sent: &mut Option<Instant>,
+    deadline: Instant,
+) -> VoiceResult<Inbound> {
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {
+                return Err(VoiceError::Timeout(NEGOTIATION_TIMEOUT));
+            }
+            _ = heartbeat.tick() => {
+                if sent.is_some() {
+                    return Err(VoiceError::HeartbeatNotAcknowledged);
+                }
+                let t = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                tokio::time::timeout_at(
+                    deadline,
+                    send_json(socket, HEARTBEAT_OPCODE, &Heartbeat { t, seq_ack: sequence }),
+                ).await.map_err(|_| VoiceError::Timeout(NEGOTIATION_TIMEOUT))??;
+                *sent = Some(Instant::now());
+            }
+            inbound = next_inbound(socket) => {
+                let inbound = inbound?;
+                if matches!(&inbound, Inbound::Json(envelope) if envelope.opcode == HEARTBEAT_ACK_OPCODE) {
+                    *sent = None;
+                }
+                return Ok(inbound);
+            }
+        }
+    }
+}
+
 async fn next_inbound(socket: &mut VoiceSocket) -> VoiceResult<Inbound> {
     loop {
         let message = socket.next().await.ok_or_else(|| VoiceError::Closed {
@@ -538,6 +601,9 @@ async fn next_inbound(socket: &mut VoiceSocket) -> VoiceResult<Inbound> {
 
         match message {
             Message::Text(text) => {
+                if text.len() > MAX_INBOUND_BYTES {
+                    return Err(VoiceError::Protocol("oversized Voice Gateway message".into()));
+                }
                 let envelope = serde_json::from_str::<VoiceEnvelope>(text.as_str())?;
                 return Ok(Inbound::Json(NormalizedEnvelope {
                     opcode: envelope.op,
@@ -546,6 +612,9 @@ async fn next_inbound(socket: &mut VoiceSocket) -> VoiceResult<Inbound> {
                 }));
             }
             Message::Binary(bytes) => {
+                if bytes.len() > MAX_INBOUND_BYTES {
+                    return Err(VoiceError::Protocol("oversized Voice Gateway message".into()));
+                }
                 if bytes.len() < 3 {
                     return Err(VoiceError::Protocol(
                         "Voice Gateway binary message was shorter than sequence + opcode"

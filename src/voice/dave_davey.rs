@@ -18,6 +18,7 @@ pub struct DaveyProvider {
     user_id: UserId,
     channel_id: ChannelId,
     active_protocol_version: u16,
+    prepared_protocol_version: u16,
     session: Option<DaveSession>,
     pending_transitions: HashMap<u16, u16>,
     downgraded: bool,
@@ -49,6 +50,7 @@ impl DaveyProvider {
             user_id,
             channel_id,
             active_protocol_version: 0,
+            prepared_protocol_version: 0,
             session: None,
             pending_transitions: HashMap::new(),
             downgraded: false,
@@ -126,12 +128,21 @@ impl DaveyProvider {
     }
 
     fn execute_transition(&mut self, transition_id: u16) -> Result<(), DaveProviderError> {
-        let Some(next_version) = self.pending_transitions.remove(&transition_id) else {
+        let Some(&next_version) = self.pending_transitions.get(&transition_id) else {
             return Err(DaveProviderError::new(format!(
                 "received DAVE execute transition {transition_id} without a prepared transition"
             )));
         };
 
+        if let Some(session) = &mut self.session
+            && transition_id != 0
+            && !session.execute_transition(transition_id).map_err(|error| {
+                DaveProviderError::new(format!("failed to execute DAVE transition: {error}"))
+            })?
+        {
+            return Err(DaveProviderError::new("DAVE backend did not execute prepared transition"));
+        }
+        self.pending_transitions.remove(&transition_id);
         let old_version = self.active_protocol_version;
         self.active_protocol_version = next_version;
 
@@ -140,7 +151,7 @@ impl DaveyProvider {
         } else if transition_id > 0 && self.downgraded && next_version > 0 {
             self.downgraded = false;
             if let Some(session) = &mut self.session {
-                session.set_passthrough_mode(true, Some(10));
+                session.set_passthrough_mode(false, Some(10));
             }
         }
 
@@ -150,7 +161,7 @@ impl DaveyProvider {
     fn process_commit_or_welcome(
         &mut self,
         transition_id: u16,
-        process: impl FnOnce(&mut DaveSession) -> Result<(), String>,
+        process: impl FnOnce(&mut DaveSession) -> Result<bool, String>,
     ) -> Result<Vec<DaveGatewayCommand>, DaveProviderError> {
         let Some(session) = &mut self.session else {
             return Err(DaveProviderError::new(
@@ -159,20 +170,24 @@ impl DaveyProvider {
         };
 
         match process(session) {
-            Ok(()) => {
+            Ok(false) => Ok(Vec::new()),
+            Ok(true) => {
+                let version = self.prepared_protocol_version;
+                session.prepare_transition(transition_id, version).map_err(|error| {
+                    DaveProviderError::new(format!("failed to prepare DAVE keys: {error}"))
+                })?;
+                self.pending_transitions.insert(transition_id, version);
                 if transition_id == 0 {
+                    self.execute_transition(transition_id)?;
                     return Ok(Vec::new());
                 }
-                self.pending_transitions
-                    .insert(transition_id, self.active_protocol_version);
-                Ok(vec![DaveGatewayCommand::ReadyForTransition {
-                    transition_id,
-                }])
+                Ok(vec![DaveGatewayCommand::ReadyForTransition { transition_id }])
             }
             Err(_error) => {
                 let mut commands = vec![DaveGatewayCommand::InvalidCommitWelcome { transition_id }];
-                if self.active_protocol_version > 0 {
-                    let key_package = self.initialize_mls(self.active_protocol_version)?;
+                self.pending_transitions.clear();
+                if self.prepared_protocol_version > 0 {
+                    let key_package = self.initialize_mls(self.prepared_protocol_version)?;
                     commands.push(DaveGatewayCommand::KeyPackage(key_package));
                 }
                 Ok(commands)
@@ -188,8 +203,8 @@ impl DaveProviderLifecycle for DaveyProvider {
     ) -> Result<Vec<DaveGatewayCommand>, DaveProviderError> {
         Self::validate_protocol_version(protocol_version)?;
         let old_version = self.active_protocol_version;
-        self.active_protocol_version = protocol_version;
         self.pending_transitions.clear();
+        self.prepared_protocol_version = protocol_version;
 
         if protocol_version == 0 {
             if let Some(session) = &mut self.session {
@@ -198,11 +213,13 @@ impl DaveProviderLifecycle for DaveyProvider {
                 })?;
                 session.set_passthrough_mode(true, Some(10));
             }
+            self.active_protocol_version = 0;
             self.downgraded = old_version > 0;
             return Ok(Vec::new());
         }
 
         let key_package = self.initialize_mls(protocol_version)?;
+        self.active_protocol_version = protocol_version;
         self.downgraded = false;
         Ok(vec![DaveGatewayCommand::KeyPackage(key_package)])
     }
@@ -235,6 +252,15 @@ impl DaveProvider for DaveyProvider {
                 transition_id,
             } => {
                 Self::validate_protocol_version(*protocol_version)?;
+                if let Some(session) = &mut self.session {
+                    session
+                        .prepare_transition(*transition_id, *protocol_version)
+                        .map_err(|error| {
+                            DaveProviderError::new(format!("failed to prepare DAVE transition: {error}"))
+                        })?;
+                } else if *protocol_version != 0 {
+                    return Err(DaveProviderError::new("DAVE transition has no MLS session"));
+                }
                 self.pending_transitions
                     .insert(*transition_id, *protocol_version);
 
@@ -262,7 +288,11 @@ impl DaveProvider for DaveyProvider {
                 epoch,
             } => {
                 if *epoch == 1 {
-                    self.configure_protocol_version(*protocol_version)
+                    Self::validate_protocol_version(*protocol_version)?;
+                    let key_package = self.initialize_mls(*protocol_version)?;
+                    self.prepared_protocol_version = *protocol_version;
+                    self.pending_transitions.clear();
+                    Ok(vec![DaveGatewayCommand::KeyPackage(key_package)])
                 } else {
                     Ok(Vec::new())
                 }
@@ -324,11 +354,18 @@ impl DaveProvider for DaveyProvider {
             DaveProtocolEvent::Welcome {
                 transition_id,
                 welcome,
-            } => self.process_commit_or_welcome(*transition_id, |session| {
-                session
-                    .process_welcome(welcome)
-                    .map_err(|error| error.to_string())
-            }),
+            } => {
+                let mut expected: Vec<u64> = participants.iter().map(UserId::get).collect();
+                if !expected.contains(&self.user_id.get()) {
+                    expected.push(self.user_id.get());
+                }
+                self.process_commit_or_welcome(*transition_id, |session| {
+                    session
+                        .process_welcome(welcome, Some(&expected))
+                        .map(|()| true)
+                        .map_err(|error| error.to_string())
+                })
+            }
         }
     }
 
@@ -341,7 +378,7 @@ impl DaveProvider for DaveyProvider {
                 "DAVE is active but davey has no MLS session",
             ));
         };
-        if !session.is_ready() {
+        if !session.can_encrypt() {
             return Err(DaveProviderError::new(
                 "DAVE MLS session is not ready to encrypt Opus",
             ));
