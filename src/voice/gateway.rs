@@ -56,6 +56,9 @@ pub struct VoiceGatewayConfig {
     token: crate::secret::SecretString,
     endpoint: String,
     max_dave_protocol_version: u16,
+    min_dave_protocol_version: u16,
+    allow_insecure_loopback: bool,
+    participant_limit: usize,
 }
 
 impl std::fmt::Debug for VoiceGatewayConfig {
@@ -83,6 +86,9 @@ impl VoiceGatewayConfig {
             token: crate::secret::SecretString::new(info.token),
             endpoint: info.endpoint,
             max_dave_protocol_version: 0,
+            min_dave_protocol_version: 0,
+            allow_insecure_loopback: false,
+            participant_limit: 4096,
         }
     }
 
@@ -96,6 +102,36 @@ impl VoiceGatewayConfig {
     pub const fn with_max_dave_protocol_version(mut self, version: u16) -> Self {
         self.max_dave_protocol_version = version;
         self
+    }
+
+    /// Requires at least this DAVE version for managed media. Zero explicitly
+    /// permits transport-only calls (the compatibility default).
+    #[must_use]
+    pub const fn with_min_dave_protocol_version(mut self, version: u16) -> Self {
+        self.min_dave_protocol_version = version;
+        self
+    }
+
+    /// Permits plaintext only for numeric loopback test endpoints.
+    #[must_use]
+    pub const fn with_insecure_loopback(mut self, allow: bool) -> Self {
+        self.allow_insecure_loopback = allow;
+        self
+    }
+
+    /// Bounds the managed MLS participant set.
+    #[must_use]
+    pub const fn with_participant_limit(mut self, limit: usize) -> Self {
+        self.participant_limit = limit;
+        self
+    }
+
+    pub(super) const fn min_dave_protocol_version(&self) -> u16 {
+        self.min_dave_protocol_version
+    }
+
+    pub(super) const fn participant_limit(&self) -> usize {
+        self.participant_limit
     }
 
     #[must_use]
@@ -136,7 +172,7 @@ impl VoiceGatewayConnection {
     /// Opens the Voice Gateway, receives Hello, identifies, and waits for Ready.
     pub async fn connect(config: VoiceGatewayConfig) -> VoiceResult<Self> {
         let config = Arc::new(config);
-        let (mut socket, mut heartbeat) = open_socket(&config.endpoint).await?;
+        let (mut socket, mut heartbeat) = open_socket(&config.endpoint, config.allow_insecure_loopback).await?;
         send_json(
             &mut socket,
             IDENTIFY_OPCODE,
@@ -164,24 +200,31 @@ impl VoiceGatewayConnection {
                 .await?
             {
                 Inbound::Json(envelope) => {
-                    update_sequence(&mut sequence, envelope.sequence);
+                    let received = envelope.sequence;
                     if envelope.opcode == READY_OPCODE {
-                        break serde_json::from_value::<VoiceReady>(envelope.data)?;
+                        let ready = serde_json::from_value::<VoiceReady>(envelope.data)?;
+                        update_sequence(&mut sequence, received);
+                        break ready;
                     }
                     if envelope.opcode == HELLO_OPCODE {
                         continue;
                     }
                     if let Some(event) = event_from_envelope(envelope)? {
+                        super::DaveProtocolEvent::from_gateway_event(&event)?;
+                        update_sequence(&mut sequence, received);
                         pending.push_back(event);
                     }
                 }
                 Inbound::DaveBinary(event) => {
-                    update_sequence(&mut sequence, Some(event.sequence));
-                    pending.push_back(VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
+                    let received = event.sequence;
+                    let event = VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
                         opcode: event.opcode,
-                        sequence: event.sequence,
+                        sequence: received,
                         payload: event.payload,
-                    }));
+                    });
+                    super::DaveProtocolEvent::from_gateway_event(&event)?;
+                    update_sequence(&mut sequence, Some(received));
+                    pending.push_back(event);
                 }
             }
         };
@@ -345,11 +388,12 @@ impl VoiceGatewayConnection {
                 inbound = next_inbound(self.socket.as_mut().ok_or_else(transport_unavailable)?) => {
                     match inbound? {
                         Inbound::Json(envelope) => {
-                            update_sequence(&mut self.sequence, envelope.sequence);
+                            let received = envelope.sequence;
                             if envelope.opcode == HEARTBEAT_ACK_OPCODE {
                                 if let Some((sent, nonce)) = self.last_heartbeat_sent
                                     && heartbeat_ack_matches(&envelope.data, nonce)
                                 {
+                                    update_sequence(&mut self.sequence, received);
                                     self.heartbeat_acknowledged = true;
                                     self.last_heartbeat_sent = None;
                                     self.latency = Some(sent.elapsed());
@@ -361,16 +405,21 @@ impl VoiceGatewayConnection {
                                 continue;
                             }
                             if let Some(event) = event_from_envelope(envelope)? {
+                                super::DaveProtocolEvent::from_gateway_event(&event)?;
+                                update_sequence(&mut self.sequence, received);
                                 return Ok(Either::Left(event));
                             }
                         }
                         Inbound::DaveBinary(event) => {
-                            update_sequence(&mut self.sequence, Some(event.sequence));
-                            return Ok(Either::Left(VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
+                            let received = event.sequence;
+                            let event = VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
                                 opcode: event.opcode,
-                                sequence: event.sequence,
+                                sequence: received,
                                 payload: event.payload,
-                            })));
+                            });
+                            super::DaveProtocolEvent::from_gateway_event(&event)?;
+                            update_sequence(&mut self.sequence, Some(received));
+                            return Ok(Either::Left(event));
                         }
                     }
                 }
@@ -389,7 +438,7 @@ impl VoiceGatewayConnection {
         // A stale synthetic Resumed event must not authorize media on a later recovery.
         self.pending
             .retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
-        let (mut socket, mut heartbeat) = open_socket(&self.config.endpoint).await?;
+        let (mut socket, mut heartbeat) = open_socket(&self.config.endpoint, self.config.allow_insecure_loopback).await?;
         send_json(
             &mut socket,
             RESUME_OPCODE,
@@ -416,24 +465,30 @@ impl VoiceGatewayConnection {
                 .await?
             {
                 Inbound::Json(envelope) => {
-                    update_sequence(&mut sequence, envelope.sequence);
+                    let received = envelope.sequence;
                     if envelope.opcode == RESUMED_OPCODE {
+                        update_sequence(&mut sequence, received);
                         break;
                     }
                     if envelope.opcode == HELLO_OPCODE {
                         continue;
                     }
                     if let Some(event) = event_from_envelope(envelope)? {
+                        super::DaveProtocolEvent::from_gateway_event(&event)?;
+                        update_sequence(&mut sequence, received);
                         buffered.push_back(event);
                     }
                 }
                 Inbound::DaveBinary(event) => {
-                    update_sequence(&mut sequence, Some(event.sequence));
-                    buffered.push_back(VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
+                    let received = event.sequence;
+                    let event = VoiceGatewayEvent::Dave(DaveGatewayEvent::Binary {
                         opcode: event.opcode,
-                        sequence: event.sequence,
+                        sequence: received,
                         payload: event.payload,
-                    }));
+                    });
+                    super::DaveProtocolEvent::from_gateway_event(&event)?;
+                    update_sequence(&mut sequence, Some(received));
+                    buffered.push_back(event);
                 }
             }
         }
@@ -571,8 +626,11 @@ struct Speaking {
     ssrc: u32,
 }
 
-async fn open_socket(endpoint: &str) -> VoiceResult<(VoiceSocket, Interval)> {
+async fn open_socket(endpoint: &str, allow_loopback: bool) -> VoiceResult<(VoiceSocket, Interval)> {
     let url = voice_gateway_url(endpoint);
+    if !crate::secret::secure_websocket_endpoint(&url, allow_loopback) {
+        return Err(VoiceError::Protocol("Voice Gateway endpoint must use TLS (except explicitly enabled loopback fixtures)".into()));
+    }
     let (mut socket, _) = tokio::time::timeout(
         NEGOTIATION_TIMEOUT,
         connect_async_with_config(

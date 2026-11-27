@@ -327,9 +327,13 @@ impl Cache {
     fn apply_message_update(&mut self, patch: &crate::gateway::MessageUpdateEvent) -> Result<()> {
         if let Some(existing) = self.messages.get(&patch.id) {
             let updated = patch.apply(existing)?;
-            self.remember_user(updated.author.clone());
-            for user in &updated.mentions {
-                self.remember_user(user.clone());
+            if patch.fields.contains_key("author") {
+                self.remember_user(updated.author.clone());
+            }
+            if patch.fields.contains_key("mentions") {
+                for user in &updated.mentions {
+                    self.remember_user(user.clone());
+                }
             }
             self.messages.insert(patch.id, updated);
         }

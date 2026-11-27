@@ -41,6 +41,8 @@ pub struct DaveVoiceSession<P> {
     ssrc_users: HashMap<u32, UserId>,
     sequencer: VoiceRtpSequencer,
     protocol_failed: bool,
+    minimum_dave_version: u16,
+    participant_limit: usize,
     replay: HashMap<u32, ReplayWindow>,
     replay_generation: u64,
 }
@@ -68,8 +70,16 @@ where
     /// supported DAVE protocol version and initializing it from Session
     /// Description.
     pub async fn connect(config: VoiceGatewayConfig, mut provider: P) -> VoiceResult<Self> {
+        let minimum_dave_version = config.min_dave_protocol_version();
+        let participant_limit = config.participant_limit();
+        if minimum_dave_version > provider.max_protocol_version() || participant_limit == 0 {
+            return Err(VoiceError::Protocol("invalid managed DAVE policy".into()));
+        }
         let config = config.with_max_dave_protocol_version(provider.max_protocol_version());
         let mut session = VoiceSession::connect(config).await?;
+        if session.session_description().dave_protocol_version < minimum_dave_version {
+            return Err(VoiceError::Protocol("negotiated DAVE version is below configured minimum".into()));
+        }
         let commands = provider
             .configure_protocol_version(session.session_description().dave_protocol_version)
             .map_err(provider_error)?;
@@ -83,6 +93,8 @@ where
             ssrc_users: HashMap::new(),
             sequencer,
             protocol_failed: false,
+            minimum_dave_version,
+            participant_limit,
             replay: HashMap::new(),
             replay_generation: 0,
         })
@@ -187,13 +199,25 @@ where
         // Set before any provider mutation or await. If this future is dropped
         // during command transmission, the session remains fail-closed.
         self.protocol_failed = true;
-        self.participants.apply(&dave_event);
+        match &dave_event {
+            DaveProtocolEvent::PrepareTransition { protocol_version, .. }
+            | DaveProtocolEvent::PrepareEpoch { protocol_version, .. }
+                if *protocol_version < self.minimum_dave_version =>
+            {
+                return Err(VoiceError::Protocol("DAVE downgrade below configured minimum".into()));
+            }
+            _ => {}
+        }
+        self.participants.try_apply(&dave_event, self.participant_limit)?;
         // The provider owns MLS recovery and knows the pending epoch version.
         // Reconfiguring from the active version can downgrade an upgrade.
         let commands = self
             .provider
             .handle_gateway_event(&dave_event, &self.participants)
             .map_err(provider_error)?;
+        if self.provider.active_protocol_version() < self.minimum_dave_version {
+            return Err(VoiceError::Protocol("DAVE provider downgraded below configured minimum".into()));
+        }
         let result = send_commands(&mut self.session, commands).await;
         if result.is_ok() {
             self.protocol_failed = false;
@@ -282,7 +306,7 @@ where
     }
 
     fn ensure_media_ready(&self) -> VoiceResult<()> {
-        if self.protocol_failed || !self.session.is_media_ready() {
+        if self.protocol_failed || !self.session.is_media_ready() || self.provider.active_protocol_version() < self.minimum_dave_version {
             return Err(VoiceError::Protocol(
                 "voice media unavailable; recover or restart session".into(),
             ));

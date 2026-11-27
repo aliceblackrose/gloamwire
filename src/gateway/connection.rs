@@ -49,6 +49,7 @@ pub struct GatewayConfig {
     token: crate::secret::SecretString,
     intents: GatewayIntents,
     url: String,
+    allow_insecure_loopback: bool,
     shard: Option<[u32; 2]>,
     identify_coordinator: Option<Arc<dyn GatewayIdentifyCoordinator>>,
     encoding: GatewayEncoding,
@@ -78,6 +79,7 @@ impl GatewayConfig {
             token: crate::secret::SecretString::new(token.into()),
             intents,
             url: DEFAULT_GATEWAY_URL.to_owned(),
+            allow_insecure_loopback: false,
             shard: None,
             identify_coordinator: None,
             encoding: GatewayEncoding::Json,
@@ -101,6 +103,7 @@ impl GatewayConfig {
             token: crate::secret::SecretString::new(token.into()),
             intents,
             url: gateway.url.clone(),
+            allow_insecure_loopback: false,
             shard: None,
             identify_coordinator: Some(Arc::new(GatewayIdentifyLimiter::new(
                 &gateway.session_start_limit,
@@ -117,6 +120,14 @@ impl GatewayConfig {
     #[must_use]
     pub fn with_url(mut self, url: impl Into<String>) -> Self {
         self.url = url.into();
+        self
+    }
+
+    /// Explicitly permits plaintext WebSocket connections to numeric loopback
+    /// addresses for local fixtures. Never use production credentials with this.
+    #[must_use]
+    pub const fn with_insecure_loopback(mut self, allow: bool) -> Self {
+        self.allow_insecure_loopback = allow;
         self
     }
 
@@ -451,6 +462,9 @@ impl GatewayConnection {
 
         if name == "READY" {
             let ready = serde_json::from_value::<ReadySessionData>(envelope.d.clone())?;
+            if !crate::secret::secure_websocket_endpoint(&ready.resume_gateway_url, self.config.allow_insecure_loopback && !self.config.url.starts_with("wss://")) {
+                return Err(Error::GatewayProtocol("insecure or invalid Gateway resume endpoint".into()));
+            }
             self.session = Some(GatewaySession::new(
                 ready.session_id,
                 ready.resume_gateway_url,
@@ -663,6 +677,10 @@ async fn open_and_handshake(
     rate_limiter: &GatewayRateLimiter,
 ) -> Result<(GatewaySocket, GatewayDecoder, Interval, Option<Instant>)> {
     let base_url = session.map_or(config.url.as_str(), GatewaySession::resume_gateway_url);
+    let allow_loopback = config.allow_insecure_loopback && !config.url.starts_with("wss://");
+    if !crate::secret::secure_websocket_endpoint(base_url, allow_loopback) {
+        return Err(Error::GatewayProtocol("Gateway endpoint must use TLS (except explicitly enabled loopback fixtures)".into()));
+    }
     let url = gateway_url(base_url, config.encoding, config.compression);
     let timeout = Duration::from_secs(15);
     let (mut socket, _) = tokio::time::timeout(

@@ -548,7 +548,7 @@ mod tests {
             session_id: "fixture-session".to_owned(),
             token: "fixture-token".to_owned(),
             endpoint: format!("ws://{websocket_addr}"),
-        });
+        }).with_insecure_loopback(true);
         let mut session = within("VoiceSession::connect", VoiceSession::connect(config))
             .await
             .expect("voice session");

@@ -83,6 +83,12 @@ pub struct VoiceSessionDescription {
     pub dave_protocol_version: u16,
 }
 
+impl Drop for VoiceSessionDescription {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.secret_key);
+    }
+}
+
 impl std::fmt::Debug for VoiceSessionDescription {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VoiceSessionDescription")

@@ -62,15 +62,16 @@ impl VoiceTransportCrypto {
 
     /// Creates transport crypto from a negotiated mode and 32-byte session key.
     pub fn new(mode: VoiceEncryptionMode, secret_key: [u8; 32]) -> VoiceResult<Self> {
+        let secret_key = zeroize::Zeroizing::new(secret_key);
         let cipher = match mode.as_ref() {
             VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE => VoiceTransportCipher::Aes256Gcm(
-                Box::new(Aes256Gcm::new_from_slice(&secret_key).map_err(|_| {
+                Box::new(Aes256Gcm::new_from_slice(secret_key.as_ref()).map_err(|_| {
                     VoiceError::Crypto("AES-256-GCM rejected the 32-byte session key".to_owned())
                 })?),
             ),
             VoiceEncryptionMode::AEAD_XCHACHA20_POLY1305_RTPSIZE => {
                 VoiceTransportCipher::XChaCha20Poly1305(
-                    XChaCha20Poly1305::new_from_slice(&secret_key).map_err(|_| {
+                    XChaCha20Poly1305::new_from_slice(secret_key.as_ref()).map_err(|_| {
                         VoiceError::Crypto(
                             "XChaCha20-Poly1305 rejected the 32-byte session key".to_owned(),
                         )
