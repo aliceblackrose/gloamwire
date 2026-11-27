@@ -290,9 +290,12 @@ impl GatewayConnection {
         }
 
         self.ready = false;
-        if let Some(socket) = self.socket.as_mut() {
+        self.shutdown = true;
+        self.session = None;
+        self.sequence = None;
+        if let Some(mut socket) = self.socket.take() {
             write_message(
-                socket,
+                &mut socket,
                 Message::Close(Some(CloseFrame {
                     code: CloseCode::Normal,
                     reason: "Gloamwire shutdown".into(),
@@ -300,11 +303,6 @@ impl GatewayConnection {
             )
             .await?;
         }
-        self.socket.take();
-        self.shutdown = true;
-        self.session = None;
-        self.sequence = None;
-
         Ok(())
     }
 
@@ -564,6 +562,9 @@ impl GatewayConnection {
                     );
                     match recovery {
                         GatewayReconnectStrategy::Stop => {
+                            self.shutdown = true;
+                            self.session = None;
+                            self.sequence = None;
                             return Err(Error::GatewayClosed { code, reason });
                         }
                         GatewayReconnectStrategy::Reidentify => {

@@ -42,6 +42,7 @@ pub struct DaveVoiceSession<P> {
     sequencer: VoiceRtpSequencer,
     protocol_failed: bool,
     replay: HashMap<u32, ReplayWindow>,
+    replay_generation: u64,
 }
 
 impl<P> std::fmt::Debug for DaveVoiceSession<P>
@@ -83,6 +84,7 @@ where
             sequencer,
             protocol_failed: false,
             replay: HashMap::new(),
+            replay_generation: 0,
         })
     }
 
@@ -118,6 +120,7 @@ where
 
     /// Sends Voice Gateway Speaking state.
     pub async fn set_speaking(&mut self, flags: VoiceSpeakingFlags) -> VoiceResult<()> {
+        self.ensure_media_ready()?;
         self.session.gateway_mut().set_speaking(flags).await
     }
 
@@ -195,11 +198,7 @@ where
     /// Sends one complete encoded Opus frame through DAVE, RTP, transport AEAD,
     /// and the connected UDP socket.
     pub async fn send_opus_frame(&mut self, frame: VoiceOpusFrame<'_>) -> VoiceResult<usize> {
-        if self.protocol_failed {
-            return Err(VoiceError::Protocol(
-                "DAVE control state failed; restart voice session".into(),
-            ));
-        }
+        self.ensure_media_ready()?;
         let media = if frame.payload() == OPUS_SILENCE_FRAME {
             frame.payload().to_vec()
         } else {
@@ -220,10 +219,10 @@ where
     /// Decrypts one already-received Discord UDP packet into an encoded Opus
     /// frame, including DAVE sender-ratchet processing when required.
     pub fn decrypt_rtp_packet(&mut self, packet: &[u8]) -> VoiceResult<VoiceReceivedOpus> {
-        if self.protocol_failed {
-            return Err(VoiceError::Protocol(
-                "DAVE control state failed; restart voice session".into(),
-            ));
+        self.ensure_media_ready()?;
+        if self.replay_generation != self.session.key_generation() {
+            self.replay.clear();
+            self.replay_generation = self.session.key_generation();
         }
         let decrypted = self.session.transport_crypto().decrypt_rtp(packet)?;
         let header = decode_audio_header(&decrypted.header)?;
@@ -276,16 +275,27 @@ where
         self.decrypt_rtp_packet(&buffer[..received])
     }
 
+    fn ensure_media_ready(&self) -> VoiceResult<()> {
+        if self.protocol_failed || !self.session.is_media_ready() {
+            return Err(VoiceError::Protocol("voice media unavailable; recover or restart session".into()));
+        }
+        Ok(())
+    }
+
     /// Applies Voice Gateway close-code recovery to the managed session.
     pub async fn recover_after_close(
         &mut self,
         code: Option<super::VoiceCloseCode>,
     ) -> VoiceResult<VoiceRecoveryOutcome> {
+        if self.protocol_failed {
+            return Ok(VoiceRecoveryOutcome::RestartRequired);
+        }
         self.session.recover_after_close(code).await
     }
 
     /// Gracefully closes the Voice Gateway transport.
     pub async fn shutdown(&mut self) -> VoiceResult<()> {
+        self.protocol_failed = true;
         self.session.shutdown().await
     }
 }

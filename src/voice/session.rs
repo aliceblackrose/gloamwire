@@ -31,6 +31,10 @@ pub struct VoiceSession {
     description: VoiceSessionDescription,
     transport_crypto: VoiceTransportCrypto,
     pending: VecDeque<VoiceGatewayEvent>,
+    retired_keys: zeroize::Zeroizing<Vec<[u8; 32]>>,
+    key_generation: u64,
+    media_ready: bool,
+    restart_required: bool,
 }
 
 impl std::fmt::Debug for VoiceSession {
@@ -112,6 +116,10 @@ impl VoiceSession {
             description,
             transport_crypto,
             pending,
+            retired_keys: zeroize::Zeroizing::new(Vec::new()),
+            key_generation: 0,
+            media_ready: true,
+            restart_required: false,
         })
     }
 
@@ -166,10 +174,19 @@ impl VoiceSession {
     /// Returns the next Voice Gateway event, including events buffered while
     /// waiting for Session Description or Resume completion.
     pub async fn next_event(&mut self) -> VoiceResult<VoiceGatewayEvent> {
-        if let Some(event) = self.pending.pop_front() {
-            return Ok(event);
-        }
-        self.gateway.next_event().await
+        let event = if let Some(event) = self.pending.pop_front() {
+            event
+        } else {
+            match self.gateway.next_event().await {
+                Ok(event) => event,
+                Err(error) => {
+                    self.media_ready = false;
+                    return Err(error);
+                }
+            }
+        };
+        self.apply_transport_event(&event)?;
+        Ok(event)
     }
 
     pub(super) async fn next_input<F: std::future::Future>(
@@ -179,6 +196,7 @@ impl VoiceSession {
     ) -> VoiceResult<VoiceInput<F::Output>> {
         use futures_util::future::Either;
         if let Some(event) = self.pending.pop_front() {
+            self.apply_transport_event(&event)?;
             return Ok(VoiceInput::Gateway(event));
         }
         let udp = &self.udp;
@@ -190,12 +208,67 @@ impl VoiceSession {
                     received = udp.recv(buffer) => Either::Right(received),
                 }
             })
-            .await?;
+            .await;
+        let input = match input {
+            Ok(input) => input,
+            Err(error) => {
+                self.media_ready = false;
+                return Err(error);
+            }
+        };
         match input {
-            Either::Left(event) => Ok(VoiceInput::Gateway(event)),
+            Either::Left(event) => {
+                self.apply_transport_event(&event)?;
+                Ok(VoiceInput::Gateway(event))
+            }
             Either::Right(Either::Left(output)) => Ok(VoiceInput::External(output)),
             Either::Right(Either::Right(received)) => Ok(VoiceInput::Udp(received?)),
         }
+    }
+
+    /// Whether the negotiated transport may currently be used for media.
+    #[must_use]
+    pub const fn is_media_ready(&self) -> bool {
+        self.media_ready && !self.restart_required
+    }
+
+    pub(super) const fn key_generation(&self) -> u64 {
+        self.key_generation
+    }
+
+    fn apply_transport_event(&mut self, event: &VoiceGatewayEvent) -> VoiceResult<()> {
+        if self.restart_required {
+            return Err(super::VoiceError::Protocol("voice session must be restarted".into()));
+        }
+        match event {
+            VoiceGatewayEvent::SessionDescription(description) => {
+                if description.mode != self.mode
+                    || description.dave_protocol_version != self.description.dave_protocol_version
+                {
+                    self.media_ready = false;
+                    self.restart_required = true;
+                    return Err(super::VoiceError::Protocol("voice protocol changed; restart session".into()));
+                }
+                if description.secret_key != self.description.secret_key {
+                    // Never reset the nonce counter for a previously used key.
+                    if self.retired_keys.len() >= 32 || self.retired_keys.contains(&description.secret_key) {
+                        self.media_ready = false;
+                        self.restart_required = true;
+                        return Err(super::VoiceError::Protocol("voice key reuse or rekey limit; restart session".into()));
+                    }
+                    self.media_ready = false;
+                    let crypto = VoiceTransportCrypto::from_session_description(description)?;
+                    self.retired_keys.push(self.description.secret_key);
+                    self.transport_crypto = crypto;
+                    self.description = description.clone();
+                    self.key_generation += 1;
+                    self.media_ready = true;
+                }
+            }
+            VoiceGatewayEvent::Resumed => self.media_ready = true,
+            _ => {}
+        }
+        Ok(())
     }
 
     /// Applies the reconnect policy for a Voice Gateway close.
@@ -207,6 +280,10 @@ impl VoiceSession {
         &mut self,
         code: Option<VoiceCloseCode>,
     ) -> VoiceResult<VoiceRecoveryOutcome> {
+        self.media_ready = false;
+        if self.restart_required {
+            return Ok(VoiceRecoveryOutcome::RestartRequired);
+        }
         let strategy = code.map_or(
             VoiceReconnectStrategy::Resume,
             VoiceCloseCode::reconnect_strategy,
@@ -216,14 +293,22 @@ impl VoiceSession {
                 self.gateway.resume().await?;
                 Ok(VoiceRecoveryOutcome::Resumed)
             }
-            VoiceReconnectStrategy::Restart => Ok(VoiceRecoveryOutcome::RestartRequired),
-            VoiceReconnectStrategy::Stop => Ok(VoiceRecoveryOutcome::Stopped),
+            VoiceReconnectStrategy::Restart => {
+                self.restart_required = true;
+                Ok(VoiceRecoveryOutcome::RestartRequired)
+            }
+            VoiceReconnectStrategy::Stop => {
+                self.restart_required = true;
+                Ok(VoiceRecoveryOutcome::Stopped)
+            }
         }
     }
 
     /// Gracefully closes the Voice Gateway. The UDP socket is released when the
     /// session is dropped.
     pub async fn shutdown(&mut self) -> VoiceResult<()> {
+        self.media_ready = false;
+        self.restart_required = true;
         self.gateway.shutdown().await
     }
 }
