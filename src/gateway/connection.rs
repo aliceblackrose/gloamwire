@@ -479,6 +479,9 @@ impl GatewayConnection {
             });
         }
 
+        if !self.is_ready() {
+            return Err(Error::GatewayProtocol("Gateway is not READY".into()));
+        }
         let payload = encode_payload(
             self.config.encoding,
             &OutboundEnvelope {

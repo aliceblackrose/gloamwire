@@ -107,7 +107,7 @@ impl VoiceGatewayConfig {
 /// Live Discord Voice Gateway v8 connection.
 pub struct VoiceGatewayConnection {
     config: Arc<VoiceGatewayConfig>,
-    socket: VoiceSocket,
+    socket: Option<VoiceSocket>,
     ready: VoiceReady,
     heartbeat: Interval,
     heartbeat_acknowledged: bool,
@@ -188,7 +188,7 @@ impl VoiceGatewayConnection {
 
         Ok(Self {
             config,
-            socket,
+            socket: Some(socket),
             ready,
             heartbeat,
             heartbeat_acknowledged: sent.is_none(),
@@ -232,7 +232,7 @@ impl VoiceGatewayConnection {
         }
 
         send_json(
-            &mut self.socket,
+            self.socket.as_mut().ok_or_else(transport_unavailable)?,
             SELECT_PROTOCOL_OPCODE,
             &SelectProtocol {
                 protocol: "udp",
@@ -252,7 +252,7 @@ impl VoiceGatewayConnection {
     /// A zero bitmask is valid after transmission and clears the speaking state.
     pub async fn set_speaking(&mut self, flags: VoiceSpeakingFlags) -> VoiceResult<()> {
         send_json(
-            &mut self.socket,
+            self.socket.as_mut().ok_or_else(transport_unavailable)?,
             SPEAKING_OPCODE,
             &Speaking {
                 speaking: flags.bits(),
@@ -273,7 +273,7 @@ impl VoiceGatewayConnection {
                 "Voice DAVE opcode {opcode} is not a client JSON opcode"
             )));
         }
-        send_json(&mut self.socket, opcode, data).await
+        send_json(self.socket.as_mut().ok_or_else(transport_unavailable)?, opcode, data).await
     }
 
     /// Sends a binary DAVE client opcode. Client binary messages contain the
@@ -286,10 +286,13 @@ impl VoiceGatewayConnection {
             )));
         }
 
+        if payload.len() >= MAX_INBOUND_BYTES {
+            return Err(VoiceError::Protocol("oversized outbound Voice Gateway binary payload".into()));
+        }
         let mut bytes = Vec::with_capacity(payload.len() + 1);
         bytes.push(opcode);
         bytes.extend_from_slice(payload);
-        write_message(&mut self.socket, Message::Binary(bytes.into())).await?;
+        write_message(self.socket.as_mut().ok_or_else(transport_unavailable)?, Message::Binary(bytes.into())).await?;
         Ok(())
     }
 
@@ -328,7 +331,7 @@ impl VoiceGatewayConnection {
                     }
                     self.send_heartbeat().await?;
                 }
-                inbound = next_inbound(&mut self.socket) => {
+                inbound = next_inbound(self.socket.as_mut().ok_or_else(transport_unavailable)?) => {
                     match inbound? {
                         Inbound::Json(envelope) => {
                             update_sequence(&mut self.sequence, envelope.sequence);
@@ -361,6 +364,13 @@ impl VoiceGatewayConnection {
     /// Opens a new Voice Gateway socket and resumes this v8 session using the
     /// latest `seq_ack`. Buffered messages received before Resumed are queued.
     pub async fn resume(&mut self) -> VoiceResult<()> {
+        if self.shutdown {
+            return Err(transport_unavailable());
+        }
+        // Retire the previous socket before initiating the replacement handshake.
+        self.socket.take();
+        // A stale synthetic Resumed event must not authorize media on a later recovery.
+        self.pending.retain(|event| !matches!(event, VoiceGatewayEvent::Resumed));
         let (mut socket, mut heartbeat) = open_socket(&self.config.endpoint).await?;
         send_json(
             &mut socket,
@@ -410,7 +420,7 @@ impl VoiceGatewayConnection {
             }
         }
 
-        self.socket = socket;
+        self.socket = Some(socket);
         self.heartbeat = heartbeat;
         self.heartbeat_acknowledged = sent.is_none();
         self.last_heartbeat_sent = sent;
@@ -426,17 +436,14 @@ impl VoiceGatewayConnection {
         if self.shutdown {
             return Ok(());
         }
-        let timeout = Duration::from_secs(5);
-        tokio::time::timeout(
-            timeout,
-            self.socket.send(Message::Close(Some(CloseFrame {
+        self.shutdown = true;
+        self.pending.clear();
+        if let Some(mut socket) = self.socket.take() {
+            write_message(&mut socket, Message::Close(Some(CloseFrame {
                 code: CloseCode::Normal,
                 reason: "Gloamwire voice shutdown".into(),
-            }))),
-        )
-        .await
-        .map_err(|_| VoiceError::Timeout(timeout))??;
-        self.shutdown = true;
+            }))).await?;
+        }
         Ok(())
     }
 
@@ -446,7 +453,7 @@ impl VoiceGatewayConnection {
             .unwrap_or_default()
             .as_millis() as u64;
         send_json(
-            &mut self.socket,
+            self.socket.as_mut().ok_or_else(transport_unavailable)?,
             HEARTBEAT_OPCODE,
             &Heartbeat {
                 t: nonce,
@@ -706,6 +713,10 @@ fn event_from_envelope(envelope: NormalizedEnvelope) -> VoiceResult<Option<Voice
         },
     };
     Ok(Some(event))
+}
+
+fn transport_unavailable() -> VoiceError {
+    VoiceError::Protocol("Voice Gateway transport unavailable".into())
 }
 
 async fn write_message(socket: &mut VoiceSocket, message: Message) -> VoiceResult<()> {
