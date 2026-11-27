@@ -322,12 +322,12 @@ impl RateLimiter {
             if header_str(headers, "x-ratelimit-scope") == Some("shared") {
                 self.shared.update(route.resource_major(), deadline);
             }
+            let bucket_capacity_reached =
+                state.buckets.len() >= MAX_BUCKETS && !state.buckets.contains_key(&bucket_key);
             if global
                 || header_str(headers, "x-ratelimit-global") == Some("true")
                 || header_str(headers, "x-ratelimit-scope") == Some("global")
-            {
-                state.global_until = later(state.global_until, deadline);
-            } else if state.buckets.len() >= MAX_BUCKETS && !state.buckets.contains_key(&bucket_key)
+                || bucket_capacity_reached
             {
                 state.global_until = later(state.global_until, deadline);
             } else {
