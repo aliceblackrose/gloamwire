@@ -1,3 +1,8 @@
+use std::{
+    hash::{BuildHasher, RandomState},
+    sync::OnceLock,
+};
+
 use reqwest::Method;
 
 use crate::model::ChannelId;
@@ -8,13 +13,25 @@ pub(crate) enum RetrySafety {
     Unsafe,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct Route {
     pub(crate) method: Method,
     pub(crate) path: String,
     template: &'static str,
     major: Option<String>,
     retry_safety: RetrySafety,
+    token_authenticated: bool,
+    global_exempt: bool,
+}
+
+impl std::fmt::Debug for Route {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Route")
+            .field("method", &self.method)
+            .field("template", &self.template)
+            .field("token_authenticated", &self.token_authenticated)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Route {
@@ -61,7 +78,28 @@ impl Route {
             template,
             major,
             retry_safety,
+            token_authenticated: false,
+            global_exempt: false,
         }
+    }
+
+    pub(crate) fn token_authenticated(mut self, token: &str, global_exempt: bool) -> Self {
+        // A keyed, process-local fingerprint avoids retaining plaintext tokens
+        // in rate-limit maps or debug output.
+        static HASHER: OnceLock<RandomState> = OnceLock::new();
+        let fingerprint = HASHER.get_or_init(RandomState::new).hash_one(token);
+        self.major = Some(format!("{}:{fingerprint:016x}", self.major()));
+        self.token_authenticated = true;
+        self.global_exempt = global_exempt;
+        self
+    }
+
+    pub(crate) const fn uses_token_auth(&self) -> bool {
+        self.token_authenticated
+    }
+
+    pub(crate) const fn global_exempt(&self) -> bool {
+        self.global_exempt
     }
 
     pub(crate) fn identity(&self) -> String {

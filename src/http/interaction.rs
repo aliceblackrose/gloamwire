@@ -363,6 +363,7 @@ fn interaction_callback_route(
         Some(interaction_id.to_string()),
         safety,
     )
+    .token_authenticated(token, true)
 }
 
 fn interaction_webhook_route(
@@ -383,6 +384,7 @@ fn interaction_webhook_route(
         Some(application_id.to_string()),
         safety,
     )
+    .token_authenticated(token, true)
 }
 
 fn interaction_message_route(

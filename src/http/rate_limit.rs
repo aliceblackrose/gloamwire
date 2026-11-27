@@ -1,10 +1,14 @@
 use std::{
     collections::{HashMap, VecDeque},
+    sync::{Arc, Weak},
     time::Duration,
 };
 
 use reqwest::{StatusCode, header::HeaderMap};
-use tokio::{sync::Mutex, time::Instant};
+use tokio::{
+    sync::{Mutex, OwnedMutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    time::Instant,
+};
 
 use super::route::Route;
 
@@ -14,6 +18,17 @@ const GLOBAL_WINDOW: Duration = Duration::from_secs(1);
 #[derive(Debug, Default)]
 pub(crate) struct RateLimiter {
     state: Mutex<RateLimitState>,
+    discovery: RwLock<()>,
+    gates: Mutex<HashMap<RateLimitBucketKey, Weak<Mutex<()>>>>,
+}
+
+/// Holds a single-flight reservation until the HTTP attempt completes or is
+/// cancelled. Unknown routes are discovered exclusively, since they may share
+/// a bucket with a previously learned route.
+pub(crate) struct Reservation<'a> {
+    _read: Option<RwLockReadGuard<'a, ()>>,
+    _write: Option<RwLockWriteGuard<'a, ()>>,
+    _bucket: Option<OwnedMutexGuard<()>>,
 }
 
 #[derive(Debug, Default)]
@@ -43,7 +58,51 @@ struct BucketState {
 }
 
 impl RateLimiter {
-    pub(crate) async fn acquire(&self, route: &Route) {
+    pub(crate) async fn reserve(&self, route: &Route) -> Reservation<'_> {
+        let read = self.discovery.read().await;
+        let key = {
+            let mut state = self.state.lock().await;
+            let now = Instant::now();
+            if state.buckets.len() > 4096 {
+                state.buckets.retain(|_, bucket| {
+                    now.saturating_duration_since(bucket.reset_at) < Duration::from_secs(60)
+                });
+            }
+            state
+                .route_buckets
+                .get(&route.identity())
+                .map(|hash| bucket_key(hash, route.major()))
+        };
+        let reservation = if let Some(key) = key {
+            let gate = {
+                let mut gates = self.gates.lock().await;
+                gates.retain(|_, gate| gate.strong_count() > 0);
+                if let Some(gate) = gates.get(&key).and_then(Weak::upgrade) {
+                    gate
+                } else {
+                    let gate = Arc::new(Mutex::new(()));
+                    gates.insert(key, Arc::downgrade(&gate));
+                    gate
+                }
+            };
+            Reservation {
+                _read: Some(read),
+                _write: None,
+                _bucket: Some(gate.lock_owned().await),
+            }
+        } else {
+            drop(read);
+            Reservation {
+                _read: None,
+                _write: Some(self.discovery.write().await),
+                _bucket: None,
+            }
+        };
+        self.acquire(route).await;
+        reservation
+    }
+
+    async fn acquire(&self, route: &Route) {
         loop {
             let wait_until = {
                 let mut state = self.state.lock().await;
@@ -59,7 +118,8 @@ impl RateLimiter {
 
                 let mut wait_until = state.global_until.filter(|deadline| *deadline > now);
 
-                if state.global_requests.len() >= GLOBAL_REQUEST_LIMIT
+                if !route.global_exempt()
+                    && state.global_requests.len() >= GLOBAL_REQUEST_LIMIT
                     && let Some(oldest) = state.global_requests.front()
                 {
                     wait_until = later(wait_until, *oldest + GLOBAL_WINDOW);
@@ -80,7 +140,9 @@ impl RateLimiter {
                 }
 
                 if wait_until.is_none() {
-                    state.global_requests.push_back(now);
+                    if !route.global_exempt() {
+                        state.global_requests.push_back(now);
+                    }
                     if let Some(bucket) = state.buckets.get_mut(&bucket_key)
                         && bucket.reset_at > now
                         && bucket.remaining > 0
@@ -184,8 +246,9 @@ impl RateLimiter {
                 remaining,
                 reset_at,
             });
-            if bucket.reset_at > now {
-                bucket.remaining = bucket.remaining.min(remaining);
+            if bucket.remaining == 0 && bucket.reset_at > now {
+                // Preserve a live 429 cooldown. Single-flight reservations
+                // prevent older successful responses from racing newer ones.
                 bucket.reset_at = bucket.reset_at.max(reset_at);
             } else {
                 *bucket = BucketState {
@@ -276,6 +339,34 @@ mod tests {
         assert_eq!(
             state.buckets[&bucket_key("bucket", route.major())].remaining,
             0
+        );
+    }
+
+    #[tokio::test]
+    async fn learned_bucket_aliases_are_single_flight() {
+        let limiter = RateLimiter::default();
+        let first = Route::current_user();
+        let second = Route::gateway_bot();
+        let mut headers = HeaderMap::new();
+        headers.insert("x-ratelimit-bucket", "shared".parse().unwrap());
+        headers.insert("x-ratelimit-remaining", "5".parse().unwrap());
+        headers.insert("x-ratelimit-reset-after", "10".parse().unwrap());
+        for route in [&first, &second] {
+            limiter
+                .update(route, StatusCode::OK, &headers, None, false)
+                .await;
+        }
+        let held = limiter.reserve(&first).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), limiter.reserve(&second))
+                .await
+                .is_err()
+        );
+        drop(held);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), limiter.reserve(&second))
+                .await
+                .is_ok()
         );
     }
 

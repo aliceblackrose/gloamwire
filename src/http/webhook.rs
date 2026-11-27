@@ -576,6 +576,7 @@ fn webhook_token_route(
         Some(webhook_id.to_string()),
         safety,
     )
+    .token_authenticated(token, false)
 }
 
 fn webhook_message_route(

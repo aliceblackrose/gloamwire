@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Serialize, de::DeserializeOwned};
@@ -48,8 +48,9 @@ impl std::fmt::Debug for RestClientBuilder {
 
 impl RestClientBuilder {
     fn new(token: impl AsRef<str>) -> Result<Self> {
-        let authorization = HeaderValue::from_str(&format!("Bot {}", token.as_ref()))
+        let mut authorization = HeaderValue::from_str(&format!("Bot {}", token.as_ref()))
             .map_err(|_| Error::InvalidToken)?;
+        authorization.set_sensitive(true);
 
         Ok(Self {
             authorization,
@@ -102,12 +103,7 @@ impl RestClientBuilder {
 
     /// Builds the configured REST client.
     pub fn build(self) -> Result<RestClient> {
-        let mut headers = HeaderMap::new();
-        headers.insert(AUTHORIZATION, self.authorization);
-
-        let mut builder = reqwest::Client::builder()
-            .default_headers(headers)
-            .user_agent(USER_AGENT);
+        let mut builder = reqwest::Client::builder().user_agent(USER_AGENT);
 
         if let Some(timeout) = self.request_timeout {
             builder = builder.timeout(timeout);
@@ -121,8 +117,13 @@ impl RestClientBuilder {
 
         Ok(RestClient {
             http: builder.build()?,
+            authorization: self.authorization,
             base_url: API_BASE_URL.to_owned(),
             rate_limiter: Arc::new(RateLimiter::default()),
+            token_rate_limiter: Arc::new(RateLimiter::default()),
+            interaction_rate_limiter: Arc::new(RateLimiter::default()),
+            bearer_rate_limiters: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            bearer_overflow_limiter: Arc::new(RateLimiter::default()),
             max_transient_retries: self.max_transient_retries,
             retry_base_delay: self.retry_base_delay,
         })
@@ -133,8 +134,13 @@ impl RestClientBuilder {
 #[derive(Clone)]
 pub struct RestClient {
     http: reqwest::Client,
+    authorization: HeaderValue,
     base_url: String,
     rate_limiter: Arc<RateLimiter>,
+    token_rate_limiter: Arc<RateLimiter>,
+    interaction_rate_limiter: Arc<RateLimiter>,
+    bearer_rate_limiters: Arc<tokio::sync::Mutex<HashMap<HeaderValue, Arc<RateLimiter>>>>,
+    bearer_overflow_limiter: Arc<RateLimiter>,
     max_transient_retries: usize,
     retry_base_delay: Duration,
 }
@@ -368,14 +374,34 @@ impl RestClient {
         &self,
         route: Route,
         payload: RequestPayload<'_>,
-        headers: HeaderMap,
+        mut headers: HeaderMap,
     ) -> Result<HttpResponse<Vec<u8>>> {
+        let limiter = if route.global_exempt() {
+            Arc::clone(&self.interaction_rate_limiter)
+        } else if route.uses_token_auth() {
+            Arc::clone(&self.token_rate_limiter)
+        } else if let Some(authorization) = headers.get_mut(AUTHORIZATION) {
+            authorization.set_sensitive(true);
+            let mut limiters = self.bearer_rate_limiters.lock().await;
+            if let Some(limiter) = limiters.get(authorization) {
+                Arc::clone(limiter)
+            } else if limiters.len() < 128 {
+                let limiter = Arc::new(RateLimiter::default());
+                limiters.insert(authorization.clone(), Arc::clone(&limiter));
+                limiter
+            } else {
+                Arc::clone(&self.bearer_overflow_limiter)
+            }
+        } else {
+            headers.insert(AUTHORIZATION, self.authorization.clone());
+            Arc::clone(&self.rate_limiter)
+        };
         let url = format!("{}{}", self.base_url, route.path);
         let mut rate_limit_retries = 0;
         let mut transient_retries = 0;
 
         loop {
-            self.rate_limiter.acquire(&route).await;
+            let _reservation = limiter.reserve(&route).await;
 
             let mut request = self
                 .http
@@ -417,7 +443,7 @@ impl RestClient {
             let bytes = match response.bytes().await {
                 Ok(bytes) => bytes.to_vec(),
                 Err(error) => {
-                    self.rate_limiter
+                    limiter
                         .update(
                             &route,
                             status,
@@ -453,7 +479,7 @@ impl RestClient {
                     .and_then(|value| value.to_str().ok())
                     .is_some_and(|scope| scope == "global");
 
-            self.rate_limiter
+            limiter
                 .update(&route, status, &response_headers, retry_after, global)
                 .await;
 
@@ -498,7 +524,7 @@ enum RequestPayload<'a> {
 }
 
 fn is_retryable_transport_error(error: &reqwest::Error) -> bool {
-    error.is_connect() || error.is_timeout()
+    error.is_connect() || error.is_timeout() || error.is_body()
 }
 
 fn is_retryable_status(status: reqwest::StatusCode) -> bool {
