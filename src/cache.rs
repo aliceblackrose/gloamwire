@@ -483,7 +483,7 @@ impl Cache {
     }
 
     fn parse_dispatch(&mut self, dispatch: &DispatchEvent) -> Result<TypedDispatchEvent> {
-        dispatch.typed().inspect_err(|_| self.invalidate())
+        Ok(dispatch.typed().inspect_err(|_| self.invalidate())?)
     }
 
     fn apply_or_invalidate(&mut self, event: &TypedDispatchEvent) -> Result<()> {
