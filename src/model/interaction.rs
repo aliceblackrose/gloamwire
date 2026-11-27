@@ -297,6 +297,17 @@ impl Interaction {
         self.data.clone().map(serde_json::from_value).transpose()
     }
 
+    /// Parses button-click data, returning `None` for non-button interactions.
+    ///
+    /// Link and premium buttons never produce this interaction. Malformed
+    /// message-component payloads retain the same errors as
+    /// [`Self::message_component_data`].
+    pub fn button_data(&self) -> serde_json::Result<Option<MessageComponentInteractionData>> {
+        Ok(self
+            .message_component_data()?
+            .filter(|data| data.component_type == ComponentType::BUTTON))
+    }
+
     /// Parses data for a modal-submit interaction.
     pub fn modal_submit_data(&self) -> serde_json::Result<Option<ModalSubmitInteractionData>> {
         if self.kind != InteractionType::MODAL_SUBMIT {
@@ -503,6 +514,36 @@ mod tests {
             data.options[0].value,
             Some(ApplicationCommandInteractionValue::String("500".to_owned()))
         );
+    }
+
+    #[test]
+    fn parses_button_clicks_only() {
+        let mut interaction: Interaction = serde_json::from_value(serde_json::json!({
+            "id": "100",
+            "application_id": "200",
+            "type": 3,
+            "data": {"component_type": 2, "custom_id": "confirm", "id": 7},
+            "token": "token",
+            "version": 1
+        }))
+        .expect("interaction");
+        let button = interaction.button_data().expect("data").expect("button");
+        assert_eq!(button.custom_id, "confirm");
+        assert_eq!(button.id, Some(7));
+        assert!(button.values.is_empty());
+
+        interaction.data = Some(serde_json::json!({
+            "component_type": 3,
+            "custom_id": "select",
+            "values": ["one"]
+        }));
+        assert!(interaction.button_data().expect("select").is_none());
+        interaction.data = Some(serde_json::json!({
+            "component_type": 2
+        }));
+        assert!(interaction.button_data().is_err());
+        interaction.kind = InteractionType::APPLICATION_COMMAND;
+        assert!(interaction.button_data().expect("command").is_none());
     }
 
     #[test]

@@ -56,6 +56,29 @@ impl ComponentStyle {
     pub const PARAGRAPH: Self = Self(2);
 }
 
+/// Styles for buttons that send an interaction to the application.
+///
+/// Link and premium buttons use dedicated constructors because they do not
+/// send button-click interactions and require different fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InteractiveButtonStyle {
+    Primary,
+    Secondary,
+    Success,
+    Danger,
+}
+
+impl From<InteractiveButtonStyle> for ComponentStyle {
+    fn from(style: InteractiveButtonStyle) -> Self {
+        match style {
+            InteractiveButtonStyle::Primary => Self::PRIMARY,
+            InteractiveButtonStyle::Secondary => Self::SECONDARY,
+            InteractiveButtonStyle::Success => Self::SUCCESS,
+            InteractiveButtonStyle::Danger => Self::DANGER,
+        }
+    }
+}
+
 /// Separator spacing value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -204,6 +227,122 @@ pub struct Component {
     pub extra: BTreeMap<String, Value>,
 }
 
+impl Component {
+    fn new(kind: ComponentType) -> Self {
+        Self {
+            kind,
+            id: None,
+            custom_id: None,
+            style: None,
+            label: None,
+            emoji: None,
+            sku_id: None,
+            url: None,
+            disabled: None,
+            components: Vec::new(),
+            options: Vec::new(),
+            placeholder: None,
+            default_values: Vec::new(),
+            min_values: None,
+            max_values: None,
+            required: None,
+            channel_types: Vec::new(),
+            min_length: None,
+            max_length: None,
+            value: None,
+            values: Vec::new(),
+            content: None,
+            accessory: None,
+            media: None,
+            description: None,
+            spoiler: None,
+            items: Vec::new(),
+            file: None,
+            name: None,
+            size: None,
+            divider: None,
+            spacing: None,
+            accent_color: None,
+            component: None,
+            file_types: Vec::new(),
+            default: None,
+            extra: BTreeMap::new(),
+        }
+    }
+
+    /// Creates an interactive button with the given style and custom ID.
+    ///
+    /// Set a label, an emoji, or both before sending. Custom IDs must be unique
+    /// within the message and contain 1–100 characters.
+    #[must_use]
+    pub fn button(style: InteractiveButtonStyle, custom_id: impl Into<String>) -> Self {
+        Self {
+            style: Some(style.into()),
+            custom_id: Some(custom_id.into()),
+            ..Self::new(ComponentType::BUTTON)
+        }
+    }
+
+    /// Creates a link button. Set a label, an emoji, or both before sending.
+    ///
+    /// Link buttons open the URL instead of sending an interaction.
+    #[must_use]
+    pub fn link_button(url: impl Into<String>) -> Self {
+        Self {
+            style: Some(ComponentStyle::LINK),
+            url: Some(url.into()),
+            ..Self::new(ComponentType::BUTTON)
+        }
+    }
+
+    /// Creates a premium purchase button for an application SKU.
+    ///
+    /// Discord supplies its own label; do not set a label, emoji, custom ID,
+    /// or URL. Premium buttons do not send button-click interactions.
+    #[must_use]
+    pub fn premium_button(sku_id: SkuId) -> Self {
+        Self {
+            style: Some(ComponentStyle::PREMIUM),
+            sku_id: Some(sku_id),
+            ..Self::new(ComponentType::BUTTON)
+        }
+    }
+
+    /// Creates an action row from message components.
+    ///
+    /// Discord permits one to five buttons or one select menu in a message
+    /// action row. Modal rows have separate rules. Layout and field limits
+    /// are validated by Discord; this constructor does not enforce them.
+    #[must_use]
+    pub fn action_row(components: impl IntoIterator<Item = Component>) -> Self {
+        Self {
+            components: components.into_iter().collect(),
+            ..Self::new(ComponentType::ACTION_ROW)
+        }
+    }
+
+    /// Sets a component label (up to 80 characters for a button).
+    #[must_use]
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    /// Sets a component emoji, including emoji-only buttons.
+    #[must_use]
+    pub fn with_emoji(mut self, emoji: PartialEmoji) -> Self {
+        self.emoji = Some(emoji);
+        self
+    }
+
+    /// Sets whether an interactive message component is disabled.
+    #[must_use]
+    pub fn with_disabled(mut self, disabled: bool) -> Self {
+        self.disabled = Some(disabled);
+        self
+    }
+}
+
 /// Data used to open a Discord modal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Modal {
@@ -215,7 +354,93 @@ pub struct Modal {
 
 #[cfg(test)]
 mod tests {
-    use super::{Component, ComponentStyle, ComponentType, ComponentValue, Modal};
+    use super::{
+        Component, ComponentStyle, ComponentType, ComponentValue, InteractiveButtonStyle, Modal,
+    };
+    use crate::model::{
+        CreateMessage, EditMessage, InteractionMessageData, InteractionResponse, PartialEmoji, SkuId,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn interactive_button_styles_serialize_with_custom_ids() {
+        for (style, wire_style) in [
+            (InteractiveButtonStyle::Primary, 1),
+            (InteractiveButtonStyle::Secondary, 2),
+            (InteractiveButtonStyle::Success, 3),
+            (InteractiveButtonStyle::Danger, 4),
+        ] {
+            let button = Component::button(style, "confirm").with_label("Confirm");
+            assert_eq!(
+                serde_json::to_value(&button).expect("button"),
+                json!({"type": 2, "style": wire_style, "custom_id": "confirm", "label": "Confirm"})
+            );
+        }
+    }
+
+    #[test]
+    fn button_variants_use_distinct_wire_fields() {
+        let link = Component::link_button("https://example.com").with_label("Open");
+        let premium = Component::premium_button(SkuId::new(123)).with_disabled(true);
+        assert_eq!(
+            serde_json::to_value(&link).expect("link"),
+            json!({"type": 2, "style": 5, "url": "https://example.com", "label": "Open"})
+        );
+        assert_eq!(
+            serde_json::to_value(&premium).expect("premium"),
+            json!({"type": 2, "style": 6, "sku_id": "123", "disabled": true})
+        );
+    }
+
+    #[test]
+    fn button_rows_work_in_message_requests_and_callbacks() {
+        let row = Component::action_row([
+            Component::button(InteractiveButtonStyle::Success, "confirm")
+                .with_emoji(PartialEmoji {
+                    id: None,
+                    name: Some("✅".to_owned()),
+                    animated: None,
+                })
+                .with_disabled(false),
+            Component::button(InteractiveButtonStyle::Danger, "cancel")
+                .with_label("Cancel")
+                .with_disabled(true),
+        ]);
+        let expected = json!([{
+            "type": 1,
+            "components": [
+                {"type": 2, "style": 3, "custom_id": "confirm", "disabled": false,
+                 "emoji": {"id": null, "name": "✅", "animated": null}},
+                {"type": 2, "style": 4, "custom_id": "cancel", "label": "Cancel", "disabled": true}
+            ]
+        }]);
+        let message = CreateMessage {
+            components: vec![row.clone()],
+            ..CreateMessage::default()
+        };
+        let edit = EditMessage {
+            components: Some(vec![row.clone()]),
+            ..EditMessage::default()
+        };
+        let response = InteractionResponse::message(InteractionMessageData {
+            components: vec![row],
+            ..InteractionMessageData::default()
+        });
+        assert_eq!(
+            serde_json::to_value(message).expect("message")["components"],
+            expected
+        );
+        assert_eq!(
+            serde_json::to_value(edit).expect("edit")["components"],
+            expected
+        );
+        assert_eq!(
+            serde_json::to_value(response).expect("response")["data"]["components"],
+            expected
+        );
+        let parsed: Vec<Component> = serde_json::from_value(expected).expect("row");
+        assert_eq!(parsed[0].components[0].kind, ComponentType::BUTTON);
+    }
 
     #[test]
     fn parses_components_v2_container() {

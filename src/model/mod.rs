@@ -48,8 +48,9 @@ pub use command::{
     InteractionContextType,
 };
 pub use component::{
-    Component, ComponentOption, ComponentStyle, ComponentType, ComponentValue, MediaGalleryItem,
-    Modal, SelectDefaultValue, SeparatorSpacing, UnfurledMediaItem,
+    Component, ComponentOption, ComponentStyle, ComponentType, ComponentValue,
+    InteractiveButtonStyle, MediaGalleryItem, Modal, SelectDefaultValue, SeparatorSpacing,
+    UnfurledMediaItem,
 };
 pub use embed::{Embed, EmbedAuthor, EmbedField, EmbedFooter, EmbedMedia, EmbedProvider};
 pub use guild::{Guild, GuildPreview, UnavailableGuild};
