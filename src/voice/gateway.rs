@@ -672,7 +672,7 @@ async fn open_socket(
         ));
     }
     if !(allow_custom_origin
-        || crate::secret::discord_websocket_origin(&url)
+        || crate::secret::discord_voice_websocket_origin(&url)
         || (allow_loopback && url.starts_with("ws://")))
     {
         return Err(VoiceError::Protocol(
@@ -931,6 +931,35 @@ mod tests {
             voice_gateway_url("voice.example.test:443"),
             "wss://voice.example.test:443/?v=8"
         );
+    }
+
+    #[test]
+    fn voice_gateway_origin_accepts_discord_tls_ports_only() {
+        use crate::secret::{discord_voice_websocket_origin, discord_websocket_origin};
+
+        for endpoint in [
+            "sweetwater-12345.discord.media:2048",
+            "c-iad08-28ede795.discord.media:8443",
+            "voice.discord.media:443",
+            "voice.discord.gg",
+        ] {
+            let url = voice_gateway_url(endpoint);
+            assert!(discord_voice_websocket_origin(&url), "{url}");
+        }
+
+        for endpoint in [
+            "wss://discord.media.example.com:8443",
+            "wss://notdiscord.media:8443",
+            "wss://127.0.0.1:8443",
+            "ws://voice.discord.media:8443",
+            "wss://user@voice.discord.media:8443",
+            "wss://voice.discord.media:0",
+        ] {
+            assert!(!discord_voice_websocket_origin(endpoint), "{endpoint}");
+        }
+
+        // Non-voice Gateway connections retain the existing strict port policy.
+        assert!(!discord_websocket_origin("wss://gateway.discord.gg:8443"));
     }
 
     #[test]
