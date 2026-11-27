@@ -506,7 +506,7 @@ mod tests {
             let heartbeat = recv_json(&mut socket, "Voice heartbeat").await;
             assert_eq!(heartbeat["op"], 3);
             assert_eq!(heartbeat["d"]["seq_ack"], 12);
-            send_json(&mut socket, 6, json!({}), Some(13)).await;
+            send_json(&mut socket, 6, json!({"t": heartbeat["d"]["t"]}), Some(13)).await;
             within(
                 "fixture crash close",
                 socket.send(Message::Close(Some(CloseFrame {

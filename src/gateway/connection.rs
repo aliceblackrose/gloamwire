@@ -378,15 +378,22 @@ impl GatewayConnection {
                             self.reconnect(GatewayReconnectStrategy::Resume).await?;
                             continue;
                         }
-                        Err(error) => return Err(error),
+                        Err(error) => {
+                            self.ready = false;
+                            self.socket.take();
+                            return Err(error);
+                        }
                     };
 
-                    if let Some(sequence) = envelope.s {
-                        self.update_sequence(sequence);
-                    }
-
                     match envelope.op {
-                        0 => return self.dispatch(envelope).map(Either::Left),
+                        0 => {
+                            let result = self.dispatch(envelope);
+                            if result.is_err() {
+                                self.ready = false;
+                                self.socket.take();
+                            }
+                            return result.map(Either::Left);
+                        }
                         1 => {
                             match self.send_heartbeat().await {
                                 Ok(()) => {}
@@ -401,7 +408,14 @@ impl GatewayConnection {
                             return Ok(Either::Left(GatewayEvent::Reconnect));
                         }
                         9 => {
-                            let resumable = serde_json::from_value::<bool>(envelope.d)?;
+                            let resumable = match serde_json::from_value::<bool>(envelope.d) {
+                                Ok(value) => value,
+                                Err(error) => {
+                                    self.ready = false;
+                                    self.socket.take();
+                                    return Err(error.into());
+                                }
+                            };
                             let strategy = if resumable {
                                 GatewayReconnectStrategy::Resume
                             } else {
@@ -444,6 +458,7 @@ impl GatewayConnection {
             ));
         }
 
+        self.update_sequence(sequence);
         if name == "READY" || name == "RESUMED" {
             self.ready = true;
         }

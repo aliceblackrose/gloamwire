@@ -111,7 +111,7 @@ pub struct VoiceGatewayConnection {
     ready: VoiceReady,
     heartbeat: Interval,
     heartbeat_acknowledged: bool,
-    last_heartbeat_sent: Option<Instant>,
+    last_heartbeat_sent: Option<(Instant, u64)>,
     latency: Option<Duration>,
     sequence: Option<u16>,
     pending: VecDeque<VoiceGatewayEvent>,
@@ -347,9 +347,15 @@ impl VoiceGatewayConnection {
                         Inbound::Json(envelope) => {
                             update_sequence(&mut self.sequence, envelope.sequence);
                             if envelope.opcode == HEARTBEAT_ACK_OPCODE {
-                                self.heartbeat_acknowledged = true;
-                                self.latency = self.last_heartbeat_sent.take().map(|sent| sent.elapsed());
-                                return Ok(Either::Left(VoiceGatewayEvent::HeartbeatAck));
+                                if let Some((sent, nonce)) = self.last_heartbeat_sent
+                                    && heartbeat_ack_matches(&envelope.data, nonce)
+                                {
+                                    self.heartbeat_acknowledged = true;
+                                    self.last_heartbeat_sent = None;
+                                    self.latency = Some(sent.elapsed());
+                                    return Ok(Either::Left(VoiceGatewayEvent::HeartbeatAck));
+                                }
+                                continue;
                             }
                             if envelope.opcode == HELLO_OPCODE {
                                 continue;
@@ -477,7 +483,7 @@ impl VoiceGatewayConnection {
             },
         )
         .await?;
-        self.last_heartbeat_sent = Some(Instant::now());
+        self.last_heartbeat_sent = Some((Instant::now(), nonce));
         self.heartbeat_acknowledged = false;
         Ok(())
     }
@@ -613,7 +619,7 @@ async fn negotiation_inbound(
     socket: &mut VoiceSocket,
     heartbeat: &mut Interval,
     sequence: Option<u16>,
-    sent: &mut Option<Instant>,
+    sent: &mut Option<(Instant, u64)>,
     deadline: Instant,
 ) -> VoiceResult<Inbound> {
     loop {
@@ -633,12 +639,18 @@ async fn negotiation_inbound(
                     deadline,
                     send_json(socket, HEARTBEAT_OPCODE, &Heartbeat { t, seq_ack: sequence }),
                 ).await.map_err(|_| VoiceError::Timeout(NEGOTIATION_TIMEOUT))??;
-                *sent = Some(Instant::now());
+                *sent = Some((Instant::now(), t));
             }
             inbound = next_inbound(socket) => {
                 let inbound = inbound?;
-                if matches!(&inbound, Inbound::Json(envelope) if envelope.opcode == HEARTBEAT_ACK_OPCODE) {
-                    *sent = None;
+                if let Inbound::Json(envelope) = &inbound
+                    && envelope.opcode == HEARTBEAT_ACK_OPCODE
+                {
+                    if sent.is_some_and(|(_, nonce)| heartbeat_ack_matches(&envelope.data, nonce)) {
+                        *sent = None;
+                    } else {
+                        continue;
+                    }
                 }
                 return Ok(inbound);
             }
@@ -734,6 +746,12 @@ fn event_from_envelope(envelope: NormalizedEnvelope) -> VoiceResult<Option<Voice
         },
     };
     Ok(Some(event))
+}
+
+fn heartbeat_ack_matches(data: &Value, nonce: u64) -> bool {
+    // Voice v8 acknowledges with the sent timestamp in d.t.
+    data.get("t").and_then(Value::as_u64) == Some(nonce)
+        || data.as_u64() == Some(nonce)
 }
 
 fn transport_unavailable() -> VoiceError {

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::UserId;
+use super::{Patch, UserId};
 
 /// A Discord user object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,14 +32,14 @@ pub struct User {
 pub struct PartialUser {
     /// The user's unique ID. This is the only guaranteed field.
     pub id: UserId,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
-    #[serde(default)]
-    pub global_name: Option<String>,
-    #[serde(default)]
-    pub discriminator: Option<String>,
-    #[serde(default)]
-    pub bot: Option<bool>,
-    #[serde(default)]
-    pub avatar: Option<String>,
+    #[serde(default, skip_serializing_if = "Patch::is_absent")]
+    pub global_name: Patch<String>,
+    #[serde(default, skip_serializing_if = "Patch::is_absent")]
+    pub discriminator: Patch<String>,
+    #[serde(default, skip_serializing_if = "Patch::is_absent")]
+    pub bot: Patch<bool>,
+    #[serde(default, skip_serializing_if = "Patch::is_absent")]
+    pub avatar: Patch<String>,
 }

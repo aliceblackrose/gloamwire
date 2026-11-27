@@ -387,7 +387,8 @@ impl Cache {
                 let messages: Vec<_> = self
                     .messages
                     .values()
-                    .filter(|message| message.guild_id.is_none())
+                    .filter(|message| message.guild_id.is_none()
+                        && self.channels.get(&message.channel_id).is_none_or(|channel| channel.guild_id.is_none()))
                     .map(|message| message.id)
                     .collect();
                 for message in messages {
@@ -773,7 +774,9 @@ impl Cache {
         {
             guild.channels.retain(|channel| channel.id != channel_id);
             guild.threads.retain(|channel| channel.id != channel_id);
+            guild.voice_states.retain(|state| state.channel_id != Some(channel_id));
         }
+        self.voice_states.retain(|_, state| state.channel_id != Some(channel_id));
 
         let message_ids = self
             .messages
@@ -1007,26 +1010,18 @@ impl Cache {
             if let Some(username) = &partial.username {
                 user.username.clone_from(username);
             }
-            if partial.global_name.is_some() {
-                user.global_name.clone_from(&partial.global_name);
-            }
-            if partial.discriminator.is_some() {
-                user.discriminator.clone_from(&partial.discriminator);
-            }
-            if partial.bot.is_some() {
-                user.bot = partial.bot;
-            }
-            if partial.avatar.is_some() {
-                user.avatar.clone_from(&partial.avatar);
-            }
+            partial.global_name.apply_to(&mut user.global_name);
+            partial.discriminator.apply_to(&mut user.discriminator);
+            partial.bot.apply_to(&mut user.bot);
+            partial.avatar.apply_to(&mut user.avatar);
         } else if let Some(username) = &partial.username {
             self.remember_user(User {
                 id: partial.id,
                 username: username.clone(),
-                global_name: partial.global_name.clone(),
-                discriminator: partial.discriminator.clone(),
-                bot: partial.bot,
-                avatar: partial.avatar.clone(),
+                global_name: partial.global_name.as_option().cloned(),
+                discriminator: partial.discriminator.as_option().cloned(),
+                bot: partial.bot.as_option().copied(),
+                avatar: partial.avatar.as_option().cloned(),
             });
         }
     }
