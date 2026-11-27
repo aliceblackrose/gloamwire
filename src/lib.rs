@@ -35,7 +35,7 @@ pub use secret::SecretString;
 pub mod voice;
 
 #[cfg(feature = "cache")]
-pub use cache::{Cache, CacheConfig};
+pub use cache::{Cache, CacheConfig, CacheLimits};
 #[cfg(feature = "model")]
 pub use cdn::{
     Cdn, CdnAnimatedImageFormat, CdnAnimatedImageOptions, CdnImageFormat, CdnImageOptions,

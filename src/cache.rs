@@ -19,12 +19,55 @@ use crate::{
     },
 };
 
+/// Limits for security-sensitive cache collections. Exceeding any limit
+/// invalidates the entire cache rather than exposing partially evicted state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CacheLimits {
+    pub guilds: usize,
+    pub channels: usize,
+    pub roles: usize,
+    pub members: usize,
+    pub presences: usize,
+    pub voice_states: usize,
+    pub scheduled_events: usize,
+    pub shards: usize,
+    /// Aggregate retained index records (including duplicate membership indexes).
+    pub total_entries: usize,
+    /// Approximate retained payload budget, not an exact allocator or RSS limit.
+    pub estimated_bytes: usize,
+}
+
+impl Default for CacheLimits {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CacheLimits {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            guilds: 50_000,
+            channels: 250_000,
+            roles: 250_000,
+            members: 500_000,
+            presences: 250_000,
+            voice_states: 100_000,
+            scheduled_events: 50_000,
+            shards: 4096,
+            total_entries: 1_000_000,
+            estimated_bytes: 512 * 1024 * 1024,
+        }
+    }
+}
+
 /// Configuration for Gloamwire's optional in-memory cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheConfig {
     message_capacity: usize,
     user_capacity: usize,
     tombstone_capacity: usize,
+    limits: CacheLimits,
 }
 
 impl Default for CacheConfig {
@@ -41,6 +84,7 @@ impl CacheConfig {
             message_capacity: 0,
             user_capacity: 100_000,
             tombstone_capacity: 100_000,
+            limits: CacheLimits::new(),
         }
     }
 
@@ -70,6 +114,20 @@ impl CacheConfig {
         self
     }
 
+    /// Configures collection and aggregate limits. Zero disables retention
+    /// of the corresponding collection by invalidating on its first insertion.
+    #[must_use]
+    pub const fn limits(mut self, limits: CacheLimits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Returns the configured security limits.
+    #[must_use]
+    pub const fn security_limits(&self) -> CacheLimits {
+        self.limits
+    }
+
     /// Returns the configured message capacity.
     #[must_use]
     pub const fn max_messages(&self) -> usize {
@@ -81,6 +139,8 @@ impl CacheConfig {
 #[derive(Debug, Clone)]
 pub struct Cache {
     config: CacheConfig,
+    invalidated: bool,
+    estimated_bytes: usize,
     current_user_id: Option<UserId>,
     users: HashMap<UserId, User>,
     user_order: VecDeque<UserId>,
@@ -111,6 +171,8 @@ impl Cache {
     pub fn new(config: CacheConfig) -> Self {
         Self {
             config,
+            invalidated: false,
+            estimated_bytes: 0,
             current_user_id: None,
             users: HashMap::new(),
             user_order: VecDeque::new(),
@@ -136,28 +198,119 @@ impl Cache {
         self.config
     }
 
-    /// Clears all Gateway-derived state while preserving configuration.
+    /// Clears all state, releases retained allocations and resets invalidation.
+    /// After invalidation, obtain fresh authoritative snapshots before relying
+    /// on cached membership, roles, or other security-sensitive state.
     pub fn clear(&mut self) {
-        self.current_user_id = None;
-        self.users.clear();
-        self.user_order.clear();
-        self.membership.clear();
-        self.tombstones.clear();
-        self.guilds.clear();
-        self.unavailable_guilds.clear();
-        self.channels.clear();
-        self.roles.clear();
-        self.members.clear();
-        self.presences.clear();
-        self.voice_states.clear();
-        self.scheduled_events.clear();
-        self.messages.clear();
-        self.message_order.clear();
-        self.shard_sequences.clear();
+        *self = Self::new(self.config);
     }
 
-    /// Applies one already-typed Gateway dispatch to the cache.
+    /// True after a security limit was exceeded. All lookups are empty and
+    /// dispatches are ignored until the caller explicitly clears the cache.
+    #[must_use]
+    pub const fn is_invalidated(&self) -> bool {
+        self.invalidated
+    }
+
+    fn invalidate(&mut self) {
+        self.clear();
+        self.invalidated = true;
+    }
+
+    fn admit(&mut self, event: &TypedDispatchEvent) -> Option<usize> {
+        if self.invalidated {
+            return None;
+        }
+        let charge = event_charge(event);
+        if charge > self.config.limits.estimated_bytes {
+            self.invalidate();
+            return None;
+        }
+        Some(charge)
+    }
+
+    fn finish_update(&mut self, charge: usize) {
+        if self.invalidated {
+            return;
+        }
+        let limits = self.config.limits;
+        let guild_count = self.guilds.len().saturating_add(self.unavailable_guilds.len());
+        let entry_count = [
+            guild_count,
+            self.channels.len(),
+            self.roles.len(),
+            self.members.len(),
+            self.membership.len(),
+            self.presences.len(),
+            self.voice_states.len(),
+            self.scheduled_events.len(),
+            self.messages.len(),
+            self.users.len(),
+            self.shard_sequences.len(),
+            self.tombstones.len(),
+            self.user_order.len(),
+            self.message_order.len(),
+        ]
+        .into_iter()
+        .fold(0_usize, usize::saturating_add);
+        if guild_count > limits.guilds
+            || self.channels.len() > limits.channels
+            || self.roles.len() > limits.roles
+            || self.members.len() > limits.members
+            || self.presences.len() > limits.presences
+            || self.voice_states.len() > limits.voice_states
+            || self.scheduled_events.len() > limits.scheduled_events
+            || self.shard_sequences.len() > limits.shards
+            || entry_count > limits.total_entries
+        {
+            self.invalidate();
+            return;
+        }
+
+        // Charge incremental changes conservatively, then reconcile against
+        // retained payloads near the budget. Avoid walking the entire cache
+        // on every event. This is an estimate, not an allocator-level limit.
+        self.estimated_bytes = self.estimated_bytes.saturating_add(charge);
+        if self.estimated_bytes > limits.estimated_bytes {
+            self.estimated_bytes = self.retained_estimate(entry_count);
+            if self.estimated_bytes > limits.estimated_bytes {
+                self.invalidate();
+            }
+        }
+    }
+
+    fn retained_estimate(&self, entry_count: usize) -> usize {
+        let mut estimate = entry_count.saturating_mul(128);
+        macro_rules! account {
+            ($collection:expr) => {
+                for value in $collection.values() {
+                    estimate = estimate.saturating_add(payload_estimate(value));
+                }
+            };
+        }
+        account!(self.guilds);
+        account!(self.channels);
+        account!(self.roles);
+        account!(self.members);
+        account!(self.presences);
+        account!(self.voice_states);
+        account!(self.scheduled_events);
+        account!(self.messages);
+        account!(self.users);
+        estimate
+    }
+
+    /// Applies one already-typed Gateway dispatch to the cache. A capacity
+    /// violation invalidates the cache; check [`Self::is_invalidated`].
     pub fn update(&mut self, event: &TypedDispatchEvent) {
+        let Some(charge) = self.admit(event) else {
+            return;
+        };
+        self.apply_event(event);
+        self.finish_update(charge);
+    }
+
+    fn apply_event(&mut self, event: &TypedDispatchEvent) {
         match event {
             TypedDispatchEvent::Ready(ready) => {
                 self.clear();
@@ -317,7 +470,11 @@ impl Cache {
 
     fn apply_checked(&mut self, event: &TypedDispatchEvent) -> Result<()> {
         if let TypedDispatchEvent::MessageUpdate(patch) = event {
+            let Some(charge) = self.admit(event) else {
+                return Ok(());
+            };
             self.apply_message_update(patch)?;
+            self.finish_update(charge);
         } else {
             self.update(event);
         }
@@ -352,7 +509,15 @@ impl Cache {
             return Ok(None);
         };
         let typed = dispatch.typed()?;
+        if self.invalidated {
+            return Ok(Some(typed));
+        }
+        let mut ready_charge = 0;
         if let TypedDispatchEvent::Ready(ready) = &typed {
+            let Some(charge) = self.admit(&typed) else {
+                return Ok(Some(typed));
+            };
+            ready_charge = charge;
             let guilds: HashSet<_> = self
                 .guilds
                 .keys()
@@ -418,8 +583,11 @@ impl Cache {
             }
             self.apply_checked(&typed)?;
         }
-        self.shard_sequences
-            .insert(event.shard_id, dispatch.sequence);
+        if !self.invalidated {
+            self.shard_sequences
+                .insert(event.shard_id, dispatch.sequence);
+            self.finish_update(ready_charge.saturating_add(128));
+        }
         Ok(Some(typed))
     }
 
@@ -1047,6 +1215,69 @@ fn member_user_id(member: &GuildMember) -> Option<UserId> {
     member.user.as_ref().map(|user| user.id)
 }
 
+// Count serialized bytes without allocating an intermediate payload. The
+// multiplier and fixed overhead account approximately for decoded structures.
+fn payload_estimate<T: serde::Serialize>(value: &T) -> usize {
+    #[derive(Default)]
+    struct Counter(usize);
+
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut counter = Counter::default();
+    if serde_json::to_writer(&mut counter, value).is_err() {
+        return usize::MAX;
+    }
+    counter.0.saturating_mul(8).saturating_add(512)
+}
+
+fn event_charge(event: &TypedDispatchEvent) -> usize {
+    use TypedDispatchEvent as E;
+    let size = match event {
+        E::Ready(ready) => payload_estimate(&ready.user)
+            .saturating_add(ready.guilds.len().saturating_mul(128)),
+        E::GuildCreate(guild) | E::GuildUpdate(guild) => payload_estimate(guild),
+        E::ChannelCreate(channel)
+        | E::ChannelUpdate(channel)
+        | E::ThreadCreate(channel)
+        | E::ThreadUpdate(channel) => payload_estimate(channel),
+        E::ThreadListSync(event) => payload_estimate(&(&event.threads, &event.members)),
+        E::GuildMemberAdd(event) => payload_estimate(&event.member),
+        E::GuildMemberUpdate(event) => payload_estimate(&(
+            &event.user,
+            &event.roles,
+            &event.nick,
+            &event.avatar,
+            &event.banner,
+            &event.joined_at,
+            &event.premium_since,
+            &event.communication_disabled_until,
+        )),
+        E::GuildMemberRemove(event) => payload_estimate(&event.user),
+        E::GuildMembersChunk(event) => payload_estimate(&(&event.members, &event.presences)),
+        E::GuildRoleCreate(event) | E::GuildRoleUpdate(event) => payload_estimate(&event.role),
+        E::GuildScheduledEventCreate(event) | E::GuildScheduledEventUpdate(event) => {
+            payload_estimate(event)
+        }
+        E::MessageCreate(message) => payload_estimate(message),
+        E::MessageUpdate(event) => payload_estimate(&event.fields),
+        E::PresenceUpdate(presence) => payload_estimate(presence),
+        E::VoiceStateUpdate(state) => payload_estimate(state),
+        E::UserUpdate(user) => payload_estimate(user),
+        _ => 128,
+    };
+    // Several cache mutations retain both normalized and embedded copies.
+    size.saturating_mul(4)
+}
+
 fn is_thread(kind: ChannelType) -> bool {
     matches!(
         kind,
@@ -1064,6 +1295,51 @@ mod tests {
     };
 
     use super::{Cache, CacheConfig};
+
+    #[test]
+    fn capacity_violation_invalidates_all_indexes_until_explicit_clear() {
+        let guild: Guild = serde_json::from_value(json!({
+            "id":"1",
+            "name":"Gloamwire",
+            "owner_id":"2",
+            "channels":[{"id":"10","type":0},{"id":"11","type":0}],
+            "members":[{"user":{"id":"2","username":"owner"},"roles":[]}]
+        }))
+        .expect("guild");
+        let limits = super::CacheLimits {
+            channels: 1,
+            ..super::CacheLimits::default()
+        };
+        let mut cache = Cache::new(CacheConfig::new().limits(limits));
+        cache.update(&TypedDispatchEvent::GuildCreate(guild.clone()));
+        assert!(cache.is_invalidated());
+        assert!(cache.guild(GuildId::new(1)).is_none());
+        assert!(cache.member(GuildId::new(1), UserId::new(2)).is_none());
+        assert!(cache.channels.is_empty());
+        cache.update(&TypedDispatchEvent::UserUpdate(
+            guild.members[0].user.clone().expect("user"),
+        ));
+        assert!(cache.current_user().is_none());
+        cache.clear();
+        assert!(!cache.is_invalidated());
+    }
+
+    #[test]
+    fn oversized_payload_is_rejected_before_retention() {
+        let limits = super::CacheLimits {
+            estimated_bytes: 1024,
+            ..super::CacheLimits::default()
+        };
+        let mut cache = Cache::new(CacheConfig::new().limits(limits));
+        let user = serde_json::from_value(json!({
+            "id":"2",
+            "username":"x".repeat(1024)
+        }))
+        .expect("user");
+        cache.update(&TypedDispatchEvent::UserUpdate(user));
+        assert!(cache.is_invalidated());
+        assert!(cache.users.is_empty());
+    }
 
     #[test]
     fn guild_create_seeds_normalized_state_and_delete_cleans_it() {
