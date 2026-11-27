@@ -109,8 +109,8 @@ impl DistributedShardConfig {
     }
 }
 
-/// Identity attached to each distributed event. Monotonic generation is
-/// available only when the coordinator implements fenced acquisition.
+/// Identity attached to each distributed event. The generation must increase
+/// on every successful acquisition of the same shard.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LeaseIdentity {
     pub owner_id: String,
@@ -634,7 +634,9 @@ mod tests {
                 let generation = generations.entry(shard_id).or_default();
                 *generation = generation.checked_add(1).expect("test generation overflow");
                 leases.insert(shard_id, (owner_id.to_owned(), now + lease_ttl));
-                Ok(Some(ShardLease { generation: *generation }))
+                Ok(Some(ShardLease {
+                    generation: *generation,
+                }))
             })
         }
 
@@ -732,6 +734,25 @@ mod tests {
                 .await
                 .expect("worker B acquire after release")
         );
+    }
+
+    #[tokio::test]
+    async fn fencing_generation_increases_after_release() {
+        let coordinator = MemoryCoordinator::default();
+        let shard = ShardId::new(7);
+        let ttl = Duration::from_secs(5);
+        let first = coordinator
+            .acquire_fenced_shard("worker-a", shard, ttl)
+            .await
+            .unwrap()
+            .unwrap();
+        coordinator.release_shard("worker-a", shard).await.unwrap();
+        let second = coordinator
+            .acquire_fenced_shard("worker-b", shard, ttl)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(second.generation > first.generation);
     }
 
     #[tokio::test]

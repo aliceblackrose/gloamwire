@@ -48,6 +48,6 @@ pub use http::{Pagination, RestClient, RestClientBuilder, UploadFile, UploadSour
 #[cfg(feature = "transport")]
 pub use oauth2::{
     OAuth2Application, OAuth2AuthorizationInfo, OAuth2AuthorizationUrl, OAuth2Client,
-    OAuth2PendingAuthorization, OAuth2Prompt,
-    OAuth2ResponseType, OAuth2TokenResponse, OAuth2TokenTypeHint,
+    OAuth2PendingAuthorization, OAuth2Prompt, OAuth2ResponseType, OAuth2TokenResponse,
+    OAuth2TokenTypeHint,
 };

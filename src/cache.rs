@@ -215,8 +215,8 @@ impl Cache {
     }
 
     /// Call when the consumer detects a dropped event, driver failure, or other
-    /// interruption not delivered as a Gateway event. Rebuild from fresh snapshots
-    /// before calling clear and relying on cache data again.
+    /// interruption not delivered as a Gateway event. Clear and rebuild from
+    /// fresh authoritative snapshots before relying on cache data again.
     pub fn mark_stream_lost(&mut self) {
         self.invalidate();
     }
@@ -528,7 +528,10 @@ impl Cache {
         shard_count: ShardCount,
     ) -> Result<Option<TypedDispatchEvent>> {
         let GatewayEvent::Dispatch(dispatch) = &event.event else {
-            if matches!(event.event, GatewayEvent::Reconnect | GatewayEvent::InvalidSession { .. }) {
+            if matches!(
+                &event.event,
+                GatewayEvent::Reconnect | GatewayEvent::InvalidSession { .. }
+            ) {
                 self.invalidate();
             }
             return Ok(None);
@@ -606,9 +609,11 @@ impl Cache {
             {
                 return Ok(None);
             }
-            if self.shard_sequences.get(&event.shard_id).is_some_and(|previous| {
-                previous.checked_add(1) != Some(dispatch.sequence)
-            }) {
+            if self
+                .shard_sequences
+                .get(&event.shard_id)
+                .is_some_and(|previous| previous.checked_add(1) != Some(dispatch.sequence))
+            {
                 self.invalidate();
                 return Ok(None);
             }
@@ -632,15 +637,15 @@ impl Cache {
     ) -> Result<Option<TypedDispatchEvent>> {
         match event {
             GatewayEvent::Dispatch(dispatch) => {
-                if dispatch.name != "READY" {
-                    if let Some(previous) = self.stream_sequence {
-                        if dispatch.sequence <= previous {
-                            return Ok(None);
-                        }
-                        if previous.checked_add(1) != Some(dispatch.sequence) {
-                            self.invalidate();
-                            return Ok(None);
-                        }
+                if dispatch.name != "READY"
+                    && let Some(previous) = self.stream_sequence
+                {
+                    if dispatch.sequence <= previous {
+                        return Ok(None);
+                    }
+                    if previous.checked_add(1) != Some(dispatch.sequence) {
+                        self.invalidate();
+                        return Ok(None);
                     }
                 }
                 let typed = self.update_dispatch(dispatch)?;
@@ -1541,11 +1546,13 @@ mod continuity_security_tests {
     #[test]
     fn missing_dispatch_invalidates_cache() {
         let mut cache = Cache::default();
-        let event = |sequence| GatewayEvent::Dispatch(DispatchEvent {
-            name: "USER_UPDATE".into(),
-            sequence,
-            data: json!({"id":"1","username":"bot"}),
-        });
+        let event = |sequence| {
+            GatewayEvent::Dispatch(DispatchEvent {
+                name: "USER_UPDATE".into(),
+                sequence,
+                data: json!({"id":"1","username":"bot"}),
+            })
+        };
         cache.update_gateway_event(&event(1)).unwrap();
         assert!(cache.current_user().is_some());
         cache.update_gateway_event(&event(3)).unwrap();

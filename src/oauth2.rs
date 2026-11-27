@@ -196,11 +196,15 @@ impl OAuth2AuthorizationUrl {
     pub fn begin_code_flow(mut self) -> Result<(String, OAuth2PendingAuthorization)> {
         use std::fmt::Write as _;
 
-        let redirect_uri = self.redirect_uri.clone().filter(|uri| !uri.is_empty()).ok_or_else(|| {
-            Error::InvalidRestRequest("OAuth2 code flow requires a redirect URI".into())
-        })?;
+        let redirect_uri = self
+            .redirect_uri
+            .clone()
+            .filter(|uri| !uri.is_empty())
+            .ok_or_else(|| {
+                Error::InvalidRestRequest("OAuth2 code flow requires a redirect URI".into())
+            })?;
         let mut bytes = zeroize::Zeroizing::new([0_u8; 32]);
-        getrandom::fill(bytes.as_mut()).map_err(|_| {
+        getrandom::fill(&mut bytes[..]).map_err(|_| {
             Error::InvalidRestRequest("OAuth2 state generation failed".into())
         })?;
         let mut state = String::with_capacity(64);
@@ -210,12 +214,15 @@ impl OAuth2AuthorizationUrl {
         self.response_type = Some(OAuth2ResponseType::Code);
         self.state = Some(state.clone());
         let url = self.build();
-        Ok((url, OAuth2PendingAuthorization {
-            client_id: self.client_id,
-            redirect_uri,
-            state: crate::SecretString::new(state),
-            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(600),
-        }))
+        Ok((
+            url,
+            OAuth2PendingAuthorization {
+                client_id: self.client_id,
+                redirect_uri,
+                state: crate::SecretString::new(state),
+                expires_at: std::time::Instant::now() + std::time::Duration::from_secs(600),
+            },
+        ))
     }
 
     /// Builds the Discord authorization URL.
@@ -279,7 +286,9 @@ impl OAuth2PendingAuthorization {
             || std::time::Instant::now() >= self.expires_at
             || !bool::from(self.state.expose().as_bytes().ct_eq(returned_state.as_bytes()))
         {
-            return Err(Error::InvalidRestRequest("invalid or expired OAuth2 state".into()));
+            return Err(Error::InvalidRestRequest(
+                "invalid or expired OAuth2 state".into(),
+            ));
         }
         Ok(())
     }
@@ -666,10 +675,22 @@ mod code_flow_security_tests {
         assert_eq!(pending.state.expose().len(), 64);
         assert!(url.contains(pending.state.expose()));
         assert_ne!(pending.state, other.state);
-        assert!(pending.validate(ApplicationId::new(1), pending.state.expose()).is_ok());
-        assert!(pending.validate(ApplicationId::new(2), pending.state.expose()).is_err());
+        assert!(
+            pending
+                .validate(ApplicationId::new(1), pending.state.expose())
+                .is_ok()
+        );
+        assert!(
+            pending
+                .validate(ApplicationId::new(2), pending.state.expose())
+                .is_err()
+        );
         assert!(pending.validate(ApplicationId::new(1), "wrong").is_err());
         pending.expires_at = std::time::Instant::now();
-        assert!(pending.validate(ApplicationId::new(1), pending.state.expose()).is_err());
+        assert!(
+            pending
+                .validate(ApplicationId::new(1), pending.state.expose())
+                .is_err()
+        );
     }
 }

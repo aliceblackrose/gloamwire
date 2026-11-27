@@ -151,7 +151,8 @@ mod secret_serialization_tests {
     fn webhook_serialization_omits_credentials() {
         let webhook: super::Webhook = serde_json::from_value(serde_json::json!({
             "id":"1", "type":1, "token":"secret-token", "url":"https://example.com/secret-token"
-        })).unwrap();
+        }))
+        .unwrap();
         let value = serde_json::to_value(webhook).unwrap();
         assert!(value.get("token").is_none());
         assert!(value.get("url").is_none());

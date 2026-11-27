@@ -43,6 +43,14 @@ impl std::fmt::Debug for VoiceDecryptedRtp {
 ///
 /// This layer implements the SFU transport encryption that remains present in
 /// DAVE/E2EE calls. It does not implement DAVE media encryption itself.
+///
+/// Outbound constructors are internal; use a negotiated VoiceSession.
+///
+/// ```compile_fail
+/// use gloamwire::voice::{VoiceEncryptionMode, VoiceTransportCrypto};
+/// let mode = VoiceEncryptionMode::from(VoiceEncryptionMode::AEAD_AES256_GCM_RTPSIZE);
+/// let _ = VoiceTransportCrypto::new_with_fresh_key(mode, [0; 32]);
+/// ```
 pub struct VoiceTransportCrypto {
     cipher: VoiceTransportCipher,
     mode: VoiceEncryptionMode,
