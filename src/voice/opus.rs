@@ -171,6 +171,7 @@ mod tests {
     #[test]
     fn frame_boundary_rejects_empty_payload_and_exposes_silence() {
         assert!(VoiceOpusFrame::new(&[], VoiceOpusFrameDuration::TwentyMs).is_err());
+        assert!(VoiceOpusFrame::new(&[0; 8193], VoiceOpusFrameDuration::TwentyMs).is_err());
         let silence = VoiceOpusFrame::silence();
         assert_eq!(silence.payload(), &[0xF8, 0xFF, 0xFE]);
         assert_eq!(silence.duration(), VoiceOpusFrameDuration::TwentyMs);

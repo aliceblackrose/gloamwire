@@ -40,3 +40,16 @@ impl std::fmt::Debug for VoiceState {
             .finish_non_exhaustive()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn voice_state_debug_does_not_disclose_session_identifier() {
+        let state: super::VoiceState = serde_json::from_value(serde_json::json!({
+            "guild_id":"1","channel_id":"2","user_id":"3","session_id":"secret-session",
+            "deaf":false,"mute":false,"self_deaf":false,"self_mute":false,"suppress":false
+        })).unwrap();
+        assert!(!format!("{state:?}").contains("secret-session"));
+        assert!(format!("{state:?}").contains("[REDACTED]"));
+    }
+}

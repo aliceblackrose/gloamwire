@@ -367,6 +367,7 @@ impl GatewayConnection {
                                 self.socket.take();
                                 self.shutdown = true;
                                 self.session = None;
+                                self.sequence = None;
                                 return Err(Error::GatewayClosed { code, reason });
                             }
 

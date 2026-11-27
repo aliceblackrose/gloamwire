@@ -256,13 +256,15 @@ impl VoiceSession {
                         self.restart_required = true;
                         return Err(super::VoiceError::Protocol("voice key reuse or rekey limit; restart session".into()));
                     }
+                    let was_ready = self.media_ready;
                     self.media_ready = false;
                     let crypto = VoiceTransportCrypto::from_session_description(description)?;
                     self.retired_keys.push(self.description.secret_key);
                     self.transport_crypto = crypto;
                     self.description = description.clone();
                     self.key_generation += 1;
-                    self.media_ready = true;
+                    // A rekey buffered during Resume must not bypass recovery.
+                    self.media_ready = was_ready;
                 }
             }
             VoiceGatewayEvent::Resumed => self.media_ready = true,
@@ -281,13 +283,13 @@ impl VoiceSession {
         code: Option<VoiceCloseCode>,
     ) -> VoiceResult<VoiceRecoveryOutcome> {
         self.media_ready = false;
-        if self.restart_required {
-            return Ok(VoiceRecoveryOutcome::RestartRequired);
-        }
         let strategy = code.map_or(
             VoiceReconnectStrategy::Resume,
             VoiceCloseCode::reconnect_strategy,
         );
+        if self.restart_required && strategy != VoiceReconnectStrategy::Stop {
+            return Ok(VoiceRecoveryOutcome::RestartRequired);
+        }
         match strategy {
             VoiceReconnectStrategy::Resume => {
                 self.gateway.resume().await?;
@@ -570,12 +572,14 @@ mod tests {
             panic!("expected Voice Gateway close error");
         };
         assert_eq!(code, Some(VoiceCloseCode::SERVER_CRASHED));
+        assert!(!session.is_media_ready());
         assert_eq!(
             within("Voice Resume recovery", session.recover_after_close(code))
                 .await
                 .expect("resume recovery"),
             VoiceRecoveryOutcome::Resumed
         );
+        assert!(!session.is_media_ready());
 
         let VoiceGatewayEvent::Speaking(speaking) =
             within("buffered resumed Speaking event", session.next_event())
@@ -585,6 +589,7 @@ mod tests {
             panic!("expected buffered resumed Speaking event");
         };
         assert_eq!(speaking.ssrc, 88);
+        assert!(!session.is_media_ready());
         assert_eq!(
             within("Resumed event", session.next_event())
                 .await
@@ -592,6 +597,20 @@ mod tests {
             VoiceGatewayEvent::Resumed
         );
         assert_eq!(session.gateway().sequence(), Some(15));
+        assert!(session.is_media_ready());
+
+        // Repeated descriptions must not reset the outgoing nonce.
+        let mut sequencer = crate::voice::VoiceRtpSequencer::new(SSRC);
+        session.transport_crypto_mut().encrypt_audio(sequencer.next_header(), &[1]).expect("first packet");
+        let original = session.session_description().clone();
+        session.apply_transport_event(&VoiceGatewayEvent::SessionDescription(original.clone())).expect("same key");
+        assert_eq!(session.transport_crypto().next_send_nonce(), Some(1));
+        let mut replacement = original.clone();
+        replacement.secret_key = [8; 32];
+        session.apply_transport_event(&VoiceGatewayEvent::SessionDescription(replacement)).expect("new key");
+        assert_eq!(session.key_generation(), 1);
+        assert_eq!(session.transport_crypto().next_send_nonce(), Some(0));
+        assert!(session.is_media_ready());
 
         assert_eq!(
             within(
@@ -611,6 +630,8 @@ mod tests {
             .expect("stop classification"),
             VoiceRecoveryOutcome::Stopped
         );
+
+        assert!(!session.is_media_ready());
 
         within("UDP fixture task", udp_task)
             .await

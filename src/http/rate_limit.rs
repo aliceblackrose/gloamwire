@@ -305,6 +305,16 @@ mod tests {
     use super::{RateLimiter, bucket_key, provisional_bucket_key};
     use crate::http::route::Route;
 
+    #[test]
+    fn active_cooldown_prevents_limiter_eviction() {
+        let limiter = RateLimiter::default();
+        let route = Route::current_user();
+        limiter.update(&route, StatusCode::TOO_MANY_REQUESTS, &HeaderMap::new(), Some(Duration::from_secs(30)), true);
+        let now = tokio::time::Instant::now();
+        assert!(limiter.has_live_cooldown(now));
+        assert!(!limiter.has_live_cooldown(now + Duration::from_secs(31)));
+    }
+
     #[tokio::test]
     async fn global_scope_header_applies_before_body() {
         let limiter = RateLimiter::default();

@@ -399,6 +399,16 @@ mod tests {
     };
 
     #[test]
+    fn rejects_callback_type_data_mismatches() {
+        let mut response = super::InteractionResponse::message(super::InteractionMessageData::content("hello"));
+        assert!(response.has_valid_data());
+        response.kind = super::InteractionCallbackType::MODAL;
+        assert!(!response.has_valid_data());
+        assert!(super::InteractionResponse::new(super::InteractionCallbackType::PONG).has_valid_data());
+        assert!(!super::InteractionResponse::new(super::InteractionCallbackType::APPLICATION_COMMAND_AUTOCOMPLETE_RESULT).has_valid_data());
+    }
+
+    #[test]
     fn callback_message_round_trips_without_becoming_autocomplete() {
         let value = serde_json::json!({"type": 4, "data": {"content": "hello"}});
         let response: super::InteractionResponse =
